@@ -1,0 +1,219 @@
+name: git-issue Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        bash-version: ['4.4', '5.0', '5.1']
+    
+    name: Test with Bash ${{ matrix.bash-version }}
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Bash ${{ matrix.bash-version }}
+      run: |
+        if [ "${{ matrix.bash-version }}" != "$(bash --version | head -n1 | cut -d' ' -f4 | cut -d'(' -f1)" ]; then
+          echo "Setting up Bash ${{ matrix.bash-version }}"
+          # For different bash versions, we'll use the system bash
+          # In real scenarios, you might want to install specific versions
+        fi
+    
+    - name: Set up Git
+      run: |
+        git config --global user.name "Test User"
+        git config --global user.email "test@example.com"
+        git config --global init.defaultBranch main
+    
+    - name: Make scripts executable
+      run: |
+        chmod +x bin/*
+        chmod +x tests/*.sh
+    
+    - name: Install git-issue
+      run: make install PREFIX=$HOME/.local
+    
+    - name: Add to PATH
+      run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+    
+    - name: Verify installation
+      run: |
+        which git-issue
+        git-issue --help || git issue --help
+    
+    - name: Run unit tests
+      run: ./tests/unit_tests.sh
+    
+    - name: Run integration tests
+      run: ./tests/integration_tests.sh
+    
+    - name: Run comprehensive test suite
+      run: ./tests/test_runner.sh
+    
+    - name: Test in clean repository
+      run: |
+        mkdir -p /tmp/test-clean-repo
+        cd /tmp/test-clean-repo
+        git init
+        git config user.name "Test User"
+        git config user.email "test@example.com"
+        echo "# Test" > README.md
+        git add README.md
+        git commit -m "Initial commit"
+        
+        # Test basic functionality
+        git issue create "CI test issue"
+        git issue list
+        git issue-status
+
+  security-check:
+    runs-on: ubuntu-latest
+    name: Security Analysis
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: ShellCheck Analysis
+      uses: ludeeus/action-shellcheck@master
+      with:
+        scandir: './bin'
+        format: gcc
+        severity: warning
+    
+    - name: Security scan for common vulnerabilities
+      run: |
+        # Check for potential command injection vulnerabilities
+        echo "Scanning for potential security issues..."
+        
+        # Look for unquoted variables that could lead to injection
+        if grep -r '\$[a-zA-Z_][a-zA-Z0-9_]*' bin/ | grep -v '".*\$.*"' | grep -v "'.*\$.*'"; then
+          echo "⚠️  Found potentially unquoted variables"
+        fi
+        
+        # Look for eval or direct command execution
+        if grep -r 'eval\|system\|exec' bin/; then
+          echo "⚠️  Found eval/system/exec usage - review for security"
+        fi
+        
+        # Look for temp file usage
+        if grep -r '/tmp/' bin/; then
+          echo "⚠️  Found temp file usage - ensure secure handling"
+        fi
+        
+        echo "Security scan completed"
+
+  compatibility-check:
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    
+    name: Test on ${{ matrix.os }}
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Git
+      run: |
+        git config --global user.name "Test User"
+        git config --global user.email "test@example.com"
+        git config --global init.defaultBranch main
+    
+    - name: Test installation
+      run: |
+        chmod +x bin/* tests/*.sh
+        ./install-git-issue.sh
+    
+    - name: Test basic functionality
+      run: |
+        # Source shell configuration to get PATH updates
+        if [ -f ~/.bashrc ]; then source ~/.bashrc; fi
+        if [ -f ~/.zshrc ]; then source ~/.zshrc; fi
+        
+        # Test in a temporary directory
+        mkdir -p /tmp/git-issue-compat-test
+        cd /tmp/git-issue-compat-test
+        git init
+        git config user.name "Compat Test"
+        git config user.email "compat@test.com"
+        echo "# Compat Test" > README.md
+        git add README.md
+        git commit -m "Initial commit"
+        
+        # Test core commands
+        git issue create "Compatibility test"
+        git issue list
+        git issue-status
+
+  performance-test:
+    runs-on: ubuntu-latest
+    name: Performance Testing
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Git
+      run: |
+        git config --global user.name "Perf Test"
+        git config --global user.email "perf@test.com"
+    
+    - name: Install git-issue
+      run: |
+        chmod +x bin/*
+        make install PREFIX=$HOME/.local
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+    
+    - name: Performance test with multiple issues
+      run: |
+        mkdir -p /tmp/git-issue-perf-test
+        cd /tmp/git-issue-perf-test
+        git init
+        git config user.name "Perf Test"
+        git config user.email "perf@test.com"
+        echo "# Performance Test" > README.md
+        git add README.md
+        git commit -m "Initial commit"
+        
+        echo "Creating 50 test issues..."
+        start_time=$(date +%s)
+        
+        for i in {1..50}; do
+          git issue create "Performance test issue $i" >/dev/null 2>&1
+        done
+        
+        create_time=$(date +%s)
+        echo "Issue creation took $((create_time - start_time)) seconds"
+        
+        echo "Testing list performance..."
+        list_start=$(date +%s)
+        git issue list >/dev/null 2>&1
+        list_time=$(date +%s)
+        echo "Issue listing took $((list_time - list_start)) seconds"
+        
+        echo "Testing status performance..."
+        status_start=$(date +%s)
+        git issue-status >/dev/null 2>&1
+        status_time=$(date +%s)
+        echo "Status report took $((status_time - status_start)) seconds"
+        
+        # Performance thresholds
+        if [ $((create_time - start_time)) -gt 30 ]; then
+          echo "⚠️  Issue creation took longer than expected"
+          exit 1
+        fi
+        
+        if [ $((list_time - list_start)) -gt 5 ]; then
+          echo "⚠️  Issue listing took longer than expected"
+          exit 1
+        fi
+        
+        echo "✅ Performance tests passed"

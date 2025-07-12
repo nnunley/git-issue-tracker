@@ -1,5 +1,6 @@
 #!/bin/bash
-# git-issue: Git-native issue tracking using git notes and hash-based IDs
+# git-issue: Issue tracking using git notes (or XDG directories) and hash-based IDs
+# Supports both git repositories and standalone XDG directory storage
 
 set -e
 
@@ -13,6 +14,78 @@ NC='\033[0m' # No Color
 # Issue states and priorities
 STATES=("open" "in-progress" "review" "done" "blocked")
 PRIORITIES=("low" "medium" "high" "critical")
+
+# Storage backend detection
+STORAGE_TYPE=""
+ISSUE_REPO_DIR=""
+ORIGINAL_GIT_DIR=""
+
+# Detect storage backend (git or XDG bare repo)
+detect_storage_backend() {
+    # Only use git mode if we have a local .git directory
+    if [[ -d ".git" ]] || [[ -f ".git" ]]; then
+        STORAGE_TYPE="git"
+        echo -e "${BLUE}Using current git repository${NC}" >&2
+    else
+        STORAGE_TYPE="xdg"
+        # Use platform-appropriate data directory with bare git repo
+        local data_home
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS: Use Application Support
+            data_home="${XDG_DATA_HOME:-$HOME/Library/Application Support}"
+        else
+            # Linux/Unix: Use XDG Base Directory specification
+            data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+        fi
+        local project_name=$(basename "$(pwd)")
+        ISSUE_REPO_DIR="$data_home/git-issue/$project_name.git"
+        
+        # Initialize bare git repo if it doesn't exist
+        if [[ ! -d "$ISSUE_REPO_DIR" ]]; then
+            echo -e "${YELLOW}Creating bare git repository for issue tracking: $ISSUE_REPO_DIR${NC}" >&2
+            mkdir -p "$ISSUE_REPO_DIR"
+            git init --bare "$ISSUE_REPO_DIR" >/dev/null 2>&1
+            
+            # Set up git environment temporarily to create initial commit
+            local temp_git_dir="$GIT_DIR"
+            export GIT_DIR="$ISSUE_REPO_DIR"
+            
+            # Create initial commit for notes to attach to
+            local empty_tree="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            local commit=$(echo "Initial commit for issue tracking" | git commit-tree "$empty_tree")
+            git update-ref HEAD "$commit"
+            
+            # Restore git environment
+            if [[ -n "$temp_git_dir" ]]; then
+                export GIT_DIR="$temp_git_dir"
+            else
+                unset GIT_DIR
+            fi
+        fi
+        
+        # Set up git environment for XDG repo
+        ORIGINAL_GIT_DIR="$GIT_DIR"
+        export GIT_DIR="$ISSUE_REPO_DIR"
+        echo -e "${YELLOW}Using standalone git repository: $ISSUE_REPO_DIR${NC}" >&2
+    fi
+}
+
+# Clean up XDG git environment
+cleanup_xdg_environment() {
+    if [[ "$STORAGE_TYPE" == "xdg" ]]; then
+        if [[ -n "$ORIGINAL_GIT_DIR" ]]; then
+            export GIT_DIR="$ORIGINAL_GIT_DIR"
+        else
+            unset GIT_DIR
+        fi
+    fi
+}
+
+# Get storage path for issue (now always git refs)
+get_issue_storage_path() {
+    local id="$1"
+    echo "refs/notes/issue-$id"
+}
 
 # Function to display usage
 usage() {
@@ -34,9 +107,41 @@ usage() {
     exit 1
 }
 
-# Get issue note ref
+# Get issue note ref (legacy - use get_issue_storage_path)
 get_issue_ref() {
     echo "refs/notes/issue-$1"
+}
+
+# Read issue data from storage (always git notes now)
+read_issue_data() {
+    local id="$1"
+    local ref=$(get_issue_ref "$id")
+    git notes --ref="$ref" show 2>/dev/null || return 1
+}
+
+# Write issue data to storage (always git notes now)
+write_issue_data() {
+    local id="$1"
+    local data="$2"
+    local ref=$(get_issue_ref "$id")
+    
+    # For XDG repos, attach notes to HEAD commit
+    if [[ "$STORAGE_TYPE" == "xdg" ]]; then
+        echo "$data" | git notes --ref="$ref" add -f -F - HEAD
+    else
+        echo "$data" | git notes --ref="$ref" add -f -F -
+    fi
+}
+
+# List all issues (always git refs now)
+list_all_issues() {
+    git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | sort
+}
+
+# Extract issue ID from storage reference (always git refs now)
+extract_issue_id() {
+    local ref="$1"
+    echo "$ref" | sed 's/refs\/notes\/issue-//'
 }
 
 # Generate hash-based issue ID
@@ -90,11 +195,8 @@ create_issue() {
     
     echo -e "${BLUE}Creating issue with hash ID: $id${NC}"
     
-    local ref=$(get_issue_ref "$id")
-    
     # Create issue data
-    cat <<EOF | git notes --ref="$ref" add -F -
-id: $id
+    local issue_data="id: $id
 title: $title
 state: open
 priority: medium
@@ -103,8 +205,9 @@ updated: $timestamp
 author: $author
 assignee: 
 hash_source: content
----
-EOF
+---"
+    
+    write_issue_data "$id" "$issue_data"
     
     echo -e "${GREEN}✓ Created issue #$id: $title${NC}"
     echo -e "${GRAY}   Use this ID for future operations: $id${NC}"
@@ -116,11 +219,10 @@ list_issues() {
     echo ""
     
     # Find all issue refs
-    for ref in $(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | sort); do
-        id=$(echo "$ref" | sed 's/refs\/notes\/issue-//')
-        if git notes --ref="$ref" show >/dev/null 2>&1; then
+    for ref in $(list_all_issues); do
+        id=$(extract_issue_id "$ref")
+        if data=$(read_issue_data "$id" 2>/dev/null); then
             # Extract key fields
-            data=$(git notes --ref="$ref" show 2>/dev/null)
             title=$(echo "$data" | grep "^title:" | cut -d' ' -f2-)
             state=$(echo "$data" | grep "^state:" | cut -d' ' -f2)
             priority=$(echo "$data" | grep "^priority:" | cut -d' ' -f2)
@@ -146,16 +248,15 @@ list_issues() {
 # Show issue details
 show_issue() {
     local id=$1
-    local ref=$(get_issue_ref "$id")
     
-    if ! git notes --ref="$ref" show >/dev/null 2>&1; then
+    if ! data=$(read_issue_data "$id" 2>/dev/null); then
         echo -e "${RED}Issue #$id not found${NC}"
         return 1
     fi
     
     echo -e "${BLUE}Issue #$id${NC}"
     echo ""
-    git notes --ref="$ref" show
+    echo "$data"
 }
 
 # Update issue field
@@ -166,7 +267,7 @@ update_issue() {
     local ref=$(get_issue_ref "$id")
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     
-    if ! git notes --ref="$ref" show >/dev/null 2>&1; then
+    if ! read_issue_data "$id" >/dev/null 2>&1; then
         echo -e "${RED}Issue #$id not found${NC}"
         return 1
     fi
@@ -198,7 +299,7 @@ update_issue() {
     esac
     
     # Get current data
-    data=$(git notes --ref="$ref" show)
+    data=$(read_issue_data "$id")
     
     # Update the field
     updated_data=$(echo "$data" | awk -v field="$field:" -v value="$value" -v ts="$timestamp" '
@@ -212,7 +313,7 @@ update_issue() {
     ')
     
     # Save updated data
-    echo "$updated_data" | git notes --ref="$ref" add -f -F -
+    write_issue_data "$id" "$updated_data"
     echo -e "${GREEN}✓ Updated issue #$id: $field = $value${NC}"
 }
 
@@ -220,23 +321,21 @@ update_issue() {
 add_comment() {
     local id=$1
     local comment="${@:2}"
-    local ref=$(get_issue_ref "$id")
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local author=$(git config user.name || echo "Unknown")
     
-    if ! git notes --ref="$ref" show >/dev/null 2>&1; then
+    if ! read_issue_data "$id" >/dev/null 2>&1; then
         echo -e "${RED}Issue #$id not found${NC}"
         return 1
     fi
     
     # Get current data and append comment
-    data=$(git notes --ref="$ref" show)
-    echo "$data" > /tmp/issue_$$.tmp
-    echo "" >> /tmp/issue_$$.tmp
-    echo "[$timestamp] $author: $comment" >> /tmp/issue_$$.tmp
+    data=$(read_issue_data "$id")
+    updated_data="$data
+
+[$timestamp] $author: $comment"
     
-    cat /tmp/issue_$$.tmp | git notes --ref="$ref" add -f -F -
-    rm -f /tmp/issue_$$.tmp
+    write_issue_data "$id" "$updated_data"
     
     echo -e "${GREEN}✓ Added comment to issue #$id${NC}"
 }
@@ -245,9 +344,8 @@ add_comment() {
 link_issue() {
     local id=$1
     local commit=$2
-    local ref=$(get_issue_ref "$id")
     
-    if ! git notes --ref="$ref" show >/dev/null 2>&1; then
+    if ! read_issue_data "$id" >/dev/null 2>&1; then
         echo -e "${RED}Issue #$id not found${NC}"
         return 1
     fi
@@ -268,6 +366,9 @@ link_issue() {
         "$(dirname "$0")/git-note-issue.sh" add "$commit" "#$id" "Linked to issue #$id" 2>/dev/null || true
     fi
 }
+
+# Initialize storage backend before any operations
+detect_storage_backend
 
 # Main script logic
 case "$1" in
@@ -345,3 +446,6 @@ EOF
         usage
         ;;
 esac
+
+# Clean up XDG environment if needed
+cleanup_xdg_environment

@@ -11,6 +11,8 @@ A lightweight, git notes-based issue tracking CLI that integrates seamlessly wit
 - ✅ **Works offline** - no server required
 - ✅ **Native git integration** - works as `git issue` subcommand
 - ✅ **Commit linking** - bidirectional issue-commit relationships
+- ✅ **XDG directory support** - works outside git repositories
+- ✅ **Comprehensive testing** - unit, integration, and CI/CD tests
 
 ## 🚀 Quick Start
 
@@ -130,6 +132,18 @@ hash_source: content
 
 [2025-07-12T16:57:56Z] Norman Nunley, Jr: Started responsive breakpoint work
 ```
+
+### Storage Backends
+
+**Git Repository** (default when in git repo):
+- Uses git notes in current repository
+- Fully integrated with git workflow
+- Issues sync with git remotes
+
+**XDG Directory** (fallback when no git repo):
+- Creates bare git repository in `$XDG_DATA_HOME/git-issue/$(project).git`
+- Same git notes format and commands
+- Isolated per-project issue tracking
 
 ## 📚 Documentation
 

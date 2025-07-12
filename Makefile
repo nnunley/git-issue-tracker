@@ -31,12 +31,25 @@ test:
 	@echo "Running git-issue tests..."
 	@if command -v git-issue >/dev/null 2>&1; then \
 		echo "✅ git-issue found in PATH"; \
-		git issue create "Test issue from Makefile" && \
-		echo "✅ Issue creation test passed"; \
+		echo "Running comprehensive test suite..."; \
+		chmod +x tests/*.sh; \
+		./tests/test_runner.sh; \
 	else \
 		echo "❌ git-issue not found in PATH"; \
 		exit 1; \
 	fi
+
+test-unit:
+	@echo "Running unit tests..."
+	chmod +x tests/unit_tests.sh
+	./tests/unit_tests.sh
+
+test-integration:
+	@echo "Running integration tests..."
+	chmod +x tests/integration_tests.sh
+	./tests/integration_tests.sh
+
+test-all: test-unit test-integration test
 
 clean:
 	@echo "Cleaning up..."
