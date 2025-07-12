@@ -1,0 +1,347 @@
+#!/bin/bash
+# git-issue: Git-native issue tracking using git notes and hash-based IDs
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Issue states and priorities
+STATES=("open" "in-progress" "review" "done" "blocked")
+PRIORITIES=("low" "medium" "high" "critical")
+
+# Function to display usage
+usage() {
+    echo "Usage: git issue [COMMAND] [OPTIONS]"
+    echo ""
+    echo "Commands:"
+    echo "  create <title>             Create new issue (auto-generates hash ID)"
+    echo "  list                       List all issues"
+    echo "  show <id>                  Show issue details"
+    echo "  update <id> <field> <val>  Update issue (state/priority/assignee)"
+    echo "  comment <id> <text>        Add comment to issue"
+    echo "  link <id> <commit>         Link issue to commit"
+    echo ""
+    echo "Examples:"
+    echo "  git issue create 'Add user authentication'"
+    echo "  git issue update a1b2c3d state in-progress"
+    echo "  git issue comment a1b2c3d 'Started implementation'"
+    echo ""
+    exit 1
+}
+
+# Get issue note ref
+get_issue_ref() {
+    echo "refs/notes/issue-$1"
+}
+
+# Generate hash-based issue ID
+generate_issue_id() {
+    local title="$1"
+    local author="$2"
+    local timestamp="$3"
+    
+    # Create deterministic content for hashing
+    local content="issue: $title
+author: $author
+created: $timestamp"
+    
+    # Generate git-style hash
+    local hash=$(echo "$content" | git hash-object --stdin)
+    
+    # Use short version (7 characters, git default)
+    echo "${hash:0:7}"
+}
+
+# Check if issue exists
+issue_exists() {
+    local id="$1"
+    local ref=$(get_issue_ref "$id")
+    git notes --ref="$ref" show >/dev/null 2>&1
+}
+
+# Create new issue with auto-generated hash ID
+create_issue() {
+    local title="${@}"
+    local author=$(git config user.name || echo "Unknown")
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    # Generate hash ID
+    local id=$(generate_issue_id "$title" "$author" "$timestamp")
+    
+    # Check for conflicts (rare but possible)
+    local attempts=0
+    while issue_exists "$id" && [[ $attempts -lt 100 ]]; do
+        echo "⚠️  Hash collision detected for $id, regenerating..."
+        # Add microsecond precision to avoid collision
+        timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
+        id=$(generate_issue_id "$title" "$author" "$timestamp")
+        ((attempts++))
+    done
+    
+    if [[ $attempts -ge 100 ]]; then
+        echo -e "${RED}Unable to generate unique ID after 100 attempts${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}Creating issue with hash ID: $id${NC}"
+    
+    local ref=$(get_issue_ref "$id")
+    
+    # Create issue data
+    cat <<EOF | git notes --ref="$ref" add -F -
+id: $id
+title: $title
+state: open
+priority: medium
+created: $timestamp
+updated: $timestamp
+author: $author
+assignee: 
+hash_source: content
+---
+EOF
+    
+    echo -e "${GREEN}✓ Created issue #$id: $title${NC}"
+    echo -e "${GRAY}   Use this ID for future operations: $id${NC}"
+}
+
+# List all issues
+list_issues() {
+    echo -e "${BLUE}Issues:${NC}"
+    echo ""
+    
+    # Find all issue refs
+    for ref in $(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | sort); do
+        id=$(echo "$ref" | sed 's/refs\/notes\/issue-//')
+        if git notes --ref="$ref" show >/dev/null 2>&1; then
+            # Extract key fields
+            data=$(git notes --ref="$ref" show 2>/dev/null)
+            title=$(echo "$data" | grep "^title:" | cut -d' ' -f2-)
+            state=$(echo "$data" | grep "^state:" | cut -d' ' -f2)
+            priority=$(echo "$data" | grep "^priority:" | cut -d' ' -f2)
+            assignee=$(echo "$data" | grep "^assignee:" | cut -d' ' -f2-)
+            
+            # Color based on state
+            case "$state" in
+                done) color=$GRAY ;;
+                blocked) color=$RED ;;
+                in-progress) color=$YELLOW ;;
+                review) color=$BLUE ;;
+                *) color=$NC ;;
+            esac
+            
+            # Format output
+            echo -ne "${color}#${id} [${state}] ${title} (P: ${priority})"
+            [ -n "$assignee" ] && echo -n " → $assignee"
+            echo -e "${NC}"
+        fi
+    done
+}
+
+# Show issue details
+show_issue() {
+    local id=$1
+    local ref=$(get_issue_ref "$id")
+    
+    if ! git notes --ref="$ref" show >/dev/null 2>&1; then
+        echo -e "${RED}Issue #$id not found${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}Issue #$id${NC}"
+    echo ""
+    git notes --ref="$ref" show
+}
+
+# Update issue field
+update_issue() {
+    local id=$1
+    local field=$2
+    local value="${@:3}"
+    local ref=$(get_issue_ref "$id")
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    if ! git notes --ref="$ref" show >/dev/null 2>&1; then
+        echo -e "${RED}Issue #$id not found${NC}"
+        return 1
+    fi
+    
+    # Validate field
+    case "$field" in
+        state)
+            if [[ ! " ${STATES[@]} " =~ " ${value} " ]]; then
+                echo -e "${RED}Invalid state: $value${NC}"
+                echo "Valid states: ${STATES[*]}"
+                return 1
+            fi
+            ;;
+        priority)
+            if [[ ! " ${PRIORITIES[@]} " =~ " ${value} " ]]; then
+                echo -e "${RED}Invalid priority: $value${NC}"
+                echo "Valid priorities: ${PRIORITIES[*]}"
+                return 1
+            fi
+            ;;
+        assignee)
+            # Accept any value for assignee
+            ;;
+        *)
+            echo -e "${RED}Invalid field: $field${NC}"
+            echo "Valid fields: state, priority, assignee"
+            return 1
+            ;;
+    esac
+    
+    # Get current data
+    data=$(git notes --ref="$ref" show)
+    
+    # Update the field
+    updated_data=$(echo "$data" | awk -v field="$field:" -v value="$value" -v ts="$timestamp" '
+        BEGIN { found=0; in_body=0 }
+        /^---$/ { in_body=1; print; next }
+        in_body { print; next }
+        $1 == field { print field, value; found=1; next }
+        $1 == "updated:" { print "updated:", ts; next }
+        { print }
+        END { if (!found && !in_body) print field, value }
+    ')
+    
+    # Save updated data
+    echo "$updated_data" | git notes --ref="$ref" add -f -F -
+    echo -e "${GREEN}✓ Updated issue #$id: $field = $value${NC}"
+}
+
+# Add comment to issue
+add_comment() {
+    local id=$1
+    local comment="${@:2}"
+    local ref=$(get_issue_ref "$id")
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local author=$(git config user.name || echo "Unknown")
+    
+    if ! git notes --ref="$ref" show >/dev/null 2>&1; then
+        echo -e "${RED}Issue #$id not found${NC}"
+        return 1
+    fi
+    
+    # Get current data and append comment
+    data=$(git notes --ref="$ref" show)
+    echo "$data" > /tmp/issue_$$.tmp
+    echo "" >> /tmp/issue_$$.tmp
+    echo "[$timestamp] $author: $comment" >> /tmp/issue_$$.tmp
+    
+    cat /tmp/issue_$$.tmp | git notes --ref="$ref" add -f -F -
+    rm -f /tmp/issue_$$.tmp
+    
+    echo -e "${GREEN}✓ Added comment to issue #$id${NC}"
+}
+
+# Link issue to commit
+link_issue() {
+    local id=$1
+    local commit=$2
+    local ref=$(get_issue_ref "$id")
+    
+    if ! git notes --ref="$ref" show >/dev/null 2>&1; then
+        echo -e "${RED}Issue #$id not found${NC}"
+        return 1
+    fi
+    
+    # Validate commit
+    if ! git rev-parse "$commit" >/dev/null 2>&1; then
+        echo -e "${RED}Invalid commit: $commit${NC}"
+        return 1
+    fi
+    
+    commit_hash=$(git rev-parse --short "$commit")
+    
+    # Add link as comment
+    add_comment "$id" "Linked to commit: $commit_hash"
+    
+    # Also add note to commit
+    if [ -f "$(dirname "$0")/git-note-issue.sh" ]; then
+        "$(dirname "$0")/git-note-issue.sh" add "$commit" "#$id" "Linked to issue #$id" 2>/dev/null || true
+    fi
+}
+
+# Main script logic
+case "$1" in
+    create)
+        if [ $# -lt 2 ]; then
+            echo -e "${RED}Error: 'create' requires title${NC}"
+            usage
+        fi
+        create_issue "${@:2}"
+        ;;
+    add)
+        # Legacy support - redirect to create
+        echo -e "${YELLOW}Note: 'add' is deprecated, use 'create' for auto-generated hash IDs${NC}"
+        if [ $# -lt 3 ]; then
+            echo -e "${RED}Error: 'add' requires id and title${NC}"
+            usage
+        fi
+        # Manual ID creation (legacy)
+        manual_id="$2"
+        manual_title="${@:3}"
+        if issue_exists "$manual_id"; then
+            echo -e "${RED}Issue #$manual_id already exists${NC}"
+            exit 1
+        fi
+        # Create with manual ID
+        ref=$(get_issue_ref "$manual_id")
+        timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        author=$(git config user.name || echo "Unknown")
+        cat <<EOF | git notes --ref="$ref" add -F -
+id: $manual_id
+title: $manual_title
+state: open
+priority: medium
+created: $timestamp
+updated: $timestamp
+author: $author
+assignee: 
+hash_source: manual
+---
+EOF
+        echo -e "${GREEN}✓ Created issue #$manual_id: $manual_title${NC}"
+        ;;
+    list)
+        list_issues
+        ;;
+    show)
+        if [ $# -lt 2 ]; then
+            echo -e "${RED}Error: 'show' requires issue id${NC}"
+            usage
+        fi
+        show_issue "$2"
+        ;;
+    update)
+        if [ $# -lt 4 ]; then
+            echo -e "${RED}Error: 'update' requires id, field, and value${NC}"
+            usage
+        fi
+        update_issue "$2" "$3" "${@:4}"
+        ;;
+    comment)
+        if [ $# -lt 3 ]; then
+            echo -e "${RED}Error: 'comment' requires id and text${NC}"
+            usage
+        fi
+        add_comment "$2" "${@:3}"
+        ;;
+    link)
+        if [ $# -lt 3 ]; then
+            echo -e "${RED}Error: 'link' requires id and commit${NC}"
+            usage
+        fi
+        link_issue "$2" "$3"
+        ;;
+    *)
+        usage
+        ;;
+esac

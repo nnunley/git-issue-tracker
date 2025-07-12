@@ -1,0 +1,124 @@
+#!/bin/bash
+# Script to add issue tracking and thoughts to git commits using git notes
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Function to display usage
+usage() {
+    echo "Usage: $0 [COMMAND] [OPTIONS]"
+    echo ""
+    echo "Commands:"
+    echo "  add <commit> <issue> [thoughts]  Add issue note to commit"
+    echo "  list                              List all commits with notes"
+    echo "  show <commit>                     Show note for specific commit"
+    echo "  template                          Show note template"
+    echo ""
+    echo "Examples:"
+    echo "  $0 add HEAD '#102' 'Started session management implementation'"
+    echo "  $0 add abc123 '#103,#211' 'RBAC affects user admin pages too'"
+    echo "  $0 list"
+    echo ""
+    exit 1
+}
+
+# Function to add note
+add_note() {
+    local commit=$1
+    local issue=$2
+    local thoughts=$3
+    
+    # Create formatted note
+    local note="Issue: $issue"
+    if [ -n "$thoughts" ]; then
+        note="${note}
+Thoughts: $thoughts"
+    fi
+    note="${note}
+Date: $(date '+%Y-%m-%d %H:%M:%S')
+Author: $(git config user.name)"
+    
+    # Add or append to existing note
+    if git notes show "$commit" >/dev/null 2>&1; then
+        # Append to existing note
+        existing=$(git notes show "$commit")
+        echo -e "${existing}\n\n---\n\n${note}" | git notes add -f -F - "$commit"
+        echo -e "${GREEN}✓ Appended note to commit $commit${NC}"
+    else
+        # Add new note
+        echo "$note" | git notes add -F - "$commit"
+        echo -e "${GREEN}✓ Added note to commit $commit${NC}"
+    fi
+}
+
+# Function to list commits with notes
+list_notes() {
+    echo -e "${BLUE}Commits with issue notes:${NC}"
+    echo ""
+    git log --format="%h %s" --notes | grep -B1 "Notes:" | grep -v "^--$" | \
+    while IFS= read -r line; do
+        if [[ $line == *"Notes:"* ]]; then
+            echo ""
+        else
+            echo -e "${YELLOW}$line${NC}"
+        fi
+    done
+}
+
+# Function to show note for specific commit
+show_note() {
+    local commit=$1
+    
+    if git notes show "$commit" >/dev/null 2>&1; then
+        echo -e "${BLUE}Note for commit $commit:${NC}"
+        echo ""
+        git notes show "$commit"
+    else
+        echo -e "${RED}No note found for commit $commit${NC}"
+    fi
+}
+
+# Function to show template
+show_template() {
+    echo -e "${BLUE}Git Note Template:${NC}"
+    echo ""
+    echo "Issue: #<issue-number> [or 'Multiple: #102,#103' or 'None']"
+    echo "Thoughts: <your thoughts about the implementation>"
+    echo "TODO: <any remaining work>"
+    echo "Dependencies: <related commits or features>"
+    echo ""
+    echo -e "${YELLOW}Use this template when adding notes manually with 'git notes add'${NC}"
+}
+
+# Main script logic
+case "$1" in
+    add)
+        if [ $# -lt 3 ]; then
+            echo -e "${RED}Error: 'add' requires at least commit and issue${NC}"
+            usage
+        fi
+        add_note "$2" "$3" "$4"
+        ;;
+    list)
+        list_notes
+        ;;
+    show)
+        if [ $# -lt 2 ]; then
+            echo -e "${RED}Error: 'show' requires a commit reference${NC}"
+            usage
+        fi
+        show_note "$2"
+        ;;
+    template)
+        show_template
+        ;;
+    *)
+        usage
+        ;;
+esac

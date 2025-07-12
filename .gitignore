@@ -1,0 +1,17 @@
+# Temporary files
+*.tmp
+*~
+.DS_Store
+
+# Test artifacts
+test-repo/
+.test-*
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
