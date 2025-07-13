@@ -1,10 +1,10 @@
-# Issue-Commit Linking System
+# Issue-Commit Linking
 
-This document describes how to link commits to issues using our git notes-based tracking system, providing full traceability between code changes and issue resolution.
+This document describes how to link commits to issues using git-issue, providing full traceability between code changes and issue resolution.
 
-## 🔗 Overview
+## Overview
 
-Our system creates bidirectional links between issues and commits using git notes, maintaining a complete audit trail without modifying commit history.
+git-issue creates bidirectional links between issues and commits using git notes, maintaining a complete audit trail without modifying commit history.
 
 ### Key Benefits
 - **Full traceability**: See which commits address which issues
@@ -13,12 +13,12 @@ Our system creates bidirectional links between issues and commits using git note
 - **Searchable**: Find commits by issue or issues by commit
 - **Version controlled**: All links are versioned in git
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Link a Commit to an Issue
 ```bash
 # Link commit a3380db to issue #213
-./scripts/simple-issue-tracker.sh link 213 a3380db
+git issue link 213 a3380db
 ```
 
 This creates:
@@ -34,7 +34,7 @@ git log --notes --oneline -10
 git show --notes a3380db
 
 # View all commits linked to an issue
-./scripts/simple-issue-tracker.sh show 213
+git issue show 213
 ```
 
 ## 📋 Detailed Usage
@@ -45,17 +45,17 @@ git show --notes a3380db
 ```bash
 # After making a commit that addresses an issue
 git commit -m "refactor: Improve UI component structure"
-./scripts/simple-issue-tracker.sh link 213 HEAD
+git issue link 213 HEAD
 ```
 
 **Link existing commits:**
 ```bash
 # Link specific commit hash
-./scripts/simple-issue-tracker.sh link 102 9d5b93a
+git issue link 102 9d5b93a
 
 # Link multiple commits to same issue
-./scripts/simple-issue-tracker.sh link 102 abc123
-./scripts/simple-issue-tracker.sh link 102 def456
+git issue link 102 abc123
+git issue link 102 def456
 ```
 
 ### Viewing Relationships
@@ -63,7 +63,7 @@ git commit -m "refactor: Improve UI component structure"
 **Issue-centric view:**
 ```bash
 # See all commits for an issue
-./scripts/simple-issue-tracker.sh show 213
+git issue show 213
 
 # Output shows:
 # id: 213
@@ -108,7 +108,7 @@ git log --notes -S "issue #213" --all
 **Find issues by commit:**
 ```bash
 # Search issue tracker for specific commit
-./scripts/simple-issue-tracker.sh search "a3380db"
+git issue search "a3380db"
 ```
 
 **Historical analysis:**
@@ -128,15 +128,15 @@ git log --oneline refs/notes/issue-213
 ```bash
 # Link a series of commits to the same issue
 for commit in abc123 def456 ghi789; do
-    ./scripts/simple-issue-tracker.sh link 102 $commit
+    git issue link 102 $commit
 done
 ```
 
 **Link one commit to multiple issues:**
 ```bash
 # If a commit addresses multiple issues
-./scripts/simple-issue-tracker.sh link 102 abc123
-./scripts/simple-issue-tracker.sh link 103 abc123
+git issue link 102 abc123
+git issue link 103 abc123
 ```
 
 ### Integration with Workflow
@@ -144,25 +144,25 @@ done
 **During development:**
 ```bash
 # 1. Start working on an issue
-./scripts/simple-issue-tracker.sh update 213 state in-progress
+git issue update 213 state in-progress
 
 # 2. Make commits as normal
 git commit -m "refactor: Extract common UI patterns"
 
 # 3. Link commits as you go
-./scripts/simple-issue-tracker.sh link 213 HEAD
+git issue link 213 HEAD
 
 # 4. Add progress comments
-./scripts/simple-issue-tracker.sh comment 213 "Completed semantic HTML improvements"
+git issue comment 213 "Completed semantic HTML improvements"
 
 # 5. Mark complete when done
-./scripts/simple-issue-tracker.sh update 213 state done
+git issue update 213 state done
 ```
 
 **Code review integration:**
 ```bash
 # During review, see all commits for an issue
-./scripts/simple-issue-tracker.sh show 213
+git issue show 213
 
 # Review specific commit with issue context
 git show --notes abc123
@@ -175,9 +175,9 @@ git show --notes abc123
 **Issue completion tracking:**
 ```bash
 # See which issues have linked commits (active work)
-for issue in $(./scripts/simple-issue-tracker.sh list | grep -o '#[0-9]*'); do
+for issue in $(git issue list | grep -o '#[0-9]*'); do
     echo "=== Issue $issue ==="
-    ./scripts/simple-issue-tracker.sh show ${issue#\#} | grep "Linked to commit"
+    git issue show ${issue#\#} | grep "Linked to commit"
 done
 ```
 
@@ -239,10 +239,10 @@ git push origin refs/notes/commits refs/notes/issue-*
 **"Issue not found" error:**
 ```bash
 # Check if issue exists
-./scripts/simple-issue-tracker.sh list | grep "#213"
+git issue list | grep "#213"
 
 # Create issue if missing
-./scripts/simple-issue-tracker.sh add 213 "Issue title"
+git issue add 213 "Issue title"
 ```
 
 **"Invalid commit" error:**
@@ -269,7 +269,7 @@ git log --notes
 **Remove broken links:**
 ```bash
 # Edit issue to remove bad commit reference
-./scripts/simple-issue-tracker.sh show 213
+git issue show 213
 # Manually edit if needed
 
 # Remove note from commit
@@ -279,7 +279,7 @@ git notes remove abc123
 **Reorganize links:**
 ```bash
 # Move link from one issue to another
-./scripts/simple-issue-tracker.sh link 214 abc123  # Add to new issue
+git issue link 214 abc123  # Add to new issue
 # Then manually remove from old issue
 ```
 

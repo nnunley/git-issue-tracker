@@ -1,0 +1,111 @@
+#!/bin/bash
+# gh-to-git-issue: Convert GitHub issues JSON to git-issue format
+# Usage: gh issue list --json ... | gh-to-git-issue
+
+set -e
+
+# Configuration - Input limits
+readonly MAX_TITLE_LENGTH=200
+readonly MAX_DESCRIPTION_LENGTH=10000
+readonly MAX_AUTHOR_LENGTH=100
+readonly MAX_ASSIGNEE_LENGTH=100
+readonly MAX_LABELS_LENGTH=500
+
+# Simple mapping functions
+map_state() { case "$1" in closed) echo "done";; *) echo "open";; esac; }
+map_priority() { case "$1" in *critical*|*urgent*) echo "critical";; *high*) echo "high";; *low*) echo "low";; *) echo "medium";; esac; }
+
+# Main conversion function
+convert_issue() {
+    local issue_json="$1"
+    
+    # Use jq with comprehensive validation and length limits
+    local extracted
+    extracted=$(echo "$issue_json" | jq -r --argjson max_title "$MAX_TITLE_LENGTH" \
+        --argjson max_desc "$MAX_DESCRIPTION_LENGTH" \
+        --argjson max_author "$MAX_AUTHOR_LENGTH" \
+        --argjson max_assignee "$MAX_ASSIGNEE_LENGTH" \
+        --argjson max_labels "$MAX_LABELS_LENGTH" '
+        # Validate required fields exist
+        if (.number and .title and .state and .author.login and .createdAt and .updatedAt and .url) then
+            {
+                num: .number,
+                title: (.title | tostring | .[0:$max_title]),
+                body: ((.body // "") | tostring | .[0:$max_desc]),
+                author: (.author.login | tostring | .[0:$max_author]),
+                created: .createdAt,
+                updated: .updatedAt,
+                url: .url,
+                assignee: ((.assignees[0].login // "") | tostring | .[0:$max_assignee]),
+                labels: ((.labels | map(.name) | join(",")) | .[0:$max_labels]),
+                raw_state: .state
+            }
+        else
+            error("Missing required fields")
+        end
+    ') || {
+        echo "Error: Invalid or incomplete issue JSON, skipping" >&2
+        return 1
+    }
+    
+    # Extract values from jq output
+    local num=$(echo "$extracted" | jq -r '.num')
+    local title=$(echo "$extracted" | jq -r '.title')
+    local body=$(echo "$extracted" | jq -r '.body')
+    local author=$(echo "$extracted" | jq -r '.author')
+    local created=$(echo "$extracted" | jq -r '.created')
+    local updated=$(echo "$extracted" | jq -r '.updated')
+    local url=$(echo "$extracted" | jq -r '.url')
+    local assignee=$(echo "$extracted" | jq -r '.assignee')
+    local labels=$(echo "$extracted" | jq -r '.labels')
+    local raw_state=$(echo "$extracted" | jq -r '.raw_state')
+    
+    # Basic validation for critical fields
+    if [[ -z "$title" || -z "$author" || ! "$num" =~ ^[0-9]+$ ]]; then
+        echo "Error: Invalid issue data after processing" >&2
+        return 1
+    fi
+    
+    # Map state and priority
+    local state=$(map_state "$raw_state")
+    local priority=$(map_priority "$labels")
+    
+    # Generate deterministic ID
+    local id=$(echo "github:$num|$title|$author|$created" | git hash-object --stdin | head -c 7)
+    
+    # Output git-issue format (only non-empty fields)
+    {
+        echo "id: $id"
+        echo "title: $title"
+        [[ -n "$body" ]] && echo "description: $body"
+        echo "state: $state"
+        echo "priority: $priority"
+        [[ -n "$labels" ]] && echo "labels: $labels"
+        echo "github_id: $num"
+        echo "github_url: $url"
+        echo "created: $created"
+        echo "updated: $updated"
+        echo "author: $author"
+        [[ -n "$assignee" ]] && echo "assignee: $assignee"
+        echo "hash_source: github_import"
+        echo "---"
+        echo ""  # Single separator line between issues
+    }
+}
+
+# Export functions for xargs
+export -f map_state map_priority
+
+# Validate input is a JSON array and process
+input=$(cat)
+
+# Validate it's a JSON array
+if ! echo "$input" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "Error: Input must be a JSON array" >&2
+    exit 1
+fi
+
+# Process each issue
+echo "$input" | jq -c '.[]' | while read -r issue; do
+    convert_issue "$issue"
+done

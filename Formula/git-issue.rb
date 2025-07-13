@@ -13,11 +13,13 @@ class GitIssue < Formula
   head "https://github.com/your-username/git-issue-tracker.git"
 
   depends_on "git"
+  depends_on "jq"
 
   def install
     bin.install "bin/git-issue"
     bin.install "bin/git-issue-status"
     bin.install "bin/git-note-commit"
+    bin.install "bin/gh-to-git-issue"
     
     # Install documentation
     doc.install Dir["docs/*"]

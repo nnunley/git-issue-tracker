@@ -1,32 +1,29 @@
 # Git Notes Workflow
 
-This document explains how we use git notes to annotate commits with issue tracking and implementation thoughts.
+This document explains how git-issue uses git notes to annotate commits with issue tracking information.
 
 ## Overview
 
-Git notes allow us to add metadata to commits without modifying the commits themselves. We use them to:
+Git notes allow adding metadata to commits without modifying the commits themselves. git-issue uses them to:
 
-1. **Track Issues**: Link commits to GitHub issues
-2. **Document Thoughts**: Record implementation decisions and context
-3. **Add TODOs**: Note remaining work or follow-ups
+1. **Track Issues**: Link commits to issues
+2. **Document Context**: Record implementation decisions  
+3. **Add Notes**: Note remaining work or follow-ups
 4. **Track Dependencies**: Link related commits or features
 
 ## Quick Start
 
-### Using the Helper Script
+### Using git-issue Commands
 
 ```bash
-# Add a note to a commit
-./scripts/git-note-issue.sh add HEAD '#102' 'Started session management implementation'
+# Link a commit to an issue (automatically adds git note)
+git issue link 102 HEAD
 
-# List all commits with notes
-./scripts/git-note-issue.sh list
+# View issue details (shows linked commits)
+git issue show 102
 
-# Show note for specific commit
-./scripts/git-note-issue.sh show abc123
-
-# See template format
-./scripts/git-note-issue.sh template
+# List all issues with commit links
+git issue list
 ```
 
 ### Manual Git Notes Commands
@@ -70,14 +67,17 @@ Author: <developer name>
 
 ## Examples
 
-### Single Issue Note
+### Single Issue Link
 ```bash
-./scripts/git-note-issue.sh add HEAD '#103' 'Implemented RBAC middleware with role hierarchy'
+git issue link 103 HEAD
+git issue comment 103 "Implemented RBAC middleware with role hierarchy"
 ```
 
-### Multiple Issues Note
+### Multiple Issues
 ```bash
-./scripts/git-note-issue.sh add HEAD '#103,#211' 'RBAC implementation affects user admin pages'
+git issue link 103 HEAD
+git issue link 211 HEAD
+git issue comment 103 "RBAC implementation affects user admin pages"
 ```
 
 ### Complex Note with Manual Edit

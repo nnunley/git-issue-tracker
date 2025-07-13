@@ -15,9 +15,12 @@ NC='\033[0m' # No Color
 STATES=("open" "in-progress" "review" "done" "blocked")
 PRIORITIES=("low" "medium" "high" "critical")
 
-# Storage backend detection
+# Storage backend detection  
 STORAGE_TYPE=""
 ISSUE_REPO_DIR=""
+
+# OPTIMIZED: Cached variables for performance
+CACHED_USER_NAME=""
 ORIGINAL_GIT_DIR=""
 
 # Detect storage backend (git or XDG bare repo)
@@ -81,6 +84,14 @@ cleanup_xdg_environment() {
     fi
 }
 
+# OPTIMIZED: Cache git user name for performance
+get_git_user() {
+    if [[ -z "$CACHED_USER_NAME" ]]; then
+        CACHED_USER_NAME=$(git config user.name 2>/dev/null || echo "Unknown")
+    fi
+    echo "$CACHED_USER_NAME"
+}
+
 # Get storage path for issue (now always git refs)
 get_issue_storage_path() {
     local id="$1"
@@ -92,17 +103,22 @@ usage() {
     echo "Usage: git issue [COMMAND] [OPTIONS]"
     echo ""
     echo "Commands:"
-    echo "  create <title>             Create new issue (auto-generates hash ID)"
-    echo "  list                       List all issues"
-    echo "  show <id>                  Show issue details"
-    echo "  update <id> <field> <val>  Update issue (state/priority/assignee)"
-    echo "  comment <id> <text>        Add comment to issue"
-    echo "  link <id> <commit>         Link issue to commit"
+    echo "  create <title> [--description=<desc>]  Create new issue (auto-generates hash ID)"
+    echo "  list                                    List all issues"
+    echo "  show <id>                               Show issue details"
+    echo "  update <id> [--state=<state>] [--priority=<priority>] [--assignee=<assignee>] [--description=<desc>]  Update issue"
+    echo "  comment <id> <text>                     Add comment to issue"
+    echo "  link <id> <commit>                      Link issue to commit"
+    echo "  import [--stdin|--file|--bulk] <files>  Import issues from various sources"
+    echo "  export [--format=<fmt>] [<ids>]         Export issues (default: all)"
+    echo "  setup-sync [enable|disable|status]     Configure automatic git notes sync"
     echo ""
     echo "Examples:"
-    echo "  git issue create 'Add user authentication'"
-    echo "  git issue update a1b2c3d state in-progress"
+    echo "  git issue create 'Add user authentication' --description='Implement OAuth2 login'"
+    echo "  git issue update a1b2c3d --state=in-progress --priority=high"
+    echo "  git issue update a1b2c3d --assignee='John Doe' --description='Updated requirements'"
     echo "  git issue comment a1b2c3d 'Started implementation'"
+    echo "  gh issue list --json number,title,body,state,author,createdAt,updatedAt,url | gh-to-git-issue | git issue import"
     echo ""
     exit 1
 }
@@ -112,25 +128,22 @@ get_issue_ref() {
     echo "refs/notes/issue-$1"
 }
 
-# Read issue data from storage (always git notes now)
+# OPTIMIZED: Read issue data using git cat-file (plumbing)
 read_issue_data() {
     local id="$1"
     local ref=$(get_issue_ref "$id")
-    git notes --ref="$ref" show 2>/dev/null || return 1
+    git cat-file -p "$ref" 2>/dev/null || return 1
 }
 
-# Write issue data to storage (always git notes now)
+# OPTIMIZED: Write issue data using git hash-object + update-ref (plumbing)
 write_issue_data() {
     local id="$1"
     local data="$2"
     local ref=$(get_issue_ref "$id")
     
-    # For XDG repos, attach notes to HEAD commit
-    if [[ "$STORAGE_TYPE" == "xdg" ]]; then
-        echo "$data" | git notes --ref="$ref" add -f -F - HEAD
-    else
-        echo "$data" | git notes --ref="$ref" add -f -F -
-    fi
+    # Use plumbing commands for direct object creation and ref update
+    local object_hash=$(echo "$data" | git hash-object -w --stdin)
+    git update-ref "$ref" "$object_hash"
 }
 
 # List all issues (always git refs now)
@@ -169,10 +182,30 @@ issue_exists() {
     git notes --ref="$ref" show >/dev/null 2>&1
 }
 
+# Parse front matter from issue data  
+parse_front_matter() {
+    local data="$1"
+    echo "$data" | awk '/^---$/{p=1; next} /^---$/{p=0} !p && /^[a-z_]+:/ {print}'
+}
+
+# Parse comments from issue data
+parse_comments() {
+    local data="$1"
+    echo "$data" | awk '/^---$/{p++; next} p>=2 {print}'
+}
+
+# Get field value from front matter
+get_field_value() {
+    local front_matter="$1"
+    local field="$2"
+    echo "$front_matter" | grep "^$field:" | cut -d' ' -f2- | xargs
+}
+
 # Create new issue with auto-generated hash ID
 create_issue() {
-    local title="${@}"
-    local author=$(git config user.name || echo "Unknown")
+    local title="$1"
+    local description="$2"
+    local author=$(get_git_user)
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     
     # Generate hash ID
@@ -195,15 +228,18 @@ create_issue() {
     
     echo -e "${BLUE}Creating issue with hash ID: $id${NC}"
     
-    # Create issue data
+    # Create issue data (only include non-empty fields)
     local issue_data="id: $id
-title: $title
+title: $title"
+    [[ -n "$description" ]] && issue_data="$issue_data
+description: $description"
+    issue_data="$issue_data
 state: open
 priority: medium
 created: $timestamp
 updated: $timestamp
 author: $author
-assignee: 
+assignee: $author
 hash_source: content
 ---"
     
@@ -247,16 +283,62 @@ list_issues() {
 
 # Show issue details
 show_issue() {
-    local id=$1
+    local id="$1"
     
-    if ! data=$(read_issue_data "$id" 2>/dev/null); then
-        echo -e "${RED}Issue #$id not found${NC}"
+    if [[ -z "$id" ]]; then
+        echo -e "${RED}Error: Issue ID is required${NC}" >&2
         return 1
     fi
     
-    echo -e "${BLUE}Issue #$id${NC}"
-    echo ""
-    echo "$data"
+    if ! issue_exists "$id"; then
+        echo -e "${RED}Error: Issue #$id not found${NC}" >&2
+        return 1
+    fi
+    
+    local data=$(read_issue_data "$id")
+    local front_matter=$(parse_front_matter "$data")
+    local comments=$(parse_comments "$data")
+    
+    # Extract fields
+    local title=$(get_field_value "$front_matter" "title")
+    local description=$(get_field_value "$front_matter" "description")
+    local github_id=$(get_field_value "$front_matter" "github_id")
+    local github_url=$(get_field_value "$front_matter" "github_url")
+    local jira_id=$(get_field_value "$front_matter" "jira_id")
+    local jira_url=$(get_field_value "$front_matter" "jira_url")
+    local gitlab_id=$(get_field_value "$front_matter" "gitlab_id")
+    local gitlab_url=$(get_field_value "$front_matter" "gitlab_url")
+    local state=$(get_field_value "$front_matter" "state")
+    local priority=$(get_field_value "$front_matter" "priority")
+    local created=$(get_field_value "$front_matter" "created")
+    local updated=$(get_field_value "$front_matter" "updated")
+    local author=$(get_field_value "$front_matter" "author")
+    local assignee=$(get_field_value "$front_matter" "assignee")
+    
+    # Display issue
+    echo -e "${BOLD}Issue #$id${NC}"
+    echo "============"
+    echo "Title: $title"
+    [[ -n "$description" ]] && echo "Description: $description"
+    
+    # Show external provider links
+    [[ -n "$github_id" ]] && echo "GitHub: #$github_id ($github_url)"
+    [[ -n "$jira_id" ]] && echo "Jira: $jira_id ($jira_url)"
+    [[ -n "$gitlab_id" ]] && echo "GitLab: #$gitlab_id ($gitlab_url)"
+    
+    echo "State: $state"
+    echo "Priority: $priority"
+    echo "Author: $author"
+    [[ -n "$assignee" ]] && echo "Assignee: $assignee"
+    echo "Created: $created"
+    echo "Updated: $updated"
+    
+    if [[ -n "$comments" ]]; then
+        echo ""
+        echo "Comments:"
+        echo "---------"
+        echo "$comments"
+    fi
 }
 
 # Update issue field
@@ -291,9 +373,12 @@ update_issue() {
         assignee)
             # Accept any value for assignee
             ;;
+        description)
+            # Accept any value for description
+            ;;
         *)
             echo -e "${RED}Invalid field: $field${NC}"
-            echo "Valid fields: state, priority, assignee"
+            echo "Valid fields: state, priority, assignee, description"
             return 1
             ;;
     esac
@@ -317,12 +402,570 @@ update_issue() {
     echo -e "${GREEN}✓ Updated issue #$id: $field = $value${NC}"
 }
 
+# Update issue using git-style flags
+update_issue_with_flags() {
+    local id="$1"
+    shift
+    
+    if [[ -z "$id" ]]; then
+        echo -e "${RED}Error: Issue ID is required${NC}" >&2
+        return 1
+    fi
+    
+    if ! read_issue_data "$id" >/dev/null 2>&1; then
+        echo -e "${RED}Error: Issue #$id not found${NC}" >&2
+        return 1
+    fi
+    
+    local state="" priority="" assignee="" description=""
+    local has_updates=false
+    
+    # Parse git-style flags
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --state=*)
+                state="${1#*=}"
+                has_updates=true
+                ;;
+            --priority=*)
+                priority="${1#*=}"
+                has_updates=true
+                ;;
+            --assignee=*)
+                assignee="${1#*=}"
+                has_updates=true
+                ;;
+            --description=*)
+                description="${1#*=}"
+                has_updates=true
+                ;;
+            --state|--priority|--assignee|--description)
+                if [[ $# -lt 2 ]]; then
+                    echo -e "${RED}Error: $1 requires a value${NC}" >&2
+                    return 1
+                fi
+                case "$1" in
+                    --state) state="$2"; has_updates=true ;;
+                    --priority) priority="$2"; has_updates=true ;;
+                    --assignee) assignee="$2"; has_updates=true ;;
+                    --description) description="$2"; has_updates=true ;;
+                esac
+                shift
+                ;;
+            *)
+                echo -e "${RED}Error: Unknown flag '$1'${NC}" >&2
+                echo "Valid flags: --state, --priority, --assignee, --description" >&2
+                return 1
+                ;;
+        esac
+        shift
+    done
+    
+    if [[ "$has_updates" == "false" ]]; then
+        echo -e "${RED}Error: No update flags provided${NC}" >&2
+        echo "Use --state, --priority, --assignee, or --description" >&2
+        return 1
+    fi
+    
+    # Validate values
+    if [[ -n "$state" ]]; then
+        case "$state" in
+            "open"|"in-progress"|"review"|"done"|"blocked") ;;
+            *) echo -e "${RED}Error: Invalid state '$state'${NC}" >&2
+               echo "Valid states: open, in-progress, review, done, blocked" >&2
+               return 1 ;;
+        esac
+    fi
+    
+    if [[ -n "$priority" ]]; then
+        case "$priority" in
+            "low"|"medium"|"high"|"critical") ;;
+            *) echo -e "${RED}Error: Invalid priority '$priority'${NC}" >&2
+               echo "Valid priorities: low, medium, high, critical" >&2
+               return 1 ;;
+        esac
+    fi
+    
+    # Update using legacy function for each field
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local changes=""
+    
+    if [[ -n "$state" ]]; then
+        update_issue "$id" "state" "$state"
+        changes="state=$state "
+    fi
+    if [[ -n "$priority" ]]; then
+        update_issue "$id" "priority" "$priority"
+        changes="${changes}priority=$priority "
+    fi
+    if [[ -n "$assignee" ]]; then
+        update_issue "$id" "assignee" "$assignee"
+        changes="${changes}assignee=$assignee "
+    fi
+    if [[ -n "$description" ]]; then
+        update_issue "$id" "description" "$description"
+        changes="${changes}description=updated "
+    fi
+    
+    echo -e "${GREEN}✓ Updated issue #$id: ${changes}${NC}"
+}
+
+# Create issue with git-style flags
+create_issue_with_flags() {
+    local title=""
+    local description=""
+    
+    # Parse arguments for title and flags
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --description=*)
+                description="${1#*=}"
+                ;;
+            --description)
+                if [[ $# -lt 2 ]]; then
+                    echo -e "${RED}Error: --description requires a value${NC}" >&2
+                    return 1
+                fi
+                description="$2"
+                shift
+                ;;
+            --*)
+                echo -e "${RED}Error: Unknown flag '$1'${NC}" >&2
+                echo "Valid flags: --description" >&2
+                return 1
+                ;;
+            *)
+                if [[ -z "$title" ]]; then
+                    title="$1"
+                else
+                    echo -e "${RED}Error: Multiple titles provided. Use quotes for titles with spaces.${NC}" >&2
+                    return 1
+                fi
+                ;;
+        esac
+        shift
+    done
+    
+    if [[ -z "$title" ]]; then
+        echo -e "${RED}Error: Issue title is required${NC}" >&2
+        echo "Usage: git issue create 'Title' [--description='Description']" >&2
+        return 1
+    fi
+    
+    create_issue "$title" "$description"
+}
+
+# Setup automatic git notes synchronization
+setup_sync() {
+    local action="${1:-enable}"
+    
+    if [[ "$STORAGE_TYPE" == "xdg" ]]; then
+        echo -e "${YELLOW}⚠️  Auto-sync is only available in git repositories, not XDG mode${NC}"
+        return 1
+    fi
+    
+    case "$action" in
+        enable)
+            setup_sync_enable
+            ;;
+        disable)
+            setup_sync_disable
+            ;;
+        status)
+            setup_sync_status
+            ;;
+        *)
+            echo "Usage: git issue setup-sync [enable|disable|status]"
+            echo ""
+            echo "Commands:"
+            echo "  enable   Install git hooks for automatic notes sync"
+            echo "  disable  Remove git hooks and disable auto-sync"
+            echo "  status   Show current sync configuration"
+            return 1
+            ;;
+    esac
+}
+
+# Enable automatic sync
+setup_sync_enable() {
+    local git_dir=$(git rev-parse --git-dir)
+    local hooks_dir="$git_dir/hooks"
+    local script_dir="$(dirname "$(realpath "$0")")"
+    
+    echo -e "${BLUE}🔧 Setting up automatic git notes synchronization...${NC}"
+    
+    # Create hooks directory if it doesn't exist
+    mkdir -p "$hooks_dir"
+    
+    # Install post-merge hook
+    if [[ -f "$hooks_dir/post-merge" ]]; then
+        echo -e "${YELLOW}⚠️  Existing post-merge hook found, backing up to post-merge.backup${NC}"
+        mv "$hooks_dir/post-merge" "$hooks_dir/post-merge.backup"
+    fi
+    
+    if [[ -f "$script_dir/../hooks/post-merge" ]]; then
+        cp "$script_dir/../hooks/post-merge" "$hooks_dir/post-merge"
+        chmod +x "$hooks_dir/post-merge"
+        echo -e "${GREEN}✓ Installed post-merge hook (auto-fetch notes)${NC}"
+    else
+        echo -e "${RED}❌ Could not find post-merge hook template${NC}"
+        return 1
+    fi
+    
+    # Install pre-push hook
+    if [[ -f "$hooks_dir/pre-push" ]]; then
+        echo -e "${YELLOW}⚠️  Existing pre-push hook found, backing up to pre-push.backup${NC}"
+        mv "$hooks_dir/pre-push" "$hooks_dir/pre-push.backup"
+    fi
+    
+    if [[ -f "$script_dir/../hooks/pre-push" ]]; then
+        cp "$script_dir/../hooks/pre-push" "$hooks_dir/pre-push"
+        chmod +x "$hooks_dir/pre-push"
+        echo -e "${GREEN}✓ Installed pre-push hook (auto-push notes)${NC}"
+    else
+        echo -e "${RED}❌ Could not find pre-push hook template${NC}"
+        return 1
+    fi
+    
+    # Enable sync in git config
+    git config git-issue.sync.enabled true
+    echo -e "${GREEN}✓ Enabled automatic notes sync in git config${NC}"
+    
+    # Configure automatic notes fetching
+    git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*' 2>/dev/null || true
+    echo -e "${GREEN}✓ Configured automatic notes fetching${NC}"
+    
+    echo ""
+    echo -e "${GREEN}🎉 Automatic git notes sync is now enabled!${NC}"
+    echo ""
+    echo "Your issue notes will now:"
+    echo "  • Auto-fetch when you pull/merge"
+    echo "  • Auto-push when you push commits"
+    echo ""
+    echo "To disable: git issue setup-sync disable"
+}
+
+# Disable automatic sync
+setup_sync_disable() {
+    local git_dir=$(git rev-parse --git-dir)
+    local hooks_dir="$git_dir/hooks"
+    
+    echo -e "${BLUE}🔧 Disabling automatic git notes synchronization...${NC}"
+    
+    # Remove hooks (restore backups if they exist)
+    if [[ -f "$hooks_dir/post-merge" ]]; then
+        if [[ -f "$hooks_dir/post-merge.backup" ]]; then
+            mv "$hooks_dir/post-merge.backup" "$hooks_dir/post-merge"
+            echo -e "${GREEN}✓ Restored original post-merge hook${NC}"
+        else
+            rm "$hooks_dir/post-merge"
+            echo -e "${GREEN}✓ Removed post-merge hook${NC}"
+        fi
+    fi
+    
+    if [[ -f "$hooks_dir/pre-push" ]]; then
+        if [[ -f "$hooks_dir/pre-push.backup" ]]; then
+            mv "$hooks_dir/pre-push.backup" "$hooks_dir/pre-push"
+            echo -e "${GREEN}✓ Restored original pre-push hook${NC}"
+        else
+            rm "$hooks_dir/pre-push"
+            echo -e "${GREEN}✓ Removed pre-push hook${NC}"
+        fi
+    fi
+    
+    # Disable sync in git config
+    git config git-issue.sync.enabled false
+    echo -e "${GREEN}✓ Disabled automatic notes sync in git config${NC}"
+    
+    echo ""
+    echo -e "${GREEN}✓ Automatic git notes sync has been disabled${NC}"
+    echo ""
+    echo "You can manually sync notes with:"
+    echo "  git fetch origin 'refs/notes/*:refs/notes/*'"
+    echo "  git push origin 'refs/notes/issue-*'"
+}
+
+# Show sync status
+setup_sync_status() {
+    local git_dir=$(git rev-parse --git-dir)
+    local hooks_dir="$git_dir/hooks"
+    
+    echo -e "${BLUE}Git Notes Sync Status${NC}"
+    echo "===================="
+    
+    # Check configuration
+    local sync_enabled=$(git config --get git-issue.sync.enabled 2>/dev/null || echo "false")
+    echo "Config enabled: $sync_enabled"
+    
+    # Check hooks
+    local post_merge_exists="❌"
+    local pre_push_exists="❌"
+    
+    if [[ -f "$hooks_dir/post-merge" && -x "$hooks_dir/post-merge" ]]; then
+        post_merge_exists="✅"
+    fi
+    
+    if [[ -f "$hooks_dir/pre-push" && -x "$hooks_dir/pre-push" ]]; then
+        pre_push_exists="✅"
+    fi
+    
+    echo "Post-merge hook: $post_merge_exists"
+    echo "Pre-push hook: $pre_push_exists"
+    
+    # Check notes refs configuration
+    local notes_fetch_configured="❌"
+    if git config --get-regexp "remote\..*\.fetch" | grep -q "refs/notes"; then
+        notes_fetch_configured="✅"
+    fi
+    echo "Notes auto-fetch: $notes_fetch_configured"
+    
+    # Count existing notes
+    local note_count=$(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | wc -l)
+    echo "Issue notes: $note_count"
+    
+    echo ""
+    if [[ "$sync_enabled" == "true" && "$post_merge_exists" == "✅" && "$pre_push_exists" == "✅" ]]; then
+        echo -e "${GREEN}✓ Automatic sync is fully configured and enabled${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Automatic sync is not fully configured${NC}"
+        echo "Run: git issue setup-sync enable"
+    fi
+}
+
+# Import issues from various sources
+import_issues() {
+    local source="stdin"
+    local format="auto"
+    
+    # Parse flags
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --stdin)
+                source="stdin"
+                shift
+                ;;
+            --file)
+                source="$2"
+                shift 2
+                ;;
+            --bulk)
+                source="bulk"
+                shift
+                ;;
+            --format)
+                format="$2"
+                shift 2
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    
+    case "$source" in
+        stdin)
+            import_from_stdin "$format"
+            ;;
+        bulk)
+            import_bulk_files "$@"
+            ;;
+        *)
+            import_from_file "$source" "$format"
+            ;;
+    esac
+}
+
+# Import from stdin
+import_from_stdin() {
+    local format="$1"
+    local count=0
+    
+    echo -e "${BLUE}📥 Importing issues from stdin...${NC}" >&2
+    
+    # Read issue data blocks separated by blank lines
+    local issue_data=""
+    while IFS= read -r line; do
+        if [[ -z "$line" && -n "$issue_data" ]]; then
+            # Process complete issue
+            if import_single_issue "$issue_data"; then
+                ((count++))
+            fi
+            issue_data=""
+        else
+            issue_data="$issue_data$line"$'\n'
+        fi
+    done
+    
+    # Process final issue if exists
+    if [[ -n "$issue_data" ]]; then
+        if import_single_issue "$issue_data"; then
+            ((count++))
+        fi
+    fi
+    
+    echo -e "${GREEN}✓ Imported $count issues${NC}" >&2
+}
+
+# Import from file
+import_from_file() {
+    local file="$1"
+    local format="$2"
+    
+    if [[ ! -f "$file" ]]; then
+        echo -e "${RED}Error: File not found: $file${NC}" >&2
+        return 1
+    fi
+    
+    echo -e "${BLUE}📥 Importing issues from $file...${NC}" >&2
+    cat "$file" | import_from_stdin "$format"
+}
+
+# Import bulk files
+import_bulk_files() {
+    local count=0
+    local total=0
+    
+    echo -e "${BLUE}📥 Importing issues from multiple files...${NC}" >&2
+    
+    for file in "$@"; do
+        if [[ -f "$file" ]]; then
+            echo -e "${YELLOW}Processing $file...${NC}" >&2
+            ((total++))
+            if import_from_file "$file" "auto" >&2; then
+                ((count++))
+            fi
+        else
+            echo -e "${RED}Warning: File not found: $file${NC}" >&2
+        fi
+    done
+    
+    echo -e "${GREEN}✓ Processed $count/$total files${NC}" >&2
+}
+
+# Import a single issue from data
+import_single_issue() {
+    local data="$1"
+    
+    # Extract ID and validate format
+    local id=$(echo "$data" | grep "^id:" | cut -d' ' -f2- | xargs)
+    if [[ -z "$id" ]]; then
+        echo -e "${RED}Warning: Issue data missing ID, skipping${NC}" >&2
+        return 1
+    fi
+    
+    # Check if issue already exists
+    if issue_exists "$id"; then
+        echo -e "${YELLOW}Warning: Issue #$id already exists, skipping${NC}" >&2
+        return 1
+    fi
+    
+    # Write issue data
+    if write_issue_data "$id" "$data"; then
+        local title=$(echo "$data" | grep "^title:" | cut -d' ' -f2- | xargs)
+        echo -e "${GREEN}✓ Imported issue #$id: $title${NC}" >&2
+        return 0
+    else
+        echo -e "${RED}Failed to import issue #$id${NC}" >&2
+        return 1
+    fi
+}
+
+# Export issues to various formats
+export_issues() {
+    local format="git-issue"
+    local output="stdout"
+    
+    # Parse flags
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --format)
+                format="$2"
+                shift 2
+                ;;
+            --output)
+                output="$2"
+                shift 2
+                ;;
+            --github)
+                format="github"
+                shift
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    
+    # Get issues to export (IDs or all)
+    local issue_ids=("$@")
+    if [[ ${#issue_ids[@]} -eq 0 ]]; then
+        # Export all issues
+        local refs=($(list_all_issues))
+        for ref in "${refs[@]}"; do
+            local id=$(get_issue_id_from_ref "$ref")
+            issue_ids+=("$id")
+        done
+    fi
+    
+    echo -e "${BLUE}📤 Exporting ${#issue_ids[@]} issues...${NC}" >&2
+    
+    for id in "${issue_ids[@]}"; do
+        if ! issue_exists "$id"; then
+            echo -e "${RED}Warning: Issue #$id not found, skipping${NC}" >&2
+            continue
+        fi
+        
+        local data=$(read_issue_data "$id")
+        
+        case "$format" in
+            github)
+                export_to_github_format "$data"
+                ;;
+            git-issue|*)
+                echo "$data"
+                echo ""  # Separator between issues
+                ;;
+        esac
+    done
+}
+
+# Export to GitHub-compatible format (for gh CLI)
+export_to_github_format() {
+    local data="$1"
+    local front_matter=$(parse_front_matter "$data")
+    
+    local title=$(get_field_value "$front_matter" "title")
+    local description=$(get_field_value "$front_matter" "description")
+    local state=$(get_field_value "$front_matter" "state")
+    local labels=$(get_field_value "$front_matter" "labels")
+    
+    # Map git-issue state to GitHub state
+    local gh_state="open"
+    case "$state" in
+        done|closed) gh_state="closed" ;;
+    esac
+    
+    # Output GitHub CLI compatible format
+    cat << EOF
+{
+  "title": "$title",
+  "body": "$description",
+  "state": "$gh_state",
+  "labels": [$(echo "$labels" | sed 's/,/", "/g' | sed 's/^/"/; s/$/"/' | sed 's/""//g')]
+}
+EOF
+}
+
 # Add comment to issue
 add_comment() {
     local id=$1
     local comment="${@:2}"
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local author=$(git config user.name || echo "Unknown")
+    local author=$(get_git_user)
     
     if ! read_issue_data "$id" >/dev/null 2>&1; then
         echo -e "${RED}Issue #$id not found${NC}"
@@ -361,10 +1004,7 @@ link_issue() {
     # Add link as comment
     add_comment "$id" "Linked to commit: $commit_hash"
     
-    # Also add note to commit
-    if [ -f "$(dirname "$0")/git-note-issue.sh" ]; then
-        "$(dirname "$0")/git-note-issue.sh" add "$commit" "#$id" "Linked to issue #$id" 2>/dev/null || true
-    fi
+    # Note functionality is integrated into git-issue
 }
 
 # Initialize storage backend before any operations
@@ -375,9 +1015,10 @@ case "$1" in
     create)
         if [ $# -lt 2 ]; then
             echo -e "${RED}Error: 'create' requires title${NC}"
-            usage
+            echo "Usage: git issue create 'Title' [--description='Description']"
+            exit 1
         fi
-        create_issue "${@:2}"
+        create_issue_with_flags "${@:2}"
         ;;
     add)
         # Legacy support - redirect to create
@@ -396,7 +1037,7 @@ case "$1" in
         # Create with manual ID
         ref=$(get_issue_ref "$manual_id")
         timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-        author=$(git config user.name || echo "Unknown")
+        author=$(get_git_user)
         cat <<EOF | git notes --ref="$ref" add -F -
 id: $manual_id
 title: $manual_title
@@ -422,11 +1063,12 @@ EOF
         show_issue "$2"
         ;;
     update)
-        if [ $# -lt 4 ]; then
-            echo -e "${RED}Error: 'update' requires id, field, and value${NC}"
-            usage
+        if [ $# -lt 2 ]; then
+            echo -e "${RED}Error: 'update' requires issue id and flags${NC}"
+            echo "Usage: git issue update <id> --state=<state> [--priority=<priority>] [--assignee=<assignee>]"
+            exit 1
         fi
-        update_issue "$2" "$3" "${@:4}"
+        update_issue_with_flags "${@:2}"
         ;;
     comment)
         if [ $# -lt 3 ]; then
@@ -442,8 +1084,28 @@ EOF
         fi
         link_issue "$2" "$3"
         ;;
-    *)
+    setup-sync)
+        setup_sync "$2"
+        ;;
+    import)
+        shift
+        import_issues "$@"
+        ;;
+    export)
+        shift  
+        export_issues "$@"
+        ;;
+    "--help"|"-h"|"help")
         usage
+        ;;
+    "")
+        usage
+        ;;
+    *)
+        echo -e "${RED}Error: Unknown command '$1'${NC}" >&2
+        echo ""
+        usage
+        exit 1
         ;;
 esac
 

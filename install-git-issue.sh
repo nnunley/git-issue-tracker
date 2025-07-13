@@ -35,23 +35,33 @@ fi
 echo "Installing to: $INSTALL_DIR"
 echo ""
 
+# Check dependencies
+echo "Checking dependencies..."
+if ! command -v jq >/dev/null 2>&1; then
+    echo -e "${YELLOW}⚠️  Warning: jq not found. Install with: brew install jq (macOS) or apt-get install jq (Ubuntu)${NC}"
+    echo "   jq is required for GitHub integration features"
+fi
+
 # Install main commands
-cp "$(dirname "$0")/git-issue" "$INSTALL_DIR/git-issue"
-cp "$(dirname "$0")/git-issue-status" "$INSTALL_DIR/git-issue-status"
-cp "$(dirname "$0")/git-note-issue.sh" "$INSTALL_DIR/git-note-commit" 2>/dev/null || true
+cp "$(dirname "$0")/bin/git-issue" "$INSTALL_DIR/git-issue"
+cp "$(dirname "$0")/bin/git-issue-status" "$INSTALL_DIR/git-issue-status"
+cp "$(dirname "$0")/bin/gh-to-git-issue" "$INSTALL_DIR/gh-to-git-issue"
 
 # Make executable
 chmod +x "$INSTALL_DIR/git-issue"
 chmod +x "$INSTALL_DIR/git-issue-status"
-chmod +x "$INSTALL_DIR/git-note-commit" 2>/dev/null || true
+chmod +x "$INSTALL_DIR/gh-to-git-issue"
 
 echo -e "${GREEN}✅ Installation complete!${NC}"
 echo ""
 echo "You can now use:"
-echo -e "${BLUE}  git issue create 'Fix the navbar bug'${NC}"
+echo -e "${BLUE}  git issue create 'Fix the navbar bug' --description='Button overlaps content'${NC}"
 echo -e "${BLUE}  git issue list${NC}"
-echo -e "${BLUE}  git issue update a1b2c3d state done${NC}"
+echo -e "${BLUE}  git issue update a1b2c3d --state=done --priority=high${NC}"
 echo -e "${BLUE}  git issue-status${NC}"
+echo ""
+echo "GitHub integration:"
+echo -e "${BLUE}  gh issue list --json number,title,body,state,author,assignees,labels,url,createdAt,updatedAt | gh-to-git-issue | git issue import${NC}"
 echo ""
 
 # Test installation

@@ -1,0 +1,45 @@
+#!/bin/bash
+# Git hook: post-merge
+# Auto-sync git notes after merge/pull operations
+# Installed by: git issue setup-sync
+
+# Colors for output
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Check if git-issue notes sync is enabled
+if ! git config --get-regexp "git-issue" | grep -q "sync.enabled.*true"; then
+    exit 0
+fi
+
+# Only sync notes in git repositories (skip XDG mode)
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    exit 0
+fi
+
+# Check if we have a remote configured
+if ! git remote | grep -q .; then
+    exit 0
+fi
+
+# Get the default remote (usually origin)
+REMOTE=$(git remote | head -1)
+
+echo -e "${BLUE}🔄 Syncing issue notes from $REMOTE...${NC}"
+
+# Fetch issue notes from remote
+if git fetch "$REMOTE" 'refs/notes/issue-*:refs/notes/issue-*' 2>/dev/null; then
+    # Count synced notes
+    NOTE_COUNT=$(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | wc -l)
+    if [[ $NOTE_COUNT -gt 0 ]]; then
+        echo -e "${GREEN}✓ Synced $NOTE_COUNT issue notes${NC}"
+    fi
+else
+    # Silently fail if remote doesn't have notes - this is normal for new repos
+    exit 0
+fi
+
+# Optional: fetch commit notes too if they exist
+git fetch "$REMOTE" 'refs/notes/commits:refs/notes/commits' 2>/dev/null || true

@@ -1,0 +1,85 @@
+#!/bin/bash
+# git-issue-to-gh: Export git-issue format to GitHub JSON format
+# Usage: git issue export | git-issue-to-gh
+
+set -e
+
+# Function to map git-issue state to GitHub state
+map_state_to_github() {
+    case "$1" in
+        done) echo "closed" ;;
+        *) echo "open" ;;
+    esac
+}
+
+# Function to extract labels from priority and custom labels
+build_github_labels() {
+    local priority="$1"
+    local labels="$2"
+    local result=""
+    
+    # Add priority label
+    case "$priority" in
+        critical|high) result="priority:$priority" ;;
+        low) result="priority:low" ;;
+        # medium is default, don't add label
+    esac
+    
+    # Add custom labels
+    if [[ -n "$labels" ]]; then
+        if [[ -n "$result" ]]; then
+            result="$result,$labels"
+        else
+            result="$labels"
+        fi
+    fi
+    
+    echo "$result"
+}
+
+# Main conversion function
+convert_issue() {
+    local title description state priority assignee labels github_id github_url created updated author
+    local gh_labels gh_state
+    
+    # Extract fields from git-issue format
+    while IFS=': ' read -r field value; do
+        case "$field" in
+            title) title="$value" ;;
+            description) description="$value" ;;
+            state) state="$value" ;;
+            priority) priority="$value" ;;
+            assignee) assignee="$value" ;;
+            labels) labels="$value" ;;
+            github_id) github_id="$value" ;;
+            github_url) github_url="$value" ;;
+            created) created="$value" ;;
+            updated) updated="$value" ;;
+            author) author="$value" ;;
+            ---) break ;;
+        esac
+    done
+    
+    # Convert values for GitHub
+    gh_state=$(map_state_to_github "$state")
+    gh_labels=$(build_github_labels "$priority" "$labels")
+    
+    # Output GitHub-compatible JSON
+    echo "{"
+    echo "  \"title\": \"$title\","
+    [[ -n "$description" ]] && echo "  \"body\": \"$description\","
+    echo "  \"state\": \"$gh_state\","
+    [[ -n "$gh_labels" ]] && echo "  \"labels\": [$(echo "$gh_labels" | sed 's/,/", "/g' | sed 's/^/"/; s/$/"/')],"
+    [[ -n "$assignee" ]] && echo "  \"assignee\": \"$assignee\","
+    [[ -n "$github_id" ]] && echo "  \"number\": $github_id,"
+    echo "  \"metadata\": {"
+    echo "    \"git_issue_created\": \"$created\","
+    echo "    \"git_issue_updated\": \"$updated\","
+    echo "    \"git_issue_author\": \"$author\""
+    echo "  }"
+    echo "}"
+}
+
+# Process git-issue format from stdin
+# Skip the first line with ID and process the issue data
+tail -n +2 | convert_issue
