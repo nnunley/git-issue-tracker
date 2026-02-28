@@ -1,0 +1,11 @@
+id: 15bf095
+title: Remove dev artifacts from repo
+description: Remove: test_read_function.sh, test_trailer.txt, mcp/node_modules/, mcp/dist/. Add node_modules and dist to .gitignore. Fix hardcoded /Users/ndn path in tests/test_github_integration.sh.
+state: open
+priority: medium
+created: 2026-02-28T22:03:42Z
+updated: 2026-02-28T22:03:42Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+---
