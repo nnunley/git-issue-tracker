@@ -381,6 +381,41 @@ test_dep_rm_last_blocker_unblocks() {
     assert_contains "open" "$show_b" "B should unblock after removing last blocker"
 }
 
+# ==========================================
+# Incremental edge index rebuild tests (Task 6)
+# ==========================================
+
+# Test: manual header edit is picked up by dep list via incremental rebuild
+test_manual_header_edit_picked_up() {
+    local a=$(create_test_issue "Manual A")
+    local b=$(create_test_issue "Manual B")
+
+    # First do a normal dep add to establish the index
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+
+    # Now create a new issue and manually add depends_on to its header
+    local c=$(create_test_issue "Manual C")
+    local data
+    data=$(git notes --ref="refs/notes/issue-$c" show 2>/dev/null)
+    # Insert depends_on before the --- separator
+    local new_data
+    new_data=$(echo "$data" | awk -v dep="$a" '
+        /^---$/ { print "depends_on: " dep; print; next }
+        { print }
+    ')
+    echo "$new_data" | git notes --ref="refs/notes/issue-$c" add -f -F - 2>/dev/null
+
+    # dep list should pick it up after ensure_edge_index_current runs
+    local output
+    output=$(git issue dep list "$c" 2>&1)
+    assert_contains "$a" "$output" "Manual header edit should be picked up via incremental rebuild"
+
+    # Also verify the edge index was updated with the new edge
+    local edges
+    edges=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null || echo "")
+    assert_contains "$c depends_on $a" "$edges" "Edge index should contain the manually-added depends_on edge"
+}
+
 # Main
 main() {
     echo -e "${BLUE}Testing Dependency Header Fields${NC}"
@@ -431,6 +466,13 @@ main() {
     run_test "done unblocks dependents" test_done_unblocks_dependents
     run_test "multiple blockers partial done stays blocked" test_multiple_blockers_partial_done
     run_test "dep rm last blocker unblocks" test_dep_rm_last_blocker_unblocks
+
+    echo ""
+    echo -e "${BLUE}Testing Incremental Edge Index Rebuild (Task 6)${NC}"
+    echo "================================="
+    echo ""
+
+    run_test "manual header edit picked up by dep list" test_manual_header_edit_picked_up
 
     echo ""
     echo "================================="

@@ -1446,6 +1446,64 @@ rebuild_edge_index() {
     echo -e "${GREEN}Edge index rebuilt at $timestamp${NC}"
 }
 
+# Incremental rebuild: check if any issue notes have changed since the
+# last edge index rebuild, re-parse only those issues, and update the
+# edge index.  Called before graph queries to keep the index current
+# when headers are edited outside of dep add/rm (manual edits, imports).
+ensure_edge_index_current() {
+    local edge_data
+    edge_data=$(read_edge_index)
+
+    # Get the last rebuild timestamp from the index
+    local last_rebuilt
+    last_rebuilt=$(echo "$edge_data" | grep "^last_rebuilt_from:" | cut -d' ' -f2-)
+
+    # Find issue notes modified since last rebuild
+    local needs_rebuild=false
+    local changed_ids=()
+
+    for ref in $(git for-each-ref --format="%(refname)" 'refs/notes/issue-*' 2>/dev/null); do
+        local ref_date
+        ref_date=$(git for-each-ref --format="%(committerdate:iso-strict)" "$ref" 2>/dev/null)
+        if [[ -z "$last_rebuilt" ]] || [[ "$ref_date" > "$last_rebuilt" ]]; then
+            local id
+            id=$(echo "$ref" | sed 's/refs\/notes\/issue-//')
+            changed_ids+=("$id")
+            needs_rebuild=true
+        fi
+    done
+
+    if [[ "$needs_rebuild" == "true" ]]; then
+        # Re-parse only changed issues and update edges
+        for id in "${changed_ids[@]}"; do
+            local data
+            data=$(read_issue_data "$id" 2>/dev/null) || continue
+
+            # Remove old edges where this issue is the source.
+            # Target-side edges belong to their source issue and are handled
+            # when that source is processed (avoids ordering issues).
+            edge_data=$(echo "$edge_data" | grep -v "^${id} " || true)
+
+            # Parse dep fields and add new edges
+            for field in blocks depends_on parent_of relates_to; do
+                local values
+                values=$(echo "$data" | grep "^${field}:" | cut -d' ' -f2- | xargs)
+                if [[ -n "$values" ]]; then
+                    for target in $(echo "$values" | tr ',' '\n'); do
+                        target=$(echo "$target" | xargs)
+                        [[ -n "$target" ]] && edge_data="${edge_data}"$'\n'"${id} ${field} ${target}"
+                    done
+                fi
+            done
+        done
+
+        # Update marker and write
+        edge_data=$(echo "$edge_data" | grep -v "^last_rebuilt_from:" | grep -v "^$" || true)
+        edge_data="last_rebuilt_from: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"$'\n'"${edge_data}"
+        write_edge_index "$edge_data"
+    fi
+}
+
 # ==========================================
 # CYCLE DETECTION
 # ==========================================
@@ -1839,6 +1897,9 @@ dep_rm() {
 # Usage: dep_list [issue_id]
 dep_list() {
     local target_id="$1"
+
+    # Ensure edge index is current before querying
+    ensure_edge_index_current
 
     if [[ -n "$target_id" ]]; then
         # Show deps for a specific issue
