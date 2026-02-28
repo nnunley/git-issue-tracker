@@ -7,7 +7,7 @@ mkdir -p "$TEST_DIR"
 cd "$TEST_DIR"
 
 # Add the git-issue script to PATH for testing
-SCRIPT_DIR="/Users/ndn/development/git-issue-tracker"
+SCRIPT_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
 export PATH="$SCRIPT_DIR/bin:$PATH"
 
 # Colors for output

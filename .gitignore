@@ -13,5 +13,9 @@ test-repo/
 *.swp
 *.swo
 
+# MCP build/dependency artifacts
+mcp/node_modules/
+mcp/dist/
+
 # OS files
 Thumbs.db

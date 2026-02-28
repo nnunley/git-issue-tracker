@@ -12,6 +12,7 @@ A lightweight, git notes-based issue tracking CLI that integrates seamlessly wit
 - ✅ **Native git integration** - works as `git issue` subcommand
 - ✅ **Commit linking** - bidirectional issue-commit relationships
 - ✅ **XDG directory support** - works outside git repositories
+- ✅ **Dependency graph** - blocking, cycle detection, topological sort, Graphviz export
 - ✅ **Comprehensive testing** - unit, integration, and CI/CD tests
 
 ## 🚀 Quick Start
@@ -75,6 +76,13 @@ git issue-status
 | `git issue comment <id> <text>` | Add comment to issue |
 | `git issue link <id> <commit>` | Link issue to commit |
 | `git issue setup-sync [enable\|disable\|status]` | Configure automatic git notes sync |
+| `git issue dep add <from> <type> <to>` | Add dependency between issues |
+| `git issue dep rm <from> <type> <to>` | Remove dependency |
+| `git issue dep list [<id>]` | Show dependencies for an issue |
+| `git issue dep rebuild` | Regenerate edge index |
+| `git issue ready` | List issues with no open blockers |
+| `git issue topo` | Topological ordering of issues |
+| `git issue deps [<id>] [--dot]` | Dependency graph (text or Graphviz DOT) |
 | `git issue-status` | Show status summary |
 
 ### States
@@ -89,6 +97,55 @@ git issue-status
 - `medium` - Standard priority
 - `high` - Important
 - `critical` - Urgent
+
+## Dependency Graph
+
+Track relationships between issues with four dependency types:
+
+| Type | Meaning | Blocking? |
+|------|---------|-----------|
+| `blocks` | Must complete before target can start | Yes |
+| `depends_on` | Cannot start until dependency completes | Yes (inverse of blocks) |
+| `parent_of` | Epic/parent containing sub-issues | No |
+| `relates_to` | Informational link | No |
+
+Dependencies are **bidirectional**: `dep add A blocks B` automatically sets `depends_on: A` on B.
+
+```bash
+# Add a dependency
+git issue dep add a1b2c3d blocks d4e5f6a
+# Auto-sets d4e5f6a to "blocked" state
+
+# Remove a dependency
+git issue dep rm a1b2c3d blocks d4e5f6a
+
+# List dependencies for an issue
+git issue dep list a1b2c3d
+
+# Mark blocker done — auto-unblocks dependents
+git issue update a1b2c3d --state=done
+
+# List issues with no open blockers (ready to work on)
+git issue ready
+
+# Topological ordering of issues
+git issue topo
+
+# Dependency graph (text output)
+git issue deps
+
+# Subgraph from a specific issue
+git issue deps a1b2c3d
+
+# Graphviz DOT output (pipe to dot for visualization)
+git issue deps --dot | dot -Tpng -o deps.png
+```
+
+**Key behaviors:**
+- Blocked issues auto-transition to `blocked` state when a blocking dependency is added
+- Marking a blocker `done` cascades unblock to dependents
+- Cycle detection via POSIX `tsort` prevents circular dependencies
+- `dep rebuild` regenerates the edge index if it gets out of sync
 
 ## 🔗 Git Integration
 
@@ -252,6 +309,90 @@ git issue export --github a064d35 | gh issue create --body-file -
 - [Git Notes Workflow](docs/GIT_NOTES_WORKFLOW.md) - Understanding git notes integration
 - [Issue-Commit Linking](docs/ISSUE_COMMIT_LINKING.md) - Bidirectional linking system
 - [Demo](examples/hash-issue-demo.md) - Complete usage examples
+
+## 🤖 AI Integration (MCP Server)
+
+**Optional AI-powered features** via Model Context Protocol (MCP) - requires Node.js.
+
+### Installation
+
+```bash
+# Install MCP server (requires Node.js 18+)
+make install-mcp
+
+# Or build manually
+cd mcp && npm install && npm run build
+npm install --global
+```
+
+### Claude Desktop Integration
+
+Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "git-issue": {
+      "command": "git-issue-mcp-server"
+    }
+  }
+}
+```
+
+### AI-Powered Features
+
+Once configured, you can ask Claude to:
+
+- **Analyze issue complexity**: "Analyze the complexity of issue abc123"
+- **Suggest next tasks**: "What should I work on next based on my current issues?"
+- **Create issues from descriptions**: "Create an issue for implementing user authentication"
+- **Get project insights**: "Give me an overview of my project's current status"
+- **Prioritize work**: "Help me prioritize these open issues"
+
+### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `create_issue` | Create new issues with AI-guided structure |
+| `list_issues` | List and filter issues |
+| `show_issue` | Get detailed issue information |
+| `update_issue` | Update issue properties |
+| `get_project_status` | Project health and metrics |
+| `get_issue_context` | Rich context for AI analysis |
+
+### Example AI Workflow
+
+```
+You: "Analyze my current project and suggest what I should work on next"
+
+Claude: I'll check your project status and analyze your issues.
+[Uses get_project_status and list_issues tools]
+
+Based on your project, I can see you have:
+- 3 critical priority issues 
+- 2 issues currently blocked
+- 1 issue in review
+
+I recommend focusing on issue abc123 "Fix authentication bug" because:
+- It's marked critical priority
+- It's blocking 2 other issues
+- Based on the description, it appears to be a focused fix
+
+Would you like me to create a detailed plan for tackling this issue?
+```
+
+### MCP Commands
+
+```bash
+# Test MCP server
+make test-mcp
+
+# Rebuild after changes
+make build-mcp
+
+# Remove MCP server
+make uninstall-mcp
+```
 
 ## 🤝 Contributing
 
