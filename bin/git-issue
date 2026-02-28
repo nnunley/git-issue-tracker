@@ -149,9 +149,9 @@ read_issue_data() {
     local tree_hash
     tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2) || return 1
 
-    # Tree should contain exactly one blob named "data"
+    # Tree should contain exactly one blob named "issue"
     local blob_hash
-    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "data" {print $3}')
+    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "issue" {print $3}')
 
     if [[ -z "$blob_hash" ]]; then
         # Fallback: legacy format where blob is named after a commit SHA
@@ -173,9 +173,9 @@ write_issue_data() {
     local blob_hash
     blob_hash=$(echo "$data" | git hash-object -w --stdin)
 
-    # Create tree with single entry named "data"
+    # Create tree with single entry named "issue"
     local tree_hash
-    tree_hash=$(printf "100644 blob %s\tdata\n" "$blob_hash" | git mktree)
+    tree_hash=$(printf "100644 blob %s\tissue\n" "$blob_hash" | git mktree)
 
     # Create commit pointing to the tree (with parent if ref exists)
     local commit_hash
@@ -1352,7 +1352,7 @@ read_edge_index() {
         return 0
     fi
     local blob_hash
-    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "data" {print $3}')
+    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "edges" {print $3}')
     if [[ -z "$blob_hash" ]]; then
         # Fallback: legacy format
         blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
@@ -1373,7 +1373,7 @@ write_edge_index() {
     blob_hash=$(echo "$data" | git hash-object -w --stdin)
 
     local tree_hash
-    tree_hash=$(printf "100644 blob %s\tdata\n" "$blob_hash" | git mktree)
+    tree_hash=$(printf "100644 blob %s\tedges\n" "$blob_hash" | git mktree)
 
     local commit_hash
     local parent

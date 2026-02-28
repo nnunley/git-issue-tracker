@@ -14,7 +14,7 @@ read_edge_index_raw() {
     local tree_hash blob_hash
     tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
     [[ -z "$tree_hash" ]] && return 0
-    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "data" {print $3}')
+    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "edges" {print $3}')
     [[ -z "$blob_hash" ]] && blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
     [[ -z "$blob_hash" ]] && return 0
     git cat-file -p "$blob_hash" 2>/dev/null || true
@@ -413,7 +413,7 @@ test_manual_header_edit_picked_up() {
     local ref="refs/notes/issue-$c"
     local tree_hash blob_hash
     tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
-    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "data" {print $3}')
+    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "issue" {print $3}')
     [[ -z "$blob_hash" ]] && blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
     data=$(git cat-file -p "$blob_hash" 2>/dev/null)
     # Insert depends_on before the --- separator
@@ -425,7 +425,7 @@ test_manual_header_edit_picked_up() {
     # Write back via plumbing
     local new_blob new_tree new_commit parent
     new_blob=$(echo "$new_data" | git hash-object -w --stdin)
-    new_tree=$(printf "100644 blob %s\tdata\n" "$new_blob" | git mktree)
+    new_tree=$(printf "100644 blob %s\tissue\n" "$new_blob" | git mktree)
     parent=$(git rev-parse --verify "$ref" 2>/dev/null) || true
     if [[ -n "$parent" ]]; then
         new_commit=$(git commit-tree "$new_tree" -p "$parent" -m "Manual edit" </dev/null)
