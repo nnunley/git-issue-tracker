@@ -430,7 +430,6 @@ update_issue() {
     
     # Save updated data
     write_issue_data "$id" "$updated_data"
-    echo -e "${GREEN}✓ Updated issue #$id: $field = $value${NC}"
 }
 
 # Update issue using git-style flags
