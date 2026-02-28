@@ -4,9 +4,9 @@ description: Add external_ref header field for linking to external trackers (e.g
 state: open
 priority: medium
 created: 2026-02-28T22:12:21Z
-updated: 2026-02-28T22:12:41Z
+updated: 2026-02-28T22:12:42Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
-blocks: 48137e7
+blocks: 48137e7,bc4e044
 ---
