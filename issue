@@ -1,10 +1,10 @@
 id: 2d67f18
 title: Fix integration_tests.sh hanging
 description: Integration tests hang on execution. Needs investigation — likely waiting on stdin or a blocking git operation.
-state: open
+state: done
 priority: medium
 created: 2026-02-28T22:03:41Z
-updated: 2026-02-28T22:03:49Z
+updated: 2026-02-28T22:25:24Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
