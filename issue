@@ -1,0 +1,11 @@
+id: a16c143
+title: Create GitHub release with version tag
+description: Tag a release (e.g., v1.0.0), push tag, create GitHub release. Update Formula URL to point to the release tarball and add sha256 checksum.
+state: open
+priority: medium
+created: 2026-02-28T21:58:54Z
+updated: 2026-02-28T21:58:54Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+---
