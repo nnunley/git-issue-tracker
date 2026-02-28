@@ -263,7 +263,7 @@ create_issue() {
         # Add microsecond precision to avoid collision
         timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
         id=$(generate_issue_id "$title" "$author" "$timestamp")
-        ((attempts++))
+        attempts=$((attempts + 1))
     done
     
     if [[ $attempts -ge 100 ]]; then
@@ -886,7 +886,7 @@ import_from_stdin() {
         if [[ -z "$line" && -n "$issue_data" ]]; then
             # Process complete issue
             if import_single_issue "$issue_data"; then
-                ((count++))
+                count=$((count + 1))
             fi
             issue_data=""
         else
@@ -897,7 +897,7 @@ import_from_stdin() {
     # Process final issue if exists
     if [[ -n "$issue_data" ]]; then
         if import_single_issue "$issue_data"; then
-            ((count++))
+            count=$((count + 1))
         fi
     fi
     
@@ -928,9 +928,9 @@ import_bulk_files() {
     for file in "$@"; do
         if [[ -f "$file" ]]; then
             echo -e "${YELLOW}Processing $file...${NC}" >&2
-            ((total++))
+            total=$((total + 1))
             if import_from_file "$file" "auto" >&2; then
-                ((count++))
+                count=$((count + 1))
             fi
         else
             echo -e "${RED}Warning: File not found: $file${NC}" >&2
