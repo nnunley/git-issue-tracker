@@ -2,7 +2,7 @@ PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 DOCDIR = $(PREFIX)/share/doc/git-issue
 
-.PHONY: install uninstall test test-deps clean install-mcp uninstall-mcp test-mcp build-mcp clean-mcp
+.PHONY: install uninstall test test-deps bench-deps clean install-mcp uninstall-mcp test-mcp build-mcp clean-mcp
 
 install:
 	@echo "Installing git-issue..."
@@ -53,6 +53,11 @@ test-deps:
 	@echo "Running dependency graph tests..."
 	chmod +x tests/test_deps.sh
 	./tests/test_deps.sh
+
+bench-deps:
+	@echo "Running dependency benchmark..."
+	chmod +x tests/bench_deps.sh
+	./tests/bench_deps.sh $(COUNT)
 
 test-all: test-unit test-integration test test-deps
 
