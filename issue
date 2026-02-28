@@ -4,9 +4,10 @@ description: Add labels header field as comma-separated values. Add to update al
 state: open
 priority: medium
 created: 2026-02-28T22:12:21Z
-updated: 2026-02-28T22:12:39Z
+updated: 2026-02-28T22:13:11Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
 blocks: 48137e7,bc4e044
+depends_on: a1005ab
 ---
