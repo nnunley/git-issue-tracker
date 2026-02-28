@@ -416,6 +416,137 @@ test_manual_header_edit_picked_up() {
     assert_contains "$c depends_on $a" "$edges" "Edge index should contain the manually-added depends_on edge"
 }
 
+# ==========================================
+# Ready command tests (Task 7)
+# ==========================================
+
+test_ready_excludes_blocked() {
+    local a=$(create_test_issue "Ready blocker")
+    local b=$(create_test_issue "Ready blocked")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    local output
+    output=$(git issue ready 2>&1)
+    assert_contains "$a" "$output" "Blocker should be ready"
+    if echo "$output" | grep -q "$b"; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} Blocked issue should not be in ready list"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} Blocked issue excluded from ready list"
+    fi
+}
+
+test_ready_excludes_done() {
+    local a=$(create_test_issue "Done issue")
+    git issue update "$a" --state=done 2>/dev/null
+    local output
+    output=$(git issue ready 2>&1)
+    if echo "$output" | grep -q "$a"; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} Done issue should not be in ready list"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} Done issue excluded from ready list"
+    fi
+}
+
+test_ready_sorted_by_priority() {
+    local low=$(create_test_issue "Low pri")
+    local high=$(create_test_issue "High pri")
+    git issue update "$low" --priority=low 2>/dev/null
+    git issue update "$high" --priority=critical 2>/dev/null
+    local output
+    output=$(git issue ready 2>&1)
+    local high_line low_line
+    high_line=$(echo "$output" | grep -n "$high" | head -1 | cut -d: -f1)
+    low_line=$(echo "$output" | grep -n "$low" | head -1 | cut -d: -f1)
+    if [[ -n "$high_line" && -n "$low_line" && "$high_line" -lt "$low_line" ]]; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} Higher priority listed first"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} Higher priority should be listed first"
+    fi
+}
+
+# ==========================================
+# Topo command tests (Task 8)
+# ==========================================
+
+test_topo_ordering() {
+    local a=$(create_test_issue "Topo first")
+    local b=$(create_test_issue "Topo second")
+    local c=$(create_test_issue "Topo third")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    git issue dep add "$b" blocks "$c" 2>/dev/null
+    local output
+    output=$(git issue topo 2>&1)
+    local a_line b_line c_line
+    a_line=$(echo "$output" | grep -n "$a" | head -1 | cut -d: -f1)
+    b_line=$(echo "$output" | grep -n "$b" | head -1 | cut -d: -f1)
+    c_line=$(echo "$output" | grep -n "$c" | head -1 | cut -d: -f1)
+    if [[ -n "$a_line" && -n "$b_line" && -n "$c_line" && "$a_line" -lt "$b_line" && "$b_line" -lt "$c_line" ]]; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} Topological order correct: A < B < C"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} Topological order incorrect (A=$a_line B=$b_line C=$c_line)"
+    fi
+}
+
+test_topo_excludes_done() {
+    local a=$(create_test_issue "Topo done")
+    git issue update "$a" --state=done 2>/dev/null
+    local output
+    output=$(git issue topo 2>&1)
+    if echo "$output" | grep -q "$a"; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} Done issues should be excluded from topo"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} Done issues excluded from topo"
+    fi
+}
+
+# ==========================================
+# Deps command tests (Task 9)
+# ==========================================
+
+test_deps_text_output() {
+    local a=$(create_test_issue "Deps text A")
+    local b=$(create_test_issue "Deps text B")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    local output
+    output=$(git issue deps 2>&1)
+    assert_contains "$a" "$output" "Should show A"
+    assert_contains "$b" "$output" "Should show B"
+    assert_contains "blocks" "$output" "Should show relationship"
+}
+
+test_deps_dot_output() {
+    local a=$(create_test_issue "DOT A")
+    local b=$(create_test_issue "DOT B")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    local output
+    output=$(git issue deps --dot 2>&1)
+    assert_contains "digraph" "$output" "DOT output should start with digraph"
+    assert_contains "->" "$output" "DOT output should contain edges"
+    assert_contains "$a" "$output" "DOT should include source ID"
+    assert_contains "$b" "$output" "DOT should include target ID"
+}
+
+test_deps_single_issue() {
+    local a=$(create_test_issue "Sub A")
+    local b=$(create_test_issue "Sub B")
+    local c=$(create_test_issue "Sub C")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    git issue dep add "$b" blocks "$c" 2>/dev/null
+    # Show only subgraph from B
+    local output
+    output=$(git issue deps "$b" 2>&1)
+    assert_contains "$c" "$output" "Should show C (blocked by B)"
+}
+
 # Main
 main() {
     echo -e "${BLUE}Testing Dependency Header Fields${NC}"
@@ -473,6 +604,32 @@ main() {
     echo ""
 
     run_test "manual header edit picked up by dep list" test_manual_header_edit_picked_up
+
+    echo ""
+    echo -e "${BLUE}Testing Ready Command (Task 7)${NC}"
+    echo "================================="
+    echo ""
+
+    run_test "ready excludes blocked issues" test_ready_excludes_blocked
+    run_test "ready excludes done issues" test_ready_excludes_done
+    run_test "ready sorted by priority" test_ready_sorted_by_priority
+
+    echo ""
+    echo -e "${BLUE}Testing Topo Command (Task 8)${NC}"
+    echo "================================="
+    echo ""
+
+    run_test "topo ordering correct" test_topo_ordering
+    run_test "topo excludes done issues" test_topo_excludes_done
+
+    echo ""
+    echo -e "${BLUE}Testing Deps Command (Task 9)${NC}"
+    echo "================================="
+    echo ""
+
+    run_test "deps text output" test_deps_text_output
+    run_test "deps DOT output" test_deps_dot_output
+    run_test "deps single issue subgraph" test_deps_single_issue
 
     echo ""
     echo "================================="

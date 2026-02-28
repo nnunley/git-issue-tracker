@@ -119,6 +119,7 @@ usage() {
     echo "  dep list [<id>]                          List dependencies"
     echo "  ready                                    List issues ready to work on (sorted by priority)"
     echo "  topo                                     Topologically sorted ordering of non-done issues"
+    echo "  deps [<id>] [--dot]                      Show dependency graph (text or Graphviz DOT)"
     echo "  setup-sync [enable|disable|status]     Configure automatic git notes sync"
     echo ""
     echo "Examples:"
@@ -2184,6 +2185,175 @@ topo_sort_issues() {
     done
 }
 
+# Show dependency edges in text mode
+show_deps() {
+    local target_id="$1"
+
+    ensure_edge_index_current
+
+    local edge_data
+    edge_data=$(read_edge_index)
+
+    # If a specific issue ID is given, do BFS to find reachable edges
+    local edges_to_show=""
+    if [[ -n "$target_id" ]]; then
+        if ! issue_exists "$target_id"; then
+            echo -e "${RED}Error: Issue #$target_id not found${NC}" >&2
+            return 1
+        fi
+
+        # BFS from target_id through the edge index
+        local visited=""
+        local queue="$target_id"
+        while [[ -n "$queue" ]]; do
+            local current
+            current=$(echo "$queue" | head -1)
+            queue=$(echo "$queue" | tail -n +2)
+
+            # Skip if already visited
+            echo "$visited" | grep -qF "$current" && continue
+            visited="${visited}${current}"$'\n'
+
+            # Find all edges where current is the source (skip depends_on to avoid duplication)
+            while read -r from type to; do
+                [[ -z "$from" ]] && continue
+                [[ "$type" == "depends_on" ]] && continue
+                [[ "$from" == "$current" ]] && {
+                    edges_to_show="${edges_to_show}${from} ${type} ${to}"$'\n'
+                    # Add target to queue for BFS
+                    if ! echo "$visited" | grep -qF "$to"; then
+                        queue="${queue}${to}"$'\n'
+                    fi
+                }
+            done <<< "$edge_data"
+        done
+    else
+        # Show all edges, skip depends_on (inverse of blocks)
+        while read -r from type to; do
+            [[ -z "$from" ]] && continue
+            [[ "$type" == "depends_on" ]] && continue
+            [[ "$from" == "last_rebuilt_from:" ]] && continue
+            edges_to_show="${edges_to_show}${from} ${type} ${to}"$'\n'
+        done <<< "$edge_data"
+    fi
+
+    if [[ -z "$edges_to_show" ]]; then
+        echo "No dependency edges found."
+        return 0
+    fi
+
+    echo "$edges_to_show" | while read -r from type to; do
+        [[ -z "$from" ]] && continue
+        local from_title to_title
+        from_title=$(read_issue_data "$from" 2>/dev/null | grep "^title:" | cut -d' ' -f2-)
+        to_title=$(read_issue_data "$to" 2>/dev/null | grep "^title:" | cut -d' ' -f2-)
+        echo "#${from} (${from_title}) -[${type}]-> #${to} (${to_title})"
+    done
+}
+
+# Show dependency edges in Graphviz DOT format
+show_deps_dot() {
+    local target_id="$1"
+
+    ensure_edge_index_current
+
+    local edge_data
+    edge_data=$(read_edge_index)
+
+    # Collect edges (same BFS logic as show_deps)
+    local edges_to_show=""
+    if [[ -n "$target_id" ]]; then
+        if ! issue_exists "$target_id"; then
+            echo -e "${RED}Error: Issue #$target_id not found${NC}" >&2
+            return 1
+        fi
+
+        local visited=""
+        local queue="$target_id"
+        while [[ -n "$queue" ]]; do
+            local current
+            current=$(echo "$queue" | head -1)
+            queue=$(echo "$queue" | tail -n +2)
+
+            echo "$visited" | grep -qF "$current" && continue
+            visited="${visited}${current}"$'\n'
+
+            while read -r from type to; do
+                [[ -z "$from" ]] && continue
+                [[ "$type" == "depends_on" ]] && continue
+                [[ "$from" == "$current" ]] && {
+                    edges_to_show="${edges_to_show}${from} ${type} ${to}"$'\n'
+                    if ! echo "$visited" | grep -qF "$to"; then
+                        queue="${queue}${to}"$'\n'
+                    fi
+                }
+            done <<< "$edge_data"
+        done
+    else
+        while read -r from type to; do
+            [[ -z "$from" ]] && continue
+            [[ "$type" == "depends_on" ]] && continue
+            [[ "$from" == "last_rebuilt_from:" ]] && continue
+            edges_to_show="${edges_to_show}${from} ${type} ${to}"$'\n'
+        done <<< "$edge_data"
+    fi
+
+    # Collect unique node IDs
+    local node_ids=""
+    while read -r from type to; do
+        [[ -z "$from" ]] && continue
+        node_ids="${node_ids}${from}"$'\n'"${to}"$'\n'
+    done <<< "$edges_to_show"
+    node_ids=$(echo "$node_ids" | sort -u | grep -v '^$')
+
+    echo "digraph deps {"
+    echo "  rankdir=LR;"
+
+    # Node definitions
+    echo "$node_ids" | while IFS= read -r nid; do
+        [[ -z "$nid" ]] && continue
+        local title
+        title=$(read_issue_data "$nid" 2>/dev/null | grep "^title:" | cut -d' ' -f2-)
+        echo "  \"${nid}\" [label=\"${nid}\\n${title}\"];"
+    done
+
+    # Edge definitions
+    echo "$edges_to_show" | while read -r from type to; do
+        [[ -z "$from" ]] && continue
+        local style=""
+        [[ "$type" == "parent_of" || "$type" == "relates_to" ]] && style=", style=\"dashed\""
+        echo "  \"${from}\" -> \"${to}\" [label=\"${type}\"${style}];"
+    done
+
+    echo "}"
+}
+
+# Handle deps command routing
+handle_deps_command() {
+    local target_id=""
+    local dot_mode=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dot)
+                dot_mode=true
+                shift
+                ;;
+            *)
+                target_id="$1"
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "$dot_mode" == "true" ]]; then
+        show_deps_dot "$target_id"
+    else
+        show_deps "$target_id"
+    fi
+}
+
 # Initialize storage backend before any operations
 detect_storage_backend
 
@@ -2315,6 +2485,10 @@ EOF
         ;;
     topo)
         topo_sort_issues
+        ;;
+    deps)
+        shift
+        handle_deps_command "$@"
         ;;
     "--help"|"-h"|"help")
         usage
