@@ -1,0 +1,11 @@
+id: 48137e7
+title: Implement git issue export --beads
+description: Export all or filtered issues as Beads-compatible JSONL. One JSON object per line. Map: state->status (open/in-progress/done -> open/in_progress/closed), priority (critical/high/medium/low -> 0/1/2/3), deps to Beads dependency objects, comments to Beads comment objects. Include content_hash as SHA256 of canonical content.
+state: open
+priority: medium
+created: 2026-02-28T22:12:22Z
+updated: 2026-02-28T22:12:22Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+---
