@@ -4,9 +4,9 @@ description: Support importing and exporting issues in Beads JSONL format for in
 state: open
 priority: medium
 created: 2026-02-28T22:11:56Z
-updated: 2026-02-28T22:12:28Z
+updated: 2026-02-28T22:12:29Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
-parent_of: 38ad0f1
+parent_of: 38ad0f1,59f1c56
 ---
