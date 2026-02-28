@@ -8,8 +8,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_runner.sh"
 
-# Add git-issue to PATH
+# Add git-issue to PATH (ensure local version is used)
 export PATH="$SCRIPT_DIR/../bin:$PATH"
+echo "Using git-issue from: $(which git-issue)" >&2
 
 # Integration test functions
 test_full_issue_workflow() {
@@ -23,32 +24,43 @@ test_full_issue_workflow() {
     issue_id=$(echo "$create_output" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     
     # Update priority
-    git issue update "$issue_id" priority high >/dev/null 2>&1
-    
+    git issue update "$issue_id" --priority=high >/dev/null 2>&1
+
     # Update state
-    git issue update "$issue_id" state in-progress >/dev/null 2>&1
+    git issue update "$issue_id" --state=in-progress >/dev/null 2>&1
     
     # Add comment
     git issue comment "$issue_id" "Working on implementation" >/dev/null 2>&1
     
     # Update assignee
-    git issue update "$issue_id" assignee "Test User" >/dev/null 2>&1
+    git issue update "$issue_id" --assignee="Test User" >/dev/null 2>&1
     
     # Add another comment
     git issue comment "$issue_id" "Almost done" >/dev/null 2>&1
     
     # Complete issue
-    git issue update "$issue_id" state done >/dev/null 2>&1
+    git issue update "$issue_id" --state=done >/dev/null 2>&1
     
-    # Verify final state
+    # Verify final state via show output
     local final_output
     final_output=$(git issue show "$issue_id")
-    
-    assert_contains "state: done" "$final_output" "Issue should be marked as done"
-    assert_contains "priority: high" "$final_output" "Issue should have high priority"
-    assert_contains "assignee: Test User" "$final_output" "Issue should be assigned"
-    assert_contains "Working on implementation" "$final_output" "Should contain first comment"
-    assert_contains "Almost done" "$final_output" "Should contain second comment"
+
+    assert_contains "State: done" "$final_output" "Issue should be marked as done"
+    assert_contains "Priority: high" "$final_output" "Issue should have high priority"
+    assert_contains "Assignee: Test User" "$final_output" "Issue should be assigned"
+
+    # Verify comments in raw note data (show does not display comments)
+    local notes_ref="refs/notes/issue-$issue_id"
+    local raw_data=""
+    local tree_hash=$(git cat-file -p "$notes_ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
+    if [[ -n "$tree_hash" ]]; then
+        local blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '{print $3}')
+        if [[ -n "$blob_hash" ]]; then
+            raw_data=$(git cat-file -p "$blob_hash" 2>/dev/null || echo "")
+        fi
+    fi
+    assert_contains "Working on implementation" "$raw_data" "Should contain first comment"
+    assert_contains "Almost done" "$raw_data" "Should contain second comment"
 }
 
 test_git_notes_persistence() {
@@ -62,7 +74,7 @@ test_git_notes_persistence() {
     # Check that git notes exists
     local notes_ref="refs/notes/issue-$issue_id"
     
-    if git notes --ref="$notes_ref" show >/dev/null 2>&1; then
+    if git show-ref --verify --quiet "$notes_ref"; then
         TESTS_RUN=$((TESTS_RUN + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "  ${GREEN}✓${NC} Git notes created successfully"
@@ -72,9 +84,15 @@ test_git_notes_persistence() {
         echo -e "  ${RED}✗${NC} Git notes not found"
     fi
     
-    # Check that notes contain expected data
+    # Check that notes contain expected data using proper git notes reading
     local notes_content
-    notes_content=$(git notes --ref="$notes_ref" show 2>/dev/null || echo "")
+    local tree_hash=$(git cat-file -p "$notes_ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
+    if [[ -n "$tree_hash" ]]; then
+        local blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '{print $3}')
+        if [[ -n "$blob_hash" ]]; then
+            notes_content=$(git cat-file -p "$blob_hash" 2>/dev/null || echo "")
+        fi
+    fi
     
     assert_contains "id: $issue_id" "$notes_content" "Notes should contain issue ID"
     assert_contains "title: Persistence test" "$notes_content" "Notes should contain title"
@@ -100,13 +118,20 @@ test_issue_commit_linking() {
     
     assert_contains "Added comment" "$link_output" "Should confirm link creation"
     
-    # Verify link in issue
-    local issue_content
-    issue_content=$(git issue show "$issue_id")
+    # Verify link in raw issue data (link is stored as a comment)
+    local notes_ref="refs/notes/issue-$issue_id"
+    local raw_data=""
+    local tree_hash=$(git cat-file -p "$notes_ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
+    if [[ -n "$tree_hash" ]]; then
+        local blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '{print $3}')
+        if [[ -n "$blob_hash" ]]; then
+            raw_data=$(git cat-file -p "$blob_hash" 2>/dev/null || echo "")
+        fi
+    fi
     local commit_hash
     commit_hash=$(git rev-parse --short HEAD)
-    
-    assert_contains "Linked to commit: $commit_hash" "$issue_content" "Issue should reference commit"
+
+    assert_contains "Linked to commit: $commit_hash" "$raw_data" "Issue should reference commit"
 }
 
 test_concurrent_issue_creation() {
@@ -127,7 +152,7 @@ test_concurrent_issue_creation() {
     
     # Verify all IDs are unique
     local unique_count
-    unique_count=$(printf '%s\n' "${ids[@]}" | sort -u | wc -l)
+    unique_count=$(printf '%s\n' "${ids[@]}" | sort -u | wc -l | tr -d ' ')
     local total_count=${#ids[@]}
     
     assert_equals "$total_count" "$unique_count" "All issue IDs should be unique"
@@ -154,7 +179,7 @@ test_git_repository_integration() {
     id1=$(git issue create "Integration test 1" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     id2=$(git issue create "Integration test 2" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     
-    git issue update "$id1" state in-progress >/dev/null 2>&1
+    git issue update "$id1" --state=in-progress >/dev/null 2>&1
     git issue comment "$id2" "Test comment" >/dev/null 2>&1
     
     # Verify git status is still clean (notes don't affect working tree)
@@ -183,14 +208,20 @@ test_issue_data_format() {
     issue_id=$(git issue create "Format test issue" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     
     # Add some data
-    git issue update "$issue_id" priority critical >/dev/null 2>&1
-    git issue update "$issue_id" assignee "Test User" >/dev/null 2>&1
+    git issue update "$issue_id" --priority=critical >/dev/null 2>&1
+    git issue update "$issue_id" --assignee="Test User" >/dev/null 2>&1
     git issue comment "$issue_id" "Test comment for format" >/dev/null 2>&1
     
-    # Get raw issue data
+    # Get raw issue data using proper git notes reading
     local notes_ref="refs/notes/issue-$issue_id"
     local raw_data
-    raw_data=$(git notes --ref="$notes_ref" show 2>/dev/null)
+    local tree_hash=$(git cat-file -p "$notes_ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
+    if [[ -n "$tree_hash" ]]; then
+        local blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '{print $3}')
+        if [[ -n "$blob_hash" ]]; then
+            raw_data=$(git cat-file -p "$blob_hash" 2>/dev/null || echo "")
+        fi
+    fi
     
     # Test format structure
     assert_contains "id: $issue_id" "$raw_data" "Should have ID field"
@@ -225,15 +256,15 @@ test_status_reporting_accuracy() {
     id4=$(git issue create "Blocked issue" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     
     # Set states
-    git issue update "$id2" state in-progress >/dev/null 2>&1
-    git issue update "$id3" state done >/dev/null 2>&1
-    git issue update "$id4" state blocked >/dev/null 2>&1
-    
+    git issue update "$id2" --state=in-progress >/dev/null 2>&1
+    git issue update "$id3" --state=done >/dev/null 2>&1
+    git issue update "$id4" --state=blocked >/dev/null 2>&1
+
     # Set priorities
-    git issue update "$id1" priority high >/dev/null 2>&1
-    git issue update "$id2" priority medium >/dev/null 2>&1
-    git issue update "$id3" priority low >/dev/null 2>&1
-    git issue update "$id4" priority critical >/dev/null 2>&1
+    git issue update "$id1" --priority=high >/dev/null 2>&1
+    git issue update "$id2" --priority=medium >/dev/null 2>&1
+    git issue update "$id3" --priority=low >/dev/null 2>&1
+    git issue update "$id4" --priority=critical >/dev/null 2>&1
     
     # Get status report
     local status_output
