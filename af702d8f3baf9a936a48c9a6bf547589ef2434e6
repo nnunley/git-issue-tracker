@@ -1,0 +1,11 @@
+id: 8a36f07
+title: dep: Implement git issue deps with --dot
+description: Text tree and Graphviz DOT output. Optional issue ID for subgraph.
+state: open
+priority: medium
+created: 2026-02-28T20:45:44Z
+updated: 2026-02-28T20:45:44Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+---
