@@ -1,10 +1,10 @@
 id: abfb6d9
 title: Document dependency graph features in README
 description: The dep, ready, topo, and deps commands are fully implemented but not mentioned in the README command table or documented anywhere. Add usage examples and command reference.
-state: open
+state: done
 priority: medium
 created: 2026-02-28T22:03:43Z
-updated: 2026-02-28T22:03:51Z
+updated: 2026-02-28T22:23:17Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
