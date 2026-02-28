@@ -26,8 +26,9 @@ source_git_issue_functions() {
     # Create a temporary file with just the functions
     local temp_functions="/tmp/git-issue-functions-$$.sh"
     
-    # Extract function definitions (lines between function declarations and main case statement)
-    sed -n '/^# Function to display usage/,/^# Main script logic/p' "$git_issue_path" | \
+    # Extract all variable declarations and function definitions up to the main case statement
+    # Start from "# Colors for output" (after shebang/set -e) to "# Main script logic"
+    sed -n '/^# Colors for output/,/^# Main script logic/p' "$git_issue_path" | \
     sed '$d' > "$temp_functions"
     
     # Replace git commands with mocks for isolated testing
