@@ -1,10 +1,10 @@
 id: 0fcaa14
 title: Fix unit_tests.sh function extraction
 description: Sed pattern extracts from 'Function to display usage' to 'Main script logic' but misses functions defined earlier (detect_storage_backend, cleanup_xdg_environment, get_git_user). Tests fail with command not found.
-state: open
+state: done
 priority: medium
 created: 2026-02-28T22:03:41Z
-updated: 2026-02-28T22:03:48Z
+updated: 2026-02-28T22:23:17Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
