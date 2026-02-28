@@ -132,7 +132,6 @@ usage() {
     echo "  git issue scan-commits --since='1 week ago'  # Find issue references in commits"
     echo "  gh issue list --json number,title,body,state,author,createdAt,updatedAt,url | gh-to-git-issue | git issue import"
     echo ""
-    exit 1
 }
 
 # Get issue note ref (legacy - use get_issue_storage_path)
@@ -411,14 +410,14 @@ update_issue() {
     # Validate field
     case "$field" in
         state)
-            if [[ ! " ${STATES[@]} " =~ " ${value} " ]]; then
+            if [[ ! " ${STATES[*]} " =~ " ${value} " ]]; then
                 echo -e "${RED}Invalid state: $value${NC}"
                 echo "Valid states: ${STATES[*]}"
                 return 1
             fi
             ;;
         priority)
-            if [[ ! " ${PRIORITIES[@]} " =~ " ${value} " ]]; then
+            if [[ ! " ${PRIORITIES[*]} " =~ " ${value} " ]]; then
                 echo -e "${RED}Invalid priority: $value${NC}"
                 echo "Valid priorities: ${PRIORITIES[*]}"
                 return 1
@@ -2416,6 +2415,7 @@ case "$1" in
         if [ $# -lt 3 ]; then
             echo -e "${RED}Error: 'add' requires id and title${NC}"
             usage
+            exit 1
         fi
         # Manual ID creation (legacy)
         manual_id="$2"
@@ -2427,7 +2427,7 @@ case "$1" in
         # Create with manual ID
         timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         author=$(get_git_user)
-        local issue_data="id: $manual_id
+        issue_data="id: $manual_id
 title: $manual_title
 state: open
 priority: medium
@@ -2447,6 +2447,7 @@ hash_source: manual
         if [ $# -lt 2 ]; then
             echo -e "${RED}Error: 'show' requires issue id${NC}"
             usage
+            exit 1
         fi
         
         issue_id="$2"
@@ -2488,6 +2489,7 @@ hash_source: manual
         if [ $# -lt 3 ]; then
             echo -e "${RED}Error: 'comment' requires id and text${NC}"
             usage
+            exit 1
         fi
         add_comment "$2" "${@:3}"
         ;;
@@ -2495,6 +2497,7 @@ hash_source: manual
         if [ $# -lt 3 ]; then
             echo -e "${RED}Error: 'link' requires id and commit${NC}"
             usage
+            exit 1
         fi
         link_issue "$2" "$3"
         ;;
@@ -2536,6 +2539,7 @@ hash_source: manual
         ;;
     "")
         usage
+        exit 1
         ;;
     *)
         echo -e "${RED}Error: Unknown command '$1'${NC}" >&2

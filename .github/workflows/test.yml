@@ -86,7 +86,7 @@ jobs:
       with:
         scandir: './bin'
         format: gcc
-        severity: warning
+        severity: error
     
     - name: Security scan for common vulnerabilities
       run: |
