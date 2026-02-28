@@ -329,6 +329,58 @@ test_transitive_cycle_rejected() {
     fi
 }
 
+# ==========================================
+# Auto-blocking state management tests (Task 5)
+# ==========================================
+
+# Test: dep add A blocks B => B's state becomes blocked
+test_dep_add_blocks_sets_blocked() {
+    local a=$(create_test_issue "Blocker")
+    local b=$(create_test_issue "Blockee")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    local show_b
+    show_b=$(git issue show "$b" 2>&1)
+    assert_contains "blocked" "$show_b" "B should be blocked after dep add"
+}
+
+# Test: marking A done unblocks B
+test_done_unblocks_dependents() {
+    local a=$(create_test_issue "Will complete")
+    local b=$(create_test_issue "Will unblock")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    git issue update "$a" --state=done 2>/dev/null
+    local show_b
+    show_b=$(git issue show "$b" 2>&1)
+    assert_contains "open" "$show_b" "B should be unblocked after A is done"
+}
+
+# Test: C blocked by A and B stays blocked when only A is done
+test_multiple_blockers_partial_done() {
+    local a=$(create_test_issue "Blocker 1")
+    local b=$(create_test_issue "Blocker 2")
+    local c=$(create_test_issue "Blocked by both")
+    git issue dep add "$a" blocks "$c" 2>/dev/null
+    git issue dep add "$b" blocks "$c" 2>/dev/null
+    git issue update "$a" --state=done 2>/dev/null
+    local show_c
+    show_c=$(git issue show "$c" 2>&1)
+    assert_contains "blocked" "$show_c" "C should stay blocked (B still open)"
+    git issue update "$b" --state=done 2>/dev/null
+    show_c=$(git issue show "$c" 2>&1)
+    assert_contains "open" "$show_c" "C should unblock after both done"
+}
+
+# Test: removing last blocker unblocks the target
+test_dep_rm_last_blocker_unblocks() {
+    local a=$(create_test_issue "RM blocker")
+    local b=$(create_test_issue "RM blocked")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    git issue dep rm "$a" blocks "$b" 2>/dev/null
+    local show_b
+    show_b=$(git issue show "$b" 2>&1)
+    assert_contains "open" "$show_b" "B should unblock after removing last blocker"
+}
+
 # Main
 main() {
     echo -e "${BLUE}Testing Dependency Header Fields${NC}"
@@ -369,6 +421,16 @@ main() {
 
     run_test "direct cycle rejected" test_direct_cycle_rejected
     run_test "transitive cycle rejected" test_transitive_cycle_rejected
+
+    echo ""
+    echo -e "${BLUE}Testing Auto-Blocking State Management (Task 5)${NC}"
+    echo "================================="
+    echo ""
+
+    run_test "dep add blocks sets target to blocked" test_dep_add_blocks_sets_blocked
+    run_test "done unblocks dependents" test_done_unblocks_dependents
+    run_test "multiple blockers partial done stays blocked" test_multiple_blockers_partial_done
+    run_test "dep rm last blocker unblocks" test_dep_rm_last_blocker_unblocks
 
     echo ""
     echo "================================="

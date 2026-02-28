@@ -542,6 +542,9 @@ update_issue_with_flags() {
     if [[ -n "$state" ]]; then
         update_issue "$id" "state" "$state"
         changes="state=$state "
+        if [[ "$state" == "done" ]]; then
+            cascade_unblock "$id"
+        fi
     fi
     if [[ -n "$priority" ]]; then
         update_issue "$id" "priority" "$priority"
@@ -1578,6 +1581,51 @@ remove_from_field() {
     write_issue_data "$id" "$updated_data"
 }
 
+# Cascade unblock: when an issue is marked done, check all its dependents
+# and unblock them if all their blockers are resolved.
+# Usage: cascade_unblock <completed_id>
+cascade_unblock() {
+    local completed_id="$1"
+    local edges
+    edges=$(read_edge_index)
+
+    # Find issues that have depends_on pointing to the completed issue
+    # Use process substitution to avoid subshell variable issues
+    while read -r dep_id _ blocker_id; do
+        [[ -z "$dep_id" ]] && continue
+        if [[ "$blocker_id" == "$completed_id" ]]; then
+            # Check if all blockers for this dependent are done
+            local dep_data
+            dep_data=$(read_issue_data "$dep_id" 2>/dev/null) || continue
+            local all_blockers
+            all_blockers=$(echo "$dep_data" | grep "^depends_on:" | cut -d' ' -f2- | xargs)
+
+            local all_resolved=true
+            local IFS=','
+            for blocker in $all_blockers; do
+                [[ -z "$blocker" ]] && continue
+                blocker=$(echo "$blocker" | xargs)
+                local blocker_state
+                blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
+                if [[ "$blocker_state" != "done" ]]; then
+                    all_resolved=false
+                    break
+                fi
+            done
+            unset IFS
+
+            if [[ "$all_resolved" == "true" ]]; then
+                local current_state
+                current_state=$(echo "$dep_data" | grep "^state:" | cut -d' ' -f2)
+                if [[ "$current_state" == "blocked" ]]; then
+                    update_issue "$dep_id" "state" "open"
+                    echo -e "${GREEN}Unblocked issue #$dep_id${NC}"
+                fi
+            fi
+        fi
+    done < <(echo "$edges" | grep " depends_on ")
+}
+
 # Add a dependency relationship
 # Usage: dep_add <from_id> <type> <to_id>
 dep_add() {
@@ -1660,6 +1708,26 @@ dep_add() {
             ;;
     esac
 
+    # Auto-blocking: set the dependent issue to "blocked" if the blocker isn't done
+    case "$dep_type" in
+        blocks)
+            # A blocks B => B should become blocked (unless B is already done)
+            local target_state
+            target_state=$(read_issue_data "$to_id" | grep "^state:" | cut -d' ' -f2)
+            if [[ "$target_state" != "done" ]]; then
+                update_issue "$to_id" "state" "blocked"
+            fi
+            ;;
+        depends_on)
+            # A depends_on B => A should become blocked (unless A is already done)
+            local from_state
+            from_state=$(read_issue_data "$from_id" | grep "^state:" | cut -d' ' -f2)
+            if [[ "$from_state" != "done" ]]; then
+                update_issue "$from_id" "state" "blocked"
+            fi
+            ;;
+    esac
+
     echo -e "${GREEN}Added dependency: #$from_id $dep_type #$to_id${NC}"
 }
 
@@ -1720,6 +1788,49 @@ dep_rm() {
             remove_edge "$from_id" "$dep_type" "$to_id"
             ;;
     esac
+
+    # After removing a blocking edge, check if the dependent should be unblocked
+    local unblock_target=""
+    case "$dep_type" in
+        blocks) unblock_target="$to_id" ;;
+        depends_on) unblock_target="$from_id" ;;
+    esac
+
+    if [[ -n "$unblock_target" ]]; then
+        local remaining_blockers
+        remaining_blockers=$(read_issue_data "$unblock_target" 2>/dev/null | grep "^depends_on:" | cut -d' ' -f2- | xargs)
+        if [[ -z "$remaining_blockers" ]]; then
+            local current_state
+            current_state=$(read_issue_data "$unblock_target" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
+            if [[ "$current_state" == "blocked" ]]; then
+                update_issue "$unblock_target" "state" "open"
+                echo -e "${GREEN}Unblocked issue #$unblock_target${NC}"
+            fi
+        else
+            # There are remaining blockers -- check if all are done
+            local all_resolved=true
+            local IFS=','
+            for blocker in $remaining_blockers; do
+                [[ -z "$blocker" ]] && continue
+                blocker=$(echo "$blocker" | xargs)
+                local blocker_state
+                blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
+                if [[ "$blocker_state" != "done" ]]; then
+                    all_resolved=false
+                    break
+                fi
+            done
+            unset IFS
+            if [[ "$all_resolved" == "true" ]]; then
+                local current_state
+                current_state=$(read_issue_data "$unblock_target" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
+                if [[ "$current_state" == "blocked" ]]; then
+                    update_issue "$unblock_target" "state" "open"
+                    echo -e "${GREEN}Unblocked issue #$unblock_target${NC}"
+                fi
+            fi
+        fi
+    fi
 
     echo -e "${GREEN}Removed dependency: #$from_id $dep_type #$to_id${NC}"
 }
