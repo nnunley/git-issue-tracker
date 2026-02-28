@@ -10,6 +10,21 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Read issue data using git plumbing (not git notes API)
+# Accepts a full ref path like refs/notes/issue-abc123
+read_issue_data_by_ref() {
+    local ref="$1"
+    local tree_hash
+    tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2) || return 1
+    local blob_hash
+    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "issue" {print $3}')
+    if [[ -z "$blob_hash" ]]; then
+        blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
+    fi
+    [[ -z "$blob_hash" ]] && return 1
+    git cat-file -p "$blob_hash" 2>/dev/null || return 1
+}
+
 echo -e "${BLUE}📊 Issue Status Report${NC}"
 echo -e "Generated: $(date)"
 echo ""
@@ -27,8 +42,7 @@ low_count=0
 
 # Process each issue
 for ref in $(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | sort); do
-    if git notes --ref="$ref" show >/dev/null 2>&1; then
-        data=$(git notes --ref="$ref" show 2>/dev/null)
+    if data=$(read_issue_data_by_ref "$ref" 2>/dev/null); then
         state=$(echo "$data" | grep "^state:" | cut -d' ' -f2)
         priority=$(echo "$data" | grep "^priority:" | cut -d' ' -f2)
         
