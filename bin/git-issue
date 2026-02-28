@@ -140,30 +140,55 @@ get_issue_ref() {
     echo "refs/notes/issue-$1"
 }
 
-# OPTIMIZED: Read issue data using git cat-file (plumbing)
+# Read issue data using git plumbing
 read_issue_data() {
     local id="$1"
     local ref=$(get_issue_ref "$id")
-    
-    # Get the tree hash from the notes commit
-    local tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2) || return 1
-    
-    # Get the blob hash from the tree (git notes store data in blobs)
-    local blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '{print $3}') || return 1
-    
-    # Read the actual issue content from the blob
+
+    # Get the tree hash from the ref's commit
+    local tree_hash
+    tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2) || return 1
+
+    # Tree should contain exactly one blob named "data"
+    local blob_hash
+    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "data" {print $3}')
+
+    if [[ -z "$blob_hash" ]]; then
+        # Fallback: legacy format where blob is named after a commit SHA
+        # If multiple blobs exist, take the first one (most recent is last in tree)
+        blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
+    fi
+
+    [[ -z "$blob_hash" ]] && return 1
     git cat-file -p "$blob_hash" 2>/dev/null || return 1
 }
 
-# OPTIMIZED: Write issue data using git hash-object + update-ref (plumbing)
+# Write issue data using git plumbing (hash-object + mktree + commit-tree + update-ref)
 write_issue_data() {
     local id="$1"
     local data="$2"
     local ref=$(get_issue_ref "$id")
-    
-    # Remove existing notes and add new data using git notes API
-    git notes --ref="$ref" remove 2>/dev/null || true
-    echo "$data" | git notes --ref="$ref" add -F -
+
+    # Create blob from issue data
+    local blob_hash
+    blob_hash=$(echo "$data" | git hash-object -w --stdin)
+
+    # Create tree with single entry named "data"
+    local tree_hash
+    tree_hash=$(printf "100644 blob %s\tdata\n" "$blob_hash" | git mktree)
+
+    # Create commit pointing to the tree (with parent if ref exists)
+    local commit_hash
+    local parent
+    parent=$(git rev-parse --verify "$ref" 2>/dev/null) || true
+    if [[ -n "$parent" ]]; then
+        commit_hash=$(git commit-tree "$tree_hash" -p "$parent" -m "Update issue $id" </dev/null)
+    else
+        commit_hash=$(git commit-tree "$tree_hash" -m "Create issue $id" </dev/null)
+    fi
+
+    # Point the ref at the new commit
+    git update-ref "$ref" "$commit_hash"
 }
 
 # List all issues (always git refs now)
@@ -1327,7 +1352,11 @@ read_edge_index() {
         return 0
     fi
     local blob_hash
-    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '{print $3}')
+    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "data" {print $3}')
+    if [[ -z "$blob_hash" ]]; then
+        # Fallback: legacy format
+        blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
+    fi
     if [[ -z "$blob_hash" ]]; then
         echo ""
         return 0
@@ -1335,12 +1364,27 @@ read_edge_index() {
     git cat-file -p "$blob_hash" 2>/dev/null || echo ""
 }
 
-# Write content to the edge index
+# Write content to the edge index using git plumbing
 write_edge_index() {
     local data="$1"
     local ref="refs/notes/dep-graph"
-    git notes --ref="$ref" remove 2>/dev/null || true
-    echo "$data" | git notes --ref="$ref" add -F -
+
+    local blob_hash
+    blob_hash=$(echo "$data" | git hash-object -w --stdin)
+
+    local tree_hash
+    tree_hash=$(printf "100644 blob %s\tdata\n" "$blob_hash" | git mktree)
+
+    local commit_hash
+    local parent
+    parent=$(git rev-parse --verify "$ref" 2>/dev/null) || true
+    if [[ -n "$parent" ]]; then
+        commit_hash=$(git commit-tree "$tree_hash" -p "$parent" -m "Update edge index" </dev/null)
+    else
+        commit_hash=$(git commit-tree "$tree_hash" -m "Create edge index" </dev/null)
+    fi
+
+    git update-ref "$ref" "$commit_hash"
 }
 
 # Add an edge to the index (deduplicates)
@@ -1383,7 +1427,7 @@ remove_edge() {
     updated=$(echo "$current" | grep -vF "$line" || true)
 
     if [[ -z "$updated" ]]; then
-        git notes --ref="refs/notes/dep-graph" remove 2>/dev/null || true
+        git update-ref -d "refs/notes/dep-graph" 2>/dev/null || true
     else
         write_edge_index "$updated"
     fi
@@ -2381,21 +2425,19 @@ case "$1" in
             exit 1
         fi
         # Create with manual ID
-        ref=$(get_issue_ref "$manual_id")
         timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         author=$(get_git_user)
-        cat <<EOF | git notes --ref="$ref" add -F -
-id: $manual_id
+        local issue_data="id: $manual_id
 title: $manual_title
 state: open
 priority: medium
 created: $timestamp
 updated: $timestamp
 author: $author
-assignee: 
+assignee:
 hash_source: manual
----
-EOF
+---"
+        write_issue_data "$manual_id" "$issue_data"
         echo -e "${GREEN}✓ Created issue #$manual_id: $manual_title${NC}"
         ;;
     list)

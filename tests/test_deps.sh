@@ -8,6 +8,18 @@ source "$SCRIPT_DIR/test_runner.sh"
 # Fix PATH to use absolute path (test_runner uses relative, breaks after cd)
 export PATH="$SCRIPT_DIR/../bin:$PATH"
 
+# Helper to read the edge index via plumbing (matches write_edge_index format)
+read_edge_index_raw() {
+    local ref="refs/notes/dep-graph"
+    local tree_hash blob_hash
+    tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
+    [[ -z "$tree_hash" ]] && return 0
+    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "data" {print $3}')
+    [[ -z "$blob_hash" ]] && blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
+    [[ -z "$blob_hash" ]] && return 0
+    git cat-file -p "$blob_hash" 2>/dev/null || true
+}
+
 # Helper to create an issue and return its ID
 create_test_issue() {
     local title="$1"
@@ -250,7 +262,7 @@ test_edge_index_written_on_dep_add() {
     local b=$(create_test_issue "Edge B")
     git issue dep add "$a" blocks "$b" 2>/dev/null
     local edges
-    edges=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null || echo "")
+    edges=$(read_edge_index_raw)
     assert_contains "$a blocks $b" "$edges" "Edge index should contain blocks edge"
     assert_contains "$b depends_on $a" "$edges" "Edge index should contain depends_on edge"
 }
@@ -262,7 +274,7 @@ test_edge_index_cleaned_on_dep_rm() {
     git issue dep add "$a" blocks "$b" 2>/dev/null
     git issue dep rm "$a" blocks "$b" 2>/dev/null
     local edges
-    edges=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null || echo "")
+    edges=$(read_edge_index_raw)
     # Use custom assertion since we need to check absence
     if echo "$edges" | grep -q "$a blocks $b"; then
         TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
@@ -286,11 +298,11 @@ test_dep_rebuild() {
     local b=$(create_test_issue "Rebuild B")
     git issue dep add "$a" blocks "$b" 2>/dev/null
     # Wipe the edge index
-    git notes --ref=refs/notes/dep-graph remove 2>/dev/null || true
+    git update-ref -d refs/notes/dep-graph 2>/dev/null || true
     # Rebuild
     git issue dep rebuild 2>/dev/null
     local edges
-    edges=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null || echo "")
+    edges=$(read_edge_index_raw)
     assert_contains "$a blocks $b" "$edges" "Rebuild should restore blocks edge from headers"
     assert_contains "$b depends_on $a" "$edges" "Rebuild should restore depends_on edge from headers"
 }
@@ -396,14 +408,31 @@ test_manual_header_edit_picked_up() {
     # Now create a new issue and manually add depends_on to its header
     local c=$(create_test_issue "Manual C")
     local data
-    data=$(git notes --ref="refs/notes/issue-$c" show 2>/dev/null)
+    data=$(git issue show "$c" --raw 2>/dev/null)
+    # Read via plumbing since show --raw may not exist
+    local ref="refs/notes/issue-$c"
+    local tree_hash blob_hash
+    tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
+    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "data" {print $3}')
+    [[ -z "$blob_hash" ]] && blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
+    data=$(git cat-file -p "$blob_hash" 2>/dev/null)
     # Insert depends_on before the --- separator
     local new_data
     new_data=$(echo "$data" | awk -v dep="$a" '
         /^---$/ { print "depends_on: " dep; print; next }
         { print }
     ')
-    echo "$new_data" | git notes --ref="refs/notes/issue-$c" add -f -F - 2>/dev/null
+    # Write back via plumbing
+    local new_blob new_tree new_commit parent
+    new_blob=$(echo "$new_data" | git hash-object -w --stdin)
+    new_tree=$(printf "100644 blob %s\tdata\n" "$new_blob" | git mktree)
+    parent=$(git rev-parse --verify "$ref" 2>/dev/null) || true
+    if [[ -n "$parent" ]]; then
+        new_commit=$(git commit-tree "$new_tree" -p "$parent" -m "Manual edit" </dev/null)
+    else
+        new_commit=$(git commit-tree "$new_tree" -m "Manual edit" </dev/null)
+    fi
+    git update-ref "$ref" "$new_commit"
 
     # dep list should pick it up after ensure_edge_index_current runs
     local output
@@ -412,7 +441,7 @@ test_manual_header_edit_picked_up() {
 
     # Also verify the edge index was updated with the new edge
     local edges
-    edges=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null || echo "")
+    edges=$(read_edge_index_raw)
     assert_contains "$c depends_on $a" "$edges" "Edge index should contain the manually-added depends_on edge"
 }
 
@@ -600,14 +629,14 @@ test_dep_rebuild_matches_incremental() {
 
     # Capture incremental index (sorted for comparison)
     local incremental
-    incremental=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null | grep -v "^last_rebuilt_from:" | sort)
+    incremental=$(read_edge_index_raw | grep -v "^last_rebuilt_from:" | sort)
 
     # Full rebuild
     git issue dep rebuild 2>/dev/null
 
     # Capture rebuilt index (sorted)
     local rebuilt
-    rebuilt=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null | grep -v "^last_rebuilt_from:" | sort)
+    rebuilt=$(read_edge_index_raw | grep -v "^last_rebuilt_from:" | sort)
 
     if [[ "$incremental" == "$rebuilt" ]]; then
         TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
