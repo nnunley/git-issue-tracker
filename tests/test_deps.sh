@@ -547,6 +547,79 @@ test_deps_single_issue() {
     assert_contains "$c" "$output" "Should show C (blocked by B)"
 }
 
+# ==========================================
+# Missing edge case tests (Task 10)
+# ==========================================
+
+# Test: dep add with invalid type is rejected
+test_dep_add_invalid_type_rejected() {
+    local a=$(create_test_issue "Invalid type A")
+    local b=$(create_test_issue "Invalid type B")
+    if git issue dep add "$a" foobar "$b" 2>/dev/null; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} Invalid dep type should be rejected"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} Invalid dep type rejected"
+    fi
+}
+
+# Test: topo with no deps returns all issues sorted by priority
+test_topo_no_deps_shows_all() {
+    local a=$(create_test_issue "Standalone A")
+    local b=$(create_test_issue "Standalone B")
+    local output
+    output=$(git issue topo 2>&1)
+    assert_contains "$a" "$output" "A should appear in topo"
+    assert_contains "$b" "$output" "B should appear in topo"
+}
+
+# Test: dep list with no deps shows clean output (no error)
+test_dep_list_no_deps() {
+    local a=$(create_test_issue "No deps issue")
+    local output
+    output=$(git issue dep list "$a" 2>&1)
+    # Should not error, just show clean/empty output
+    if [[ $? -eq 0 ]]; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} dep list with no deps returns clean output"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} dep list with no deps should not error"
+    fi
+}
+
+# Test: dep rebuild from scratch matches incrementally-maintained index
+test_dep_rebuild_matches_incremental() {
+    local a=$(create_test_issue "Rebuild match A")
+    local b=$(create_test_issue "Rebuild match B")
+    local c=$(create_test_issue "Rebuild match C")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    git issue dep add "$b" blocks "$c" 2>/dev/null
+    git issue dep add "$a" relates_to "$c" 2>/dev/null
+
+    # Capture incremental index (sorted for comparison)
+    local incremental
+    incremental=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null | grep -v "^last_rebuilt_from:" | sort)
+
+    # Full rebuild
+    git issue dep rebuild 2>/dev/null
+
+    # Capture rebuilt index (sorted)
+    local rebuilt
+    rebuilt=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null | grep -v "^last_rebuilt_from:" | sort)
+
+    if [[ "$incremental" == "$rebuilt" ]]; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} Rebuilt index matches incremental index"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} Rebuilt index does not match incremental index"
+        echo "  Incremental: $incremental"
+        echo "  Rebuilt: $rebuilt"
+    fi
+}
+
 # Main
 main() {
     echo -e "${BLUE}Testing Dependency Header Fields${NC}"
@@ -630,6 +703,16 @@ main() {
     run_test "deps text output" test_deps_text_output
     run_test "deps DOT output" test_deps_dot_output
     run_test "deps single issue subgraph" test_deps_single_issue
+
+    echo ""
+    echo -e "${BLUE}Testing Edge Cases (Task 10)${NC}"
+    echo "================================="
+    echo ""
+
+    run_test "dep add invalid type rejected" test_dep_add_invalid_type_rejected
+    run_test "topo with no deps shows all issues" test_topo_no_deps_shows_all
+    run_test "dep list with no deps shows clean output" test_dep_list_no_deps
+    run_test "dep rebuild matches incremental index" test_dep_rebuild_matches_incremental
 
     echo ""
     echo "================================="
