@@ -113,8 +113,9 @@ run_test() {
     cleanup_test_repo
 }
 
-# Add git-issue to PATH for testing
-export PATH="$(dirname "$0")/../bin:$PATH"
+# Add git-issue to PATH for testing (use absolute path so cd doesn't break it)
+SCRIPT_DIR_RUNNER="$(cd "$(dirname "$0")" && pwd)"
+export PATH="$SCRIPT_DIR_RUNNER/../bin:$PATH"
 
 # Test functions
 test_issue_creation() {
@@ -145,14 +146,14 @@ test_issue_update() {
     
     # Update state
     local update_output
-    update_output=$(git issue update "$issue_id" state in-progress)
-    
+    update_output=$(git issue update "$issue_id" --state=in-progress)
+
     assert_contains "Updated issue" "$update_output" "Should confirm update"
-    
+
     # Verify update
     local show_output
     show_output=$(git issue show "$issue_id")
-    assert_contains "state: in-progress" "$show_output" "Should show updated state"
+    assert_contains "State: in-progress" "$show_output" "Should show updated state"
 }
 
 test_issue_comments() {
@@ -168,10 +169,19 @@ test_issue_comments() {
     
     assert_contains "Added comment" "$comment_output" "Should confirm comment addition"
     
-    # Verify comment
-    local show_output
-    show_output=$(git issue show "$issue_id")
-    assert_contains "This is a test comment" "$show_output" "Should show comment in issue"
+    # Verify comment in raw note data (show does not display comments)
+    local notes_ref="refs/notes/issue-$issue_id"
+    local raw_data=""
+    local tree_hash
+    tree_hash=$(git cat-file -p "$notes_ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
+    if [[ -n "$tree_hash" ]]; then
+        local blob_hash
+        blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '{print $3}')
+        if [[ -n "$blob_hash" ]]; then
+            raw_data=$(git cat-file -p "$blob_hash" 2>/dev/null || echo "")
+        fi
+    fi
+    assert_contains "This is a test comment" "$raw_data" "Should have comment in note data"
 }
 
 test_hash_id_generation() {
@@ -201,7 +211,7 @@ test_status_command() {
     id1=$(git issue create "Open issue" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     id2=$(git issue create "Progress issue" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     
-    git issue update "$id2" state in-progress >/dev/null 2>&1
+    git issue update "$id2" --state=in-progress >/dev/null 2>&1
     
     local status_output
     status_output=$(git issue-status)
@@ -219,7 +229,7 @@ test_error_handling() {
     # Test invalid state
     local id
     id=$(git issue create "Error test" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
-    assert_exit_code 1 "git issue update $id state invalid-state" "Should fail for invalid state"
+    assert_exit_code 1 "git issue update $id --state=invalid-state" "Should fail for invalid state"
     
     # Test missing arguments
     assert_exit_code 1 "git issue create" "Should fail when no title provided"
