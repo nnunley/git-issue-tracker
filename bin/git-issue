@@ -118,6 +118,7 @@ usage() {
     echo "  dep rm <from> <type> <to>               Remove dependency"
     echo "  dep list [<id>]                          List dependencies"
     echo "  ready                                    List issues ready to work on (sorted by priority)"
+    echo "  topo                                     Topologically sorted ordering of non-done issues"
     echo "  setup-sync [enable|disable|status]     Configure automatic git notes sync"
     echo ""
     echo "Examples:"
@@ -2099,6 +2100,90 @@ list_ready_issues() {
     fi
 }
 
+# Topologically sort non-done issues using POSIX tsort
+topo_sort_issues() {
+    ensure_edge_index_current
+
+    local edge_data
+    edge_data=$(read_edge_index)
+
+    # Collect all non-done issue IDs
+    local non_done_ids=()
+    for ref in $(list_all_issues); do
+        local id
+        id=$(extract_issue_id "$ref")
+        local state
+        state=$(read_issue_data "$id" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
+        [[ "$state" == "done" ]] && continue
+        non_done_ids+=("$id")
+    done
+
+    if [[ ${#non_done_ids[@]} -eq 0 ]]; then
+        echo "No non-done issues found."
+        return 0
+    fi
+
+    # Build tsort input: blocks edges from edge index (only among non-done issues)
+    local tsort_input=""
+    local ids_in_edges=""
+
+    while read -r from type to; do
+        [[ -z "$from" || "$type" != "blocks" ]] && continue
+        # Only include edges where both endpoints are non-done
+        local from_ok=false to_ok=false
+        for nid in "${non_done_ids[@]}"; do
+            [[ "$nid" == "$from" ]] && from_ok=true
+            [[ "$nid" == "$to" ]] && to_ok=true
+        done
+        if [[ "$from_ok" == "true" && "$to_ok" == "true" ]]; then
+            tsort_input="${tsort_input}${from} ${to}"$'\n'
+            ids_in_edges="${ids_in_edges}${from}"$'\n'"${to}"$'\n'
+        fi
+    done <<< "$edge_data"
+
+    # Add self-pairs for standalone issues (not in any edge)
+    for nid in "${non_done_ids[@]}"; do
+        if ! echo "$ids_in_edges" | grep -qF "$nid"; then
+            tsort_input="${tsort_input}${nid} ${nid}"$'\n'
+        fi
+    done
+
+    # Run tsort
+    local sorted
+    sorted=$(echo "$tsort_input" | tsort 2>/dev/null) || {
+        echo -e "${RED}Error: tsort failed (possible cycle in dependencies)${NC}" >&2
+        return 1
+    }
+
+    echo -e "${BLUE}Topological order (do first → do last):${NC}"
+    local num=1
+    echo "$sorted" | while IFS= read -r id; do
+        [[ -z "$id" ]] && continue
+        local data
+        data=$(read_issue_data "$id" 2>/dev/null) || continue
+        local title
+        title=$(echo "$data" | grep "^title:" | cut -d' ' -f2-)
+        local priority
+        priority=$(echo "$data" | grep "^priority:" | cut -d' ' -f2)
+        local depends_on
+        depends_on=$(echo "$data" | grep "^depends_on:" | cut -d' ' -f2- | xargs)
+
+        local line="${num}. #${id}  ${title}  (P: ${priority})"
+        if [[ -n "$depends_on" ]]; then
+            local blockers=""
+            local IFS=','
+            for b in $depends_on; do
+                b=$(echo "$b" | xargs)
+                [[ -n "$b" ]] && blockers="${blockers} #${b}"
+            done
+            unset IFS
+            line="${line}  <- blocked by${blockers}"
+        fi
+        echo "$line"
+        num=$((num + 1))
+    done
+}
+
 # Initialize storage backend before any operations
 detect_storage_backend
 
@@ -2227,6 +2312,9 @@ EOF
         ;;
     ready)
         list_ready_issues
+        ;;
+    topo)
+        topo_sort_issues
         ;;
     "--help"|"-h"|"help")
         usage
