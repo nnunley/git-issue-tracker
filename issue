@@ -1,10 +1,10 @@
 id: 313d4ae
 title: dep: Write benchmark harness
 description: tests/bench_deps.sh. Generate N issues, time ready/topo/deps/rebuild.
-state: open
+state: done
 priority: medium
 created: 2026-02-28T20:45:45Z
-updated: 2026-02-28T22:16:28Z
+updated: 2026-02-28T22:16:32Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
