@@ -1308,6 +1308,141 @@ handle_commit_with_trailers() {
 # DEPENDENCY MANAGEMENT FUNCTIONS
 # ==========================================
 
+# ==========================================
+# EDGE INDEX (refs/notes/dep-graph)
+# ==========================================
+
+# Read the edge index from refs/notes/dep-graph
+read_edge_index() {
+    local ref="refs/notes/dep-graph"
+    local tree_hash
+    tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
+    if [[ -z "$tree_hash" ]]; then
+        echo ""
+        return 0
+    fi
+    local blob_hash
+    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '{print $3}')
+    if [[ -z "$blob_hash" ]]; then
+        echo ""
+        return 0
+    fi
+    git cat-file -p "$blob_hash" 2>/dev/null || echo ""
+}
+
+# Write content to the edge index
+write_edge_index() {
+    local data="$1"
+    local ref="refs/notes/dep-graph"
+    git notes --ref="$ref" remove 2>/dev/null || true
+    echo "$data" | git notes --ref="$ref" add -F -
+}
+
+# Add an edge to the index (deduplicates)
+add_edge() {
+    local from="$1"
+    local type="$2"
+    local to="$3"
+    local line="$from $type $to"
+
+    local current
+    current=$(read_edge_index)
+
+    # Check for duplicate
+    if echo "$current" | grep -qF "$line"; then
+        return 0
+    fi
+
+    if [[ -z "$current" ]]; then
+        write_edge_index "$line"
+    else
+        write_edge_index "${current}"$'\n'"${line}"
+    fi
+}
+
+# Remove an edge from the index
+remove_edge() {
+    local from="$1"
+    local type="$2"
+    local to="$3"
+    local line="$from $type $to"
+
+    local current
+    current=$(read_edge_index)
+
+    if [[ -z "$current" ]]; then
+        return 0
+    fi
+
+    local updated
+    updated=$(echo "$current" | grep -vF "$line" || true)
+
+    if [[ -z "$updated" ]]; then
+        git notes --ref="refs/notes/dep-graph" remove 2>/dev/null || true
+    else
+        write_edge_index "$updated"
+    fi
+}
+
+# Rebuild the entire edge index from issue headers
+rebuild_edge_index() {
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local edges="last_rebuilt_from: $timestamp"
+
+    for ref in $(list_all_issues); do
+        local id
+        id=$(extract_issue_id "$ref")
+        local data
+        data=$(read_issue_data "$id" 2>/dev/null) || continue
+        local front_matter
+        front_matter=$(parse_front_matter "$data")
+
+        local blocks depends_on parent_of relates_to
+
+        blocks=$(get_field_value "$front_matter" "blocks")
+        depends_on=$(get_field_value "$front_matter" "depends_on")
+        parent_of=$(get_field_value "$front_matter" "parent_of")
+        relates_to=$(get_field_value "$front_matter" "relates_to")
+
+        if [[ -n "$blocks" ]]; then
+            local IFS=','
+            for target in $blocks; do
+                target=$(echo "$target" | xargs)
+                edges="${edges}"$'\n'"${id} blocks ${target}"
+            done
+            unset IFS
+        fi
+        if [[ -n "$depends_on" ]]; then
+            local IFS=','
+            for target in $depends_on; do
+                target=$(echo "$target" | xargs)
+                edges="${edges}"$'\n'"${id} depends_on ${target}"
+            done
+            unset IFS
+        fi
+        if [[ -n "$parent_of" ]]; then
+            local IFS=','
+            for target in $parent_of; do
+                target=$(echo "$target" | xargs)
+                edges="${edges}"$'\n'"${id} parent_of ${target}"
+            done
+            unset IFS
+        fi
+        if [[ -n "$relates_to" ]]; then
+            local IFS=','
+            for target in $relates_to; do
+                target=$(echo "$target" | xargs)
+                edges="${edges}"$'\n'"${id} relates_to ${target}"
+            done
+            unset IFS
+        fi
+    done
+
+    write_edge_index "$edges"
+    echo -e "${GREEN}Edge index rebuilt at $timestamp${NC}"
+}
+
 # Append a value to a comma-separated header field (deduplicates)
 # Usage: append_to_field <issue_id> <field_name> <value>
 append_to_field() {
@@ -1464,15 +1599,23 @@ dep_add() {
             # Bidirectional: from blocks to, to depends_on from
             append_to_field "$from_id" "blocks" "$to_id"
             append_to_field "$to_id" "depends_on" "$from_id"
+            # Update edge index (both directions)
+            add_edge "$from_id" "blocks" "$to_id"
+            add_edge "$to_id" "depends_on" "$from_id"
             ;;
         depends_on)
             # Bidirectional: from depends_on to, to blocks from
             append_to_field "$from_id" "depends_on" "$to_id"
             append_to_field "$to_id" "blocks" "$from_id"
+            # Update edge index (both directions)
+            add_edge "$from_id" "depends_on" "$to_id"
+            add_edge "$to_id" "blocks" "$from_id"
             ;;
         parent_of|relates_to)
             # Unidirectional: only write on from-issue
             append_to_field "$from_id" "$dep_type" "$to_id"
+            # Update edge index
+            add_edge "$from_id" "$dep_type" "$to_id"
             ;;
     esac
 
@@ -1517,15 +1660,23 @@ dep_rm() {
             # Bidirectional: remove from both sides
             remove_from_field "$from_id" "blocks" "$to_id"
             remove_from_field "$to_id" "depends_on" "$from_id"
+            # Update edge index (both directions)
+            remove_edge "$from_id" "blocks" "$to_id"
+            remove_edge "$to_id" "depends_on" "$from_id"
             ;;
         depends_on)
             # Bidirectional: remove from both sides
             remove_from_field "$from_id" "depends_on" "$to_id"
             remove_from_field "$to_id" "blocks" "$from_id"
+            # Update edge index (both directions)
+            remove_edge "$from_id" "depends_on" "$to_id"
+            remove_edge "$to_id" "blocks" "$from_id"
             ;;
         parent_of|relates_to)
             # Unidirectional: only remove from from-issue
             remove_from_field "$from_id" "$dep_type" "$to_id"
+            # Update edge index
+            remove_edge "$from_id" "$dep_type" "$to_id"
             ;;
     esac
 
@@ -1641,8 +1792,7 @@ handle_dep() {
             dep_list "$@"
             ;;
         rebuild)
-            echo -e "${YELLOW}dep rebuild is not yet implemented${NC}" >&2
-            return 0
+            rebuild_edge_index
             ;;
         *)
             echo -e "${RED}Error: Unknown dep subcommand '$subcmd'${NC}" >&2

@@ -240,6 +240,61 @@ test_dep_list() {
     assert_contains "blocks" "$output" "dep list shows relationship type"
 }
 
+# ==========================================
+# Edge index tests (Task 3)
+# ==========================================
+
+# Test: edge index is written when dep add is called
+test_edge_index_written_on_dep_add() {
+    local a=$(create_test_issue "Edge A")
+    local b=$(create_test_issue "Edge B")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    local edges
+    edges=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null || echo "")
+    assert_contains "$a blocks $b" "$edges" "Edge index should contain blocks edge"
+    assert_contains "$b depends_on $a" "$edges" "Edge index should contain depends_on edge"
+}
+
+# Test: edge index is cleaned when dep rm is called
+test_edge_index_cleaned_on_dep_rm() {
+    local a=$(create_test_issue "EdgeRM A")
+    local b=$(create_test_issue "EdgeRM B")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    git issue dep rm "$a" blocks "$b" 2>/dev/null
+    local edges
+    edges=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null || echo "")
+    # Use custom assertion since we need to check absence
+    if echo "$edges" | grep -q "$a blocks $b"; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} Edge should be removed from index"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} Edge removed from index"
+    fi
+    if echo "$edges" | grep -q "$b depends_on $a"; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} Inverse edge should be removed from index"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} Inverse edge removed from index"
+    fi
+}
+
+# Test: dep rebuild reconstructs edge index from headers
+test_dep_rebuild() {
+    local a=$(create_test_issue "Rebuild A")
+    local b=$(create_test_issue "Rebuild B")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    # Wipe the edge index
+    git notes --ref=refs/notes/dep-graph remove 2>/dev/null || true
+    # Rebuild
+    git issue dep rebuild 2>/dev/null
+    local edges
+    edges=$(git notes --ref=refs/notes/dep-graph show 2>/dev/null || echo "")
+    assert_contains "$a blocks $b" "$edges" "Rebuild should restore blocks edge from headers"
+    assert_contains "$b depends_on $a" "$edges" "Rebuild should restore depends_on edge from headers"
+}
+
 # Main
 main() {
     echo -e "${BLUE}Testing Dependency Header Fields${NC}"
@@ -263,6 +318,15 @@ main() {
     run_test "dep add nonexistent issue rejected" test_dep_add_nonexistent_rejected
     run_test "dep add multiple deps accumulate" test_dep_add_multiple
     run_test "dep list shows dependencies" test_dep_list
+
+    echo ""
+    echo -e "${BLUE}Testing Edge Index (Task 3)${NC}"
+    echo "================================="
+    echo ""
+
+    run_test "edge index written on dep add" test_edge_index_written_on_dep_add
+    run_test "edge index cleaned on dep rm" test_edge_index_cleaned_on_dep_rm
+    run_test "dep rebuild reconstructs index" test_dep_rebuild
 
     echo ""
     echo "================================="
