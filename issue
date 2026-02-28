@@ -4,8 +4,9 @@ description: Import Beads JSONL files. Parse each line as JSON, map fields to gi
 state: open
 priority: medium
 created: 2026-02-28T22:12:23Z
-updated: 2026-02-28T22:12:23Z
+updated: 2026-02-28T22:12:38Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
+depends_on: 38ad0f1
 ---
