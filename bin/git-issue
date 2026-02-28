@@ -114,6 +114,9 @@ usage() {
     echo "  scan-commits [--since=<date>]           Scan commit trailers for issue references"
     echo "  import [--stdin|--file|--bulk] <files>  Import issues from various sources"
     echo "  export [--format=<fmt>] [<ids>]         Export issues (default: all)"
+    echo "  dep add <from> <type> <to>              Add dependency (blocks, depends_on, parent_of, relates_to)"
+    echo "  dep rm <from> <type> <to>               Remove dependency"
+    echo "  dep list [<id>]                          List dependencies"
     echo "  setup-sync [enable|disable|status]     Configure automatic git notes sync"
     echo ""
     echo "Examples:"
@@ -1301,6 +1304,362 @@ handle_commit_with_trailers() {
     fi
 }
 
+# ==========================================
+# DEPENDENCY MANAGEMENT FUNCTIONS
+# ==========================================
+
+# Append a value to a comma-separated header field (deduplicates)
+# Usage: append_to_field <issue_id> <field_name> <value>
+append_to_field() {
+    local id="$1"
+    local field="$2"
+    local value="$3"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    local data
+    data=$(read_issue_data "$id") || {
+        echo -e "${RED}Error: Issue #$id not found${NC}" >&2
+        return 1
+    }
+
+    # Get current field value
+    local current
+    current=$(echo "$data" | grep "^${field}:" | cut -d' ' -f2- | xargs)
+
+    # Check for duplicate
+    if [[ -n "$current" ]]; then
+        # Split on comma and check each entry
+        local IFS=','
+        for existing in $current; do
+            existing=$(echo "$existing" | xargs)
+            if [[ "$existing" == "$value" ]]; then
+                echo -e "${YELLOW}Value '$value' already exists in $field for issue #$id${NC}" >&2
+                return 0
+            fi
+        done
+        unset IFS
+        # Append with comma separator
+        local new_value="${current},${value}"
+    else
+        local new_value="$value"
+    fi
+
+    # Use the same awk updater pattern as update_issue()
+    local updated_data
+    updated_data=$(echo "$data" | awk -v field="${field}:" -v value="$new_value" -v ts="$timestamp" '
+        BEGIN { found=0; in_body=0 }
+        /^---$/ { if (!found) { print field, value; found=1 }; in_body=1; print; next }
+        in_body { print; next }
+        $1 == field { print field, value; found=1; next }
+        $1 == "updated:" { print "updated:", ts; next }
+        { print }
+    ')
+
+    write_issue_data "$id" "$updated_data"
+}
+
+# Remove a value from a comma-separated header field
+# Usage: remove_from_field <issue_id> <field_name> <value>
+remove_from_field() {
+    local id="$1"
+    local field="$2"
+    local value="$3"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    local data
+    data=$(read_issue_data "$id") || {
+        echo -e "${RED}Error: Issue #$id not found${NC}" >&2
+        return 1
+    }
+
+    # Get current field value
+    local current
+    current=$(echo "$data" | grep "^${field}:" | cut -d' ' -f2- | xargs)
+
+    if [[ -z "$current" ]]; then
+        return 0  # Nothing to remove
+    fi
+
+    # Filter out the value
+    local new_value=""
+    local IFS=','
+    for existing in $current; do
+        existing=$(echo "$existing" | xargs)
+        if [[ "$existing" != "$value" ]]; then
+            if [[ -n "$new_value" ]]; then
+                new_value="${new_value},${existing}"
+            else
+                new_value="$existing"
+            fi
+        fi
+    done
+    unset IFS
+
+    if [[ -z "$new_value" ]]; then
+        # Field is now empty - remove it entirely
+        local updated_data
+        updated_data=$(echo "$data" | awk -v field="${field}:" -v ts="$timestamp" '
+            $1 == field { next }
+            $1 == "updated:" { print "updated:", ts; next }
+            { print }
+        ')
+    else
+        # Write back the filtered list
+        local updated_data
+        updated_data=$(echo "$data" | awk -v field="${field}:" -v value="$new_value" -v ts="$timestamp" '
+            BEGIN { found=0; in_body=0 }
+            /^---$/ { if (!found) { print field, value; found=1 }; in_body=1; print; next }
+            in_body { print; next }
+            $1 == field { print field, value; found=1; next }
+            $1 == "updated:" { print "updated:", ts; next }
+            { print }
+        ')
+    fi
+
+    write_issue_data "$id" "$updated_data"
+}
+
+# Add a dependency relationship
+# Usage: dep_add <from_id> <type> <to_id>
+dep_add() {
+    local from_id="$1"
+    local dep_type="$2"
+    local to_id="$3"
+
+    # Validate arguments
+    if [[ -z "$from_id" || -z "$dep_type" || -z "$to_id" ]]; then
+        echo -e "${RED}Error: dep add requires <from_id> <type> <to_id>${NC}" >&2
+        return 1
+    fi
+
+    # Reject self-dependency
+    if [[ "$from_id" == "$to_id" ]]; then
+        echo -e "${RED}Error: Cannot create self-dependency ($from_id -> $from_id)${NC}" >&2
+        return 1
+    fi
+
+    # Validate type
+    case "$dep_type" in
+        blocks|depends_on|parent_of|relates_to) ;;
+        *)
+            echo -e "${RED}Error: Invalid dependency type '$dep_type'${NC}" >&2
+            echo "Valid types: blocks, depends_on, parent_of, relates_to" >&2
+            return 1
+            ;;
+    esac
+
+    # Validate both issues exist
+    if ! issue_exists "$from_id"; then
+        echo -e "${RED}Error: Issue #$from_id not found${NC}" >&2
+        return 1
+    fi
+    if ! issue_exists "$to_id"; then
+        echo -e "${RED}Error: Issue #$to_id not found${NC}" >&2
+        return 1
+    fi
+
+    # Write the dependency
+    case "$dep_type" in
+        blocks)
+            # Bidirectional: from blocks to, to depends_on from
+            append_to_field "$from_id" "blocks" "$to_id"
+            append_to_field "$to_id" "depends_on" "$from_id"
+            ;;
+        depends_on)
+            # Bidirectional: from depends_on to, to blocks from
+            append_to_field "$from_id" "depends_on" "$to_id"
+            append_to_field "$to_id" "blocks" "$from_id"
+            ;;
+        parent_of|relates_to)
+            # Unidirectional: only write on from-issue
+            append_to_field "$from_id" "$dep_type" "$to_id"
+            ;;
+    esac
+
+    echo -e "${GREEN}Added dependency: #$from_id $dep_type #$to_id${NC}"
+}
+
+# Remove a dependency relationship
+# Usage: dep_rm <from_id> <type> <to_id>
+dep_rm() {
+    local from_id="$1"
+    local dep_type="$2"
+    local to_id="$3"
+
+    # Validate arguments
+    if [[ -z "$from_id" || -z "$dep_type" || -z "$to_id" ]]; then
+        echo -e "${RED}Error: dep rm requires <from_id> <type> <to_id>${NC}" >&2
+        return 1
+    fi
+
+    # Validate type
+    case "$dep_type" in
+        blocks|depends_on|parent_of|relates_to) ;;
+        *)
+            echo -e "${RED}Error: Invalid dependency type '$dep_type'${NC}" >&2
+            return 1
+            ;;
+    esac
+
+    # Validate both issues exist
+    if ! issue_exists "$from_id"; then
+        echo -e "${RED}Error: Issue #$from_id not found${NC}" >&2
+        return 1
+    fi
+    if ! issue_exists "$to_id"; then
+        echo -e "${RED}Error: Issue #$to_id not found${NC}" >&2
+        return 1
+    fi
+
+    # Remove the dependency
+    case "$dep_type" in
+        blocks)
+            # Bidirectional: remove from both sides
+            remove_from_field "$from_id" "blocks" "$to_id"
+            remove_from_field "$to_id" "depends_on" "$from_id"
+            ;;
+        depends_on)
+            # Bidirectional: remove from both sides
+            remove_from_field "$from_id" "depends_on" "$to_id"
+            remove_from_field "$to_id" "blocks" "$from_id"
+            ;;
+        parent_of|relates_to)
+            # Unidirectional: only remove from from-issue
+            remove_from_field "$from_id" "$dep_type" "$to_id"
+            ;;
+    esac
+
+    echo -e "${GREEN}Removed dependency: #$from_id $dep_type #$to_id${NC}"
+}
+
+# List dependency relationships
+# Usage: dep_list [issue_id]
+dep_list() {
+    local target_id="$1"
+
+    if [[ -n "$target_id" ]]; then
+        # Show deps for a specific issue
+        if ! issue_exists "$target_id"; then
+            echo -e "${RED}Error: Issue #$target_id not found${NC}" >&2
+            return 1
+        fi
+
+        local data
+        data=$(read_issue_data "$target_id")
+        local front_matter
+        front_matter=$(parse_front_matter "$data")
+
+        local blocks=$(get_field_value "$front_matter" "blocks")
+        local depends_on=$(get_field_value "$front_matter" "depends_on")
+        local parent_of=$(get_field_value "$front_matter" "parent_of")
+        local relates_to=$(get_field_value "$front_matter" "relates_to")
+
+        echo -e "${BLUE}Dependencies for issue #$target_id:${NC}"
+        [[ -n "$blocks" ]] && echo "  blocks: $blocks"
+        [[ -n "$depends_on" ]] && echo "  depends_on: $depends_on"
+        [[ -n "$parent_of" ]] && echo "  parent_of: $parent_of"
+        [[ -n "$relates_to" ]] && echo "  relates_to: $relates_to"
+
+        if [[ -z "$blocks" && -z "$depends_on" && -z "$parent_of" && -z "$relates_to" ]]; then
+            echo "  (none)"
+        fi
+    else
+        # Show all dependency relationships across all issues
+        echo -e "${BLUE}All dependency relationships:${NC}"
+        local found=false
+
+        for ref in $(list_all_issues); do
+            local id=$(extract_issue_id "$ref")
+            local data
+            data=$(read_issue_data "$id" 2>/dev/null) || continue
+            local front_matter
+            front_matter=$(parse_front_matter "$data")
+
+            local blocks=$(get_field_value "$front_matter" "blocks")
+            local depends_on=$(get_field_value "$front_matter" "depends_on")
+            local parent_of=$(get_field_value "$front_matter" "parent_of")
+            local relates_to=$(get_field_value "$front_matter" "relates_to")
+
+            if [[ -n "$blocks" ]]; then
+                local IFS=','
+                for target in $blocks; do
+                    target=$(echo "$target" | xargs)
+                    echo "  #$id blocks #$target"
+                    found=true
+                done
+                unset IFS
+            fi
+            if [[ -n "$depends_on" ]]; then
+                local IFS=','
+                for target in $depends_on; do
+                    target=$(echo "$target" | xargs)
+                    echo "  #$id depends_on #$target"
+                    found=true
+                done
+                unset IFS
+            fi
+            if [[ -n "$parent_of" ]]; then
+                local IFS=','
+                for target in $parent_of; do
+                    target=$(echo "$target" | xargs)
+                    echo "  #$id parent_of #$target"
+                    found=true
+                done
+                unset IFS
+            fi
+            if [[ -n "$relates_to" ]]; then
+                local IFS=','
+                for target in $relates_to; do
+                    target=$(echo "$target" | xargs)
+                    echo "  #$id relates_to #$target"
+                    found=true
+                done
+                unset IFS
+            fi
+        done
+
+        if [[ "$found" == "false" ]]; then
+            echo "  (none)"
+        fi
+    fi
+}
+
+# Handle dep subcommand routing
+# Usage: handle_dep <subcommand> [args...]
+handle_dep() {
+    local subcmd="$1"
+    shift || true
+
+    case "$subcmd" in
+        add)
+            dep_add "$@"
+            ;;
+        rm|remove)
+            dep_rm "$@"
+            ;;
+        list|ls)
+            dep_list "$@"
+            ;;
+        rebuild)
+            echo -e "${YELLOW}dep rebuild is not yet implemented${NC}" >&2
+            return 0
+            ;;
+        *)
+            echo -e "${RED}Error: Unknown dep subcommand '$subcmd'${NC}" >&2
+            echo "Usage: git issue dep [add|rm|list|rebuild] [args...]" >&2
+            echo "" >&2
+            echo "Subcommands:" >&2
+            echo "  add <from_id> <type> <to_id>   Add dependency" >&2
+            echo "  rm  <from_id> <type> <to_id>   Remove dependency" >&2
+            echo "  list [issue_id]                 List dependencies" >&2
+            echo "  rebuild                         Rebuild dependency index" >&2
+            echo "" >&2
+            echo "Dependency types: blocks, depends_on, parent_of, relates_to" >&2
+            return 1
+            ;;
+    esac
+}
+
 # Initialize storage backend before any operations
 detect_storage_backend
 
@@ -1420,8 +1779,12 @@ EOF
         import_issues "$@"
         ;;
     export)
-        shift  
+        shift
         export_issues "$@"
+        ;;
+    dep)
+        shift
+        handle_dep "$@"
         ;;
     "--help"|"-h"|"help")
         usage

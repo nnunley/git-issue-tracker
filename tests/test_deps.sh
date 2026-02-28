@@ -5,6 +5,9 @@
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 source "$SCRIPT_DIR/test_runner.sh"
 
+# Fix PATH to use absolute path (test_runner uses relative, breaks after cd)
+export PATH="$SCRIPT_DIR/../bin:$PATH"
+
 # Helper to create an issue and return its ID
 create_test_issue() {
     local title="$1"
@@ -61,6 +64,182 @@ test_multiple_dep_values() {
     assert_contains "Blocks: aaaaaaa,bbbbbbb" "$output" "show displays comma-separated blocks"
 }
 
+# ==========================================
+# dep add/rm/list tests (Task 2)
+# ==========================================
+
+# Test: dep add A blocks B => A shows Blocks: B, B shows Depends on: A
+test_dep_add_blocks() {
+    local id_a id_b
+    id_a=$(create_test_issue "Issue A")
+    id_b=$(create_test_issue "Issue B")
+
+    git issue dep add "$id_a" blocks "$id_b" >/dev/null 2>&1
+
+    local output_a output_b
+    output_a=$(git issue show "$id_a" 2>&1)
+    output_b=$(git issue show "$id_b" 2>&1)
+
+    assert_contains "Blocks: $id_b" "$output_a" "A shows B in Blocks"
+    assert_contains "Depends on: $id_a" "$output_b" "B shows A in Depends on"
+}
+
+# Test: dep add A relates_to B => A shows Relates to: B (unidirectional)
+test_dep_add_relates_to() {
+    local id_a id_b
+    id_a=$(create_test_issue "Issue A")
+    id_b=$(create_test_issue "Issue B")
+
+    git issue dep add "$id_a" relates_to "$id_b" >/dev/null 2>&1
+
+    local output_a output_b
+    output_a=$(git issue show "$id_a" 2>&1)
+    output_b=$(git issue show "$id_b" 2>&1)
+
+    assert_contains "Relates to: $id_b" "$output_a" "A shows B in Relates to"
+    # B should NOT show anything about A for relates_to (unidirectional)
+    if [[ "$output_b" != *"Relates to:"* ]]; then
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} B does not show relates_to (unidirectional)"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} B should not show relates_to for unidirectional link"
+    fi
+}
+
+# Test: dep add epic parent_of task => epic shows Parent of: task (unidirectional)
+test_dep_add_parent_of() {
+    local id_epic id_task
+    id_epic=$(create_test_issue "Epic issue")
+    id_task=$(create_test_issue "Task issue")
+
+    git issue dep add "$id_epic" parent_of "$id_task" >/dev/null 2>&1
+
+    local output_epic
+    output_epic=$(git issue show "$id_epic" 2>&1)
+
+    assert_contains "Parent of: $id_task" "$output_epic" "epic shows task in Parent of"
+}
+
+# Test: dep rm removes blocks dep from both sides
+test_dep_rm() {
+    local id_a id_b
+    id_a=$(create_test_issue "Issue A")
+    id_b=$(create_test_issue "Issue B")
+
+    git issue dep add "$id_a" blocks "$id_b" >/dev/null 2>&1
+
+    # Verify it was added
+    local output_a
+    output_a=$(git issue show "$id_a" 2>&1)
+    assert_contains "Blocks: $id_b" "$output_a" "blocks was added before removal"
+
+    # Now remove it
+    git issue dep rm "$id_a" blocks "$id_b" >/dev/null 2>&1
+
+    output_a=$(git issue show "$id_a" 2>&1)
+    local output_b
+    output_b=$(git issue show "$id_b" 2>&1)
+
+    # Neither should have the dep anymore
+    if [[ "$output_a" != *"Blocks:"* ]]; then
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} A no longer shows Blocks after removal"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} A still shows Blocks after removal"
+    fi
+
+    if [[ "$output_b" != *"Depends on:"* ]]; then
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} B no longer shows Depends on after removal"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} B still shows Depends on after removal"
+    fi
+}
+
+# Test: dep add self-dep is rejected
+test_dep_add_self_rejected() {
+    local id_a
+    id_a=$(create_test_issue "Self-dep issue")
+
+    if git issue dep add "$id_a" blocks "$id_a" >/dev/null 2>&1; then
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} self-dependency should be rejected (got exit 0)"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} self-dependency rejected with non-zero exit"
+    fi
+}
+
+# Test: dep add with nonexistent issue is rejected
+test_dep_add_nonexistent_rejected() {
+    local id_a
+    id_a=$(create_test_issue "Real issue")
+
+    if git issue dep add "$id_a" blocks zzzzzzz >/dev/null 2>&1; then
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} nonexistent target should be rejected (got exit 0)"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} nonexistent target rejected with non-zero exit"
+    fi
+
+    if git issue dep add zzzzzzz blocks "$id_a" >/dev/null 2>&1; then
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} nonexistent source should be rejected (got exit 0)"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1))
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} nonexistent source rejected with non-zero exit"
+    fi
+}
+
+# Test: multiple deps — A blocks C, B blocks C => C depends_on A,B
+test_dep_add_multiple() {
+    local id_a id_b id_c
+    id_a=$(create_test_issue "Issue A")
+    id_b=$(create_test_issue "Issue B")
+    id_c=$(create_test_issue "Issue C")
+
+    git issue dep add "$id_a" blocks "$id_c" >/dev/null 2>&1
+    git issue dep add "$id_b" blocks "$id_c" >/dev/null 2>&1
+
+    local output_c
+    output_c=$(git issue show "$id_c" 2>&1)
+
+    assert_contains "$id_a" "$output_c" "C depends_on includes A"
+    assert_contains "$id_b" "$output_c" "C depends_on includes B"
+}
+
+# Test: dep list shows dependencies
+test_dep_list() {
+    local id_a id_b
+    id_a=$(create_test_issue "Issue A")
+    id_b=$(create_test_issue "Issue B")
+
+    git issue dep add "$id_a" blocks "$id_b" >/dev/null 2>&1
+
+    local output
+    output=$(git issue dep list 2>&1)
+
+    assert_contains "$id_a" "$output" "dep list mentions A"
+    assert_contains "$id_b" "$output" "dep list mentions B"
+    assert_contains "blocks" "$output" "dep list shows relationship type"
+}
+
 # Main
 main() {
     echo -e "${BLUE}Testing Dependency Header Fields${NC}"
@@ -70,6 +249,20 @@ main() {
     run_test "dep fields not shown when empty" test_dep_fields_in_show
     run_test "dep fields survive update round-trip" test_dep_fields_survive_update
     run_test "multiple dep values round-trip" test_multiple_dep_values
+
+    echo ""
+    echo -e "${BLUE}Testing dep add/rm/list Commands${NC}"
+    echo "================================="
+    echo ""
+
+    run_test "dep add blocks (bidirectional)" test_dep_add_blocks
+    run_test "dep add relates_to (unidirectional)" test_dep_add_relates_to
+    run_test "dep add parent_of (unidirectional)" test_dep_add_parent_of
+    run_test "dep rm removes from both sides" test_dep_rm
+    run_test "dep add self-dependency rejected" test_dep_add_self_rejected
+    run_test "dep add nonexistent issue rejected" test_dep_add_nonexistent_rejected
+    run_test "dep add multiple deps accumulate" test_dep_add_multiple
+    run_test "dep list shows dependencies" test_dep_list
 
     echo ""
     echo "================================="
