@@ -1443,6 +1443,30 @@ rebuild_edge_index() {
     echo -e "${GREEN}Edge index rebuilt at $timestamp${NC}"
 }
 
+# ==========================================
+# CYCLE DETECTION
+# ==========================================
+
+# Check if adding a blocks edge from->to would create a cycle
+# Returns 1 if cycle detected, 0 otherwise
+check_for_cycles() {
+    local from="$1"
+    local to="$2"
+
+    # Get current blocking edges from index + proposed new edge
+    local edges
+    edges=$(read_edge_index | grep ' blocks ' | awk '{print $1, $3}')
+    edges="${edges}"$'\n'"${from} ${to}"
+
+    # tsort on macOS exits 0 even on cycles, so check stderr
+    local tsort_stderr
+    tsort_stderr=$(echo "$edges" | tsort 2>&1 >/dev/null)
+    if echo "$tsort_stderr" | grep -q "cycle"; then
+        return 1  # cycle detected
+    fi
+    return 0
+}
+
 # Append a value to a comma-separated header field (deduplicates)
 # Usage: append_to_field <issue_id> <field_name> <value>
 append_to_field() {
@@ -1592,6 +1616,23 @@ dep_add() {
         echo -e "${RED}Error: Issue #$to_id not found${NC}" >&2
         return 1
     fi
+
+    # Cycle detection for blocking relationships
+    case "$dep_type" in
+        blocks)
+            if ! check_for_cycles "$from_id" "$to_id"; then
+                echo -e "${RED}Error: Adding '$from_id blocks $to_id' would create a cycle${NC}" >&2
+                return 1
+            fi
+            ;;
+        depends_on)
+            # depends_on from->to is equivalent to to blocks from
+            if ! check_for_cycles "$to_id" "$from_id"; then
+                echo -e "${RED}Error: Adding '$from_id depends_on $to_id' would create a cycle${NC}" >&2
+                return 1
+            fi
+            ;;
+    esac
 
     # Write the dependency
     case "$dep_type" in

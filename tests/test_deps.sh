@@ -295,6 +295,40 @@ test_dep_rebuild() {
     assert_contains "$b depends_on $a" "$edges" "Rebuild should restore depends_on edge from headers"
 }
 
+# ==========================================
+# Cycle detection tests (Task 4)
+# ==========================================
+
+# Test: direct cycle A->B->A is rejected
+test_direct_cycle_rejected() {
+    local a=$(create_test_issue "Cycle A")
+    local b=$(create_test_issue "Cycle B")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    if git issue dep add "$b" blocks "$a" 2>/dev/null; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} Direct cycle should be rejected"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} Direct cycle rejected"
+    fi
+}
+
+# Test: transitive cycle A->B->C->A is rejected
+test_transitive_cycle_rejected() {
+    local a=$(create_test_issue "TCycle A")
+    local b=$(create_test_issue "TCycle B")
+    local c=$(create_test_issue "TCycle C")
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+    git issue dep add "$b" blocks "$c" 2>/dev/null
+    if git issue dep add "$c" blocks "$a" 2>/dev/null; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} Transitive cycle should be rejected"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} Transitive cycle rejected"
+    fi
+}
+
 # Main
 main() {
     echo -e "${BLUE}Testing Dependency Header Fields${NC}"
@@ -327,6 +361,14 @@ main() {
     run_test "edge index written on dep add" test_edge_index_written_on_dep_add
     run_test "edge index cleaned on dep rm" test_edge_index_cleaned_on_dep_rm
     run_test "dep rebuild reconstructs index" test_dep_rebuild
+
+    echo ""
+    echo -e "${BLUE}Testing Cycle Detection (Task 4)${NC}"
+    echo "================================="
+    echo ""
+
+    run_test "direct cycle rejected" test_direct_cycle_rejected
+    run_test "transitive cycle rejected" test_transitive_cycle_rejected
 
     echo ""
     echo "================================="
