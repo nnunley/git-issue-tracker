@@ -4,8 +4,9 @@ description: Create nnunley/homebrew-git-issue repo on GitHub. Copy validated fo
 state: open
 priority: medium
 created: 2026-02-28T21:58:55Z
-updated: 2026-02-28T21:58:55Z
+updated: 2026-02-28T21:59:19Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
+depends_on: a16c143
 ---
