@@ -1,7 +1,7 @@
 id: 10a45d6
 title: Add Beads round-trip tests
 description: Test that export->import->export produces identical JSONL for core fields. Test field mapping edge cases: priority boundaries, status vocabulary, dependency type mapping, hierarchical ID flattening, comments with special characters. Test import of real Beads JSONL fixture.
-state: open
+state: blocked
 priority: medium
 created: 2026-02-28T22:12:23Z
 updated: 2026-02-28T22:12:43Z
