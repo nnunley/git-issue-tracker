@@ -4,8 +4,9 @@ description: Export all or filtered issues as Beads-compatible JSONL. One JSON o
 state: open
 priority: medium
 created: 2026-02-28T22:12:22Z
-updated: 2026-02-28T22:12:22Z
+updated: 2026-02-28T22:12:37Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
+depends_on: 38ad0f1
 ---
