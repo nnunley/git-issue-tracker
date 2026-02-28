@@ -1,0 +1,11 @@
+id: 2ce45cf
+title: Extend dependency types for Beads compatibility
+description: Add support for additional dependency relationship types beyond blocks/depends_on/parent_of/relates_to. At minimum: waits_for (blocking), duplicates, supersedes, caused_by (non-blocking). Store type in edge index. Map unknown Beads types to relates_to on import.
+state: open
+priority: medium
+created: 2026-02-28T22:12:21Z
+updated: 2026-02-28T22:12:21Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+---
