@@ -1,0 +1,11 @@
+id: 6b20c83
+title: Add external_ref field for cross-system linking
+description: Add external_ref header field for linking to external trackers (e.g., gh-42, jira-ABC-123). Replaces the current github_id/github_url pair with a generic approach matching Beads external_ref.
+state: open
+priority: medium
+created: 2026-02-28T22:12:21Z
+updated: 2026-02-28T22:12:21Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+---
