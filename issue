@@ -4,8 +4,9 @@ description: Formula/git-issue.rb has placeholder URLs (your-username), dummy so
 state: open
 priority: medium
 created: 2026-02-28T21:58:40Z
-updated: 2026-02-28T21:58:40Z
+updated: 2026-02-28T21:59:06Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
+parent_of: 96a11f9
 ---
