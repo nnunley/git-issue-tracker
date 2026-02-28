@@ -1,0 +1,11 @@
+id: a1005ab
+title: Rename state field to status for Beads alignment
+description: Rename the state header field to status throughout: data model, show output, update flags (--status= instead of --state=), list display, auto-blocking logic, cascade_unblock, ready/topo filters, tests. Beads uses status with values open/in_progress/blocked/deferred/closed. Keep backward compat: read_issue_data should accept both state: and status: during transition.
+state: open
+priority: medium
+created: 2026-02-28T22:13:04Z
+updated: 2026-02-28T22:13:04Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+---
