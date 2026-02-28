@@ -117,6 +117,7 @@ usage() {
     echo "  dep add <from> <type> <to>              Add dependency (blocks, depends_on, parent_of, relates_to)"
     echo "  dep rm <from> <type> <to>               Remove dependency"
     echo "  dep list [<id>]                          List dependencies"
+    echo "  ready                                    List issues ready to work on (sorted by priority)"
     echo "  setup-sync [enable|disable|status]     Configure automatic git notes sync"
     echo ""
     echo "Examples:"
@@ -2023,6 +2024,81 @@ handle_dep() {
     esac
 }
 
+# ==========================================
+# GRAPH QUERY FUNCTIONS
+# ==========================================
+
+# List issues ready to work on
+# Ready = not done, not blocked, and all depends_on targets are done
+list_ready_issues() {
+    ensure_edge_index_current
+
+    local results=""
+
+    for ref in $(list_all_issues); do
+        local id
+        id=$(extract_issue_id "$ref")
+        local data
+        data=$(read_issue_data "$id" 2>/dev/null) || continue
+
+        local state
+        state=$(echo "$data" | grep "^state:" | cut -d' ' -f2)
+
+        # Skip done and blocked issues
+        [[ "$state" == "done" || "$state" == "blocked" ]] && continue
+
+        # Check depends_on: all blockers must be done
+        local depends_on
+        depends_on=$(echo "$data" | grep "^depends_on:" | cut -d' ' -f2- | xargs)
+        if [[ -n "$depends_on" ]]; then
+            local all_done=true
+            local IFS=','
+            for blocker in $depends_on; do
+                blocker=$(echo "$blocker" | xargs)
+                [[ -z "$blocker" ]] && continue
+                local blocker_state
+                blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
+                if [[ "$blocker_state" != "done" ]]; then
+                    all_done=false
+                    break
+                fi
+            done
+            unset IFS
+            [[ "$all_done" == "false" ]] && continue
+        fi
+
+        local title
+        title=$(echo "$data" | grep "^title:" | cut -d' ' -f2-)
+        local priority
+        priority=$(echo "$data" | grep "^priority:" | cut -d' ' -f2)
+        local assignee
+        assignee=$(echo "$data" | grep "^assignee:" | cut -d' ' -f2-)
+
+        # Numeric rank for sorting (lower = higher priority)
+        local rank
+        case "$priority" in
+            critical) rank=0 ;;
+            high)     rank=1 ;;
+            medium)   rank=2 ;;
+            low)      rank=3 ;;
+            *)        rank=9 ;;
+        esac
+
+        local line="#${id} [${state}]  ${title}  (P: ${priority})"
+        [[ -n "$assignee" ]] && line="${line} -> ${assignee}"
+        results="${results}${rank} ${line}"$'\n'
+    done
+
+    echo -e "${BLUE}Ready to work on:${NC}"
+    if [[ -z "$results" ]]; then
+        echo "  (none)"
+    else
+        echo "$results" | sort -n | sed 's/^[0-9] //' | while IFS= read -r line; do
+            [[ -n "$line" ]] && echo "$line"
+        done
+    fi
+}
+
 # Initialize storage backend before any operations
 detect_storage_backend
 
@@ -2148,6 +2224,9 @@ EOF
     dep)
         shift
         handle_dep "$@"
+        ;;
+    ready)
+        list_ready_issues
         ;;
     "--help"|"-h"|"help")
         usage
