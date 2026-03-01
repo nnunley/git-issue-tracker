@@ -1,10 +1,10 @@
 id: 38ad0f1
 title: Add issue_type field to data model
 description: Add issue_type header field supporting: bug, feature, task, epic, chore. Default to task. Add to update allowlist, show output, and create flags. Beads also has decision, message, merge-request, molecule, gate, agent, role, convoy — store but don't enforce.
-status: blocked
+status: open
 priority: medium
 created: 2026-02-28T22:12:20Z
-updated: 2026-02-28T22:13:11Z
+updated: 2026-03-01T00:56:20Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
