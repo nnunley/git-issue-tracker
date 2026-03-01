@@ -1,7 +1,7 @@
 id: d280f37
 title: dep: Implement git issue topo command
 description: Topological ordering via POSIX tsort. Show blocker annotations.
-state: done
+status: closed
 priority: medium
 created: 2026-02-28T20:45:44Z
 updated: 2026-02-28T22:03:59Z
