@@ -37,7 +37,7 @@ test_dep_fields_in_show() {
     output=$(git issue show "$id" 2>&1)
 
     assert_contains "Title: Issue without deps" "$output" "show displays title"
-    assert_contains "State: open" "$output" "show displays state"
+    assert_contains "Status: open" "$output" "show displays status"
     # Dep fields should NOT appear when empty
     if [[ "$output" != *"Blocks:"* ]]; then
         TESTS_RUN=$((TESTS_RUN + 1))
@@ -360,7 +360,7 @@ test_done_unblocks_dependents() {
     local a=$(create_test_issue "Will complete")
     local b=$(create_test_issue "Will unblock")
     git issue dep add "$a" blocks "$b" 2>/dev/null
-    git issue update "$a" --state=done 2>/dev/null
+    git issue update "$a" --status=closed 2>/dev/null
     local show_b
     show_b=$(git issue show "$b" 2>&1)
     assert_contains "open" "$show_b" "B should be unblocked after A is done"
@@ -373,11 +373,11 @@ test_multiple_blockers_partial_done() {
     local c=$(create_test_issue "Blocked by both")
     git issue dep add "$a" blocks "$c" 2>/dev/null
     git issue dep add "$b" blocks "$c" 2>/dev/null
-    git issue update "$a" --state=done 2>/dev/null
+    git issue update "$a" --status=closed 2>/dev/null
     local show_c
     show_c=$(git issue show "$c" 2>&1)
     assert_contains "blocked" "$show_c" "C should stay blocked (B still open)"
-    git issue update "$b" --state=done 2>/dev/null
+    git issue update "$b" --status=closed 2>/dev/null
     show_c=$(git issue show "$c" 2>&1)
     assert_contains "open" "$show_c" "C should unblock after both done"
 }
@@ -467,7 +467,7 @@ test_ready_excludes_blocked() {
 
 test_ready_excludes_done() {
     local a=$(create_test_issue "Done issue")
-    git issue update "$a" --state=done 2>/dev/null
+    git issue update "$a" --status=closed 2>/dev/null
     local output
     output=$(git issue ready 2>&1)
     if echo "$output" | grep -q "$a"; then
@@ -525,7 +525,7 @@ test_topo_ordering() {
 
 test_topo_excludes_done() {
     local a=$(create_test_issue "Topo done")
-    git issue update "$a" --state=done 2>/dev/null
+    git issue update "$a" --status=closed 2>/dev/null
     local output
     output=$(git issue topo 2>&1)
     if echo "$output" | grep -q "$a"; then

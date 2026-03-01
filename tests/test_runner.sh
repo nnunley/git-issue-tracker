@@ -144,16 +144,16 @@ test_issue_update() {
     local issue_id
     issue_id=$(echo "$create_output" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     
-    # Update state
+    # Update status
     local update_output
-    update_output=$(git issue update "$issue_id" --state=in-progress)
+    update_output=$(git issue update "$issue_id" --status=in_progress)
 
     assert_contains "Updated issue" "$update_output" "Should confirm update"
 
     # Verify update
     local show_output
     show_output=$(git issue show "$issue_id")
-    assert_contains "State: in-progress" "$show_output" "Should show updated state"
+    assert_contains "Status: in_progress" "$show_output" "Should show updated status"
 }
 
 test_issue_comments() {
@@ -211,7 +211,7 @@ test_status_command() {
     id1=$(git issue create "Open issue" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     id2=$(git issue create "Progress issue" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     
-    git issue update "$id2" --state=in-progress >/dev/null 2>&1
+    git issue update "$id2" --status=in_progress >/dev/null 2>&1
     
     local status_output
     status_output=$(git issue-status)
@@ -219,17 +219,17 @@ test_status_command() {
     assert_contains "Issue Status Report" "$status_output" "Should show status header"
     assert_contains "Total Issues: 2" "$status_output" "Should count total issues"
     assert_contains "Open: 1" "$status_output" "Should count open issues"
-    assert_contains "In Progress: 1" "$status_output" "Should count in-progress issues"
+    assert_contains "In Progress: 1" "$status_output" "Should count in_progress issues"
 }
 
 test_error_handling() {
     # Test invalid issue ID
     assert_exit_code 1 "git issue show nonexistent" "Should fail for nonexistent issue"
     
-    # Test invalid state
+    # Test invalid status
     local id
     id=$(git issue create "Error test" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
-    assert_exit_code 1 "git issue update $id --state=invalid-state" "Should fail for invalid state"
+    assert_exit_code 1 "git issue update $id --status=invalid-status" "Should fail for invalid status"
     
     # Test missing arguments
     assert_exit_code 1 "git issue create" "Should fail when no title provided"

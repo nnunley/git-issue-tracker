@@ -63,16 +63,17 @@ test_get_issue_ref() {
     assert_equals "refs/notes/issue-a1b2c3d" "$ref" "Should generate correct git ref"
 }
 
-test_states_validation() {
-    # Test that STATES array contains expected values
+test_statuses_validation() {
+    # Test that STATUSES array contains expected values
     source_git_issue_functions
-    
-    local states_string="${STATES[*]}"
-    assert_contains "open" "$states_string" "Should include 'open' state"
-    assert_contains "in-progress" "$states_string" "Should include 'in-progress' state"
-    assert_contains "review" "$states_string" "Should include 'review' state"
-    assert_contains "done" "$states_string" "Should include 'done' state"
-    assert_contains "blocked" "$states_string" "Should include 'blocked' state"
+
+    local statuses_string="${STATUSES[*]}"
+    assert_contains "open" "$statuses_string" "Should include 'open' status"
+    assert_contains "in_progress" "$statuses_string" "Should include 'in_progress' status"
+    assert_contains "review" "$statuses_string" "Should include 'review' status"
+    assert_contains "closed" "$statuses_string" "Should include 'closed' status"
+    assert_contains "blocked" "$statuses_string" "Should include 'blocked' status"
+    assert_contains "deferred" "$statuses_string" "Should include 'deferred' status"
 }
 
 test_priorities_validation() {
@@ -174,7 +175,7 @@ main() {
     
     run_test "Issue ID Generation" test_generate_issue_id
     run_test "Git Ref Generation" test_get_issue_ref
-    run_test "States Validation" test_states_validation
+    run_test "Statuses Validation" test_statuses_validation
     run_test "Priorities Validation" test_priorities_validation
     run_test "Input Sanitization" test_input_sanitization
     run_test "Hash Collision Detection" test_hash_collision_detection

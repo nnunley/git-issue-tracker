@@ -26,8 +26,8 @@ test_full_issue_workflow() {
     # Update priority
     git issue update "$issue_id" --priority=high >/dev/null 2>&1
 
-    # Update state
-    git issue update "$issue_id" --state=in-progress >/dev/null 2>&1
+    # Update status
+    git issue update "$issue_id" --status=in_progress >/dev/null 2>&1
     
     # Add comment
     git issue comment "$issue_id" "Working on implementation" >/dev/null 2>&1
@@ -39,13 +39,13 @@ test_full_issue_workflow() {
     git issue comment "$issue_id" "Almost done" >/dev/null 2>&1
     
     # Complete issue
-    git issue update "$issue_id" --state=done >/dev/null 2>&1
+    git issue update "$issue_id" --status=closed >/dev/null 2>&1
     
     # Verify final state via show output
     local final_output
     final_output=$(git issue show "$issue_id")
 
-    assert_contains "State: done" "$final_output" "Issue should be marked as done"
+    assert_contains "Status: closed" "$final_output" "Issue should be marked as closed"
     assert_contains "Priority: high" "$final_output" "Issue should have high priority"
     assert_contains "Assignee: Test User" "$final_output" "Issue should be assigned"
 
@@ -96,7 +96,7 @@ test_git_notes_persistence() {
     
     assert_contains "id: $issue_id" "$notes_content" "Notes should contain issue ID"
     assert_contains "title: Persistence test" "$notes_content" "Notes should contain title"
-    assert_contains "state: open" "$notes_content" "Notes should contain default state"
+    assert_contains "status: open" "$notes_content" "Notes should contain default status"
 }
 
 test_issue_commit_linking() {
@@ -179,7 +179,7 @@ test_git_repository_integration() {
     id1=$(git issue create "Integration test 1" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     id2=$(git issue create "Integration test 2" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     
-    git issue update "$id1" --state=in-progress >/dev/null 2>&1
+    git issue update "$id1" --status=in_progress >/dev/null 2>&1
     git issue comment "$id2" "Test comment" >/dev/null 2>&1
     
     # Verify git status is still clean (notes don't affect working tree)
@@ -226,7 +226,7 @@ test_issue_data_format() {
     # Test format structure
     assert_contains "id: $issue_id" "$raw_data" "Should have ID field"
     assert_contains "title: Format test issue" "$raw_data" "Should have title field"
-    assert_contains "state: open" "$raw_data" "Should have state field"
+    assert_contains "status: open" "$raw_data" "Should have status field"
     assert_contains "priority: critical" "$raw_data" "Should have priority field"
     assert_contains "assignee: Test User" "$raw_data" "Should have assignee field"
     assert_contains "---" "$raw_data" "Should have metadata separator"
@@ -255,10 +255,10 @@ test_status_reporting_accuracy() {
     id3=$(git issue create "Done issue" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     id4=$(git issue create "Blocked issue" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     
-    # Set states
-    git issue update "$id2" --state=in-progress >/dev/null 2>&1
-    git issue update "$id3" --state=done >/dev/null 2>&1
-    git issue update "$id4" --state=blocked >/dev/null 2>&1
+    # Set statuses
+    git issue update "$id2" --status=in_progress >/dev/null 2>&1
+    git issue update "$id3" --status=closed >/dev/null 2>&1
+    git issue update "$id4" --status=blocked >/dev/null 2>&1
 
     # Set priorities
     git issue update "$id1" --priority=high >/dev/null 2>&1
@@ -273,8 +273,8 @@ test_status_reporting_accuracy() {
     # Test counts
     assert_contains "Total Issues: 4" "$status_output" "Should count 4 total issues"
     assert_contains "Open: 1" "$status_output" "Should count 1 open issue"
-    assert_contains "In Progress: 1" "$status_output" "Should count 1 in-progress issue"
-    assert_contains "Done: 1" "$status_output" "Should count 1 done issue"
+    assert_contains "In Progress: 1" "$status_output" "Should count 1 in_progress issue"
+    assert_contains "Closed: 1" "$status_output" "Should count 1 closed issue"
     assert_contains "Blocked: 1" "$status_output" "Should count 1 blocked issue"
     
     # Test priority counts (high/critical grouped together)

@@ -64,7 +64,7 @@ echo "Created test issue ID: $ISSUE_ID"
 run_test "show issue (read optimization)" "git issue show $ISSUE_ID" "success"
 
 # Test 3: Update issue works (tests optimized write_issue_data)
-run_test "update issue (write optimization)" "git issue update $ISSUE_ID --state=in-progress" "success"
+run_test "update issue (write optimization)" "git issue update $ISSUE_ID --status=in_progress" "success"
 
 # Test 4: List issues works
 run_test "list issues" "git issue list" "success"

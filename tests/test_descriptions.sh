@@ -116,11 +116,11 @@ run_test "description with special chars" "git issue create 'Special chars' --de
 run_test "empty description update" "git issue update $ISSUE_ID --description=''" "success"
 
 # Test 11: Multiple flags including description
-run_test "multiple flags with description" "git issue update $ISSUE_ID --state=in-progress --priority=high --description='Multi-flag update test'" "success"
+run_test "multiple flags with description" "git issue update $ISSUE_ID --status=in_progress --priority=high --description='Multi-flag update test'" "success"
 
 # Test 12: Verify multiple flag update
 MULTI_SHOW=$(git issue show "$ISSUE_ID" 2>&1)
-if echo "$MULTI_SHOW" | grep -q "state: in-progress" && \
+if echo "$MULTI_SHOW" | grep -q "status: in_progress" && \
    echo "$MULTI_SHOW" | grep -q "priority: high" && \
    echo "$MULTI_SHOW" | grep -q "Description: Multi-flag update test"; then
     echo -e "Multiple flag update verification... ${GREEN}PASS${NC}"

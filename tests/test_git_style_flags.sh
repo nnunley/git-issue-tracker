@@ -60,13 +60,13 @@ echo "Created issue ID: $ISSUE_ID"
 echo ""
 
 # Test 1: Basic flag syntax with equals
-run_test "state flag with equals" "git issue update $ISSUE_ID --state=in-progress" "success"
+run_test "status flag with equals" "git issue update $ISSUE_ID --status=in_progress" "success"
 
 # Test 2: Basic flag syntax with space
 run_test "priority flag with space" "git issue update $ISSUE_ID --priority high" "success"
 
 # Test 3: Multiple flags at once
-run_test "multiple flags" "git issue update $ISSUE_ID --state=review --priority=critical" "success"
+run_test "multiple flags" "git issue update $ISSUE_ID --status=review --priority=critical" "success"
 
 # Test 4: Assignee flag with quotes
 run_test "assignee with quotes" "git issue update $ISSUE_ID --assignee='John Doe'" "success"
@@ -74,29 +74,29 @@ run_test "assignee with quotes" "git issue update $ISSUE_ID --assignee='John Doe
 # Test 5: Invalid flag
 run_test "invalid flag" "git issue update $ISSUE_ID --invalid=value" "failure"
 
-# Test 6: Invalid state value
-run_test "invalid state" "git issue update $ISSUE_ID --state=invalid" "failure"
+# Test 6: Invalid status value
+run_test "invalid status" "git issue update $ISSUE_ID --status=invalid" "failure"
 
 # Test 7: Invalid priority value  
 run_test "invalid priority" "git issue update $ISSUE_ID --priority=invalid" "failure"
 
 # Test 8: Flag without value
-run_test "flag without value" "git issue update $ISSUE_ID --state" "failure"
+run_test "flag without value" "git issue update $ISSUE_ID --status" "failure"
 
 # Test 9: No flags provided
 run_test "no flags" "git issue update $ISSUE_ID" "failure"
 
 # Test 10: Nonexistent issue ID
-run_test "nonexistent issue" "git issue update invalid123 --state=done" "failure"
+run_test "nonexistent issue" "git issue update invalid123 --status=closed" "failure"
 
-# Test 11: Verify state was actually updated
+# Test 11: Verify status was actually updated
 SHOW_OUTPUT=$(git issue show "$ISSUE_ID" 2>&1)
-if echo "$SHOW_OUTPUT" | grep -q "state: review"; then
-    echo -e "Verifying state update... ${GREEN}PASS${NC}"
+if echo "$SHOW_OUTPUT" | grep -q "status: review"; then
+    echo -e "Verifying status update... ${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
-    echo -e "Verifying state update... ${RED}FAIL${NC}"
-    echo "  Issue state was not properly updated"
+    echo -e "Verifying status update... ${RED}FAIL${NC}"
+    echo "  Issue status was not properly updated"
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
 
@@ -120,9 +120,9 @@ else
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
 
-# Test 14: Test all valid states
-for state in open in-progress review done blocked; do
-    run_test "valid state: $state" "git issue update $ISSUE_ID --state=$state" "success"
+# Test 14: Test all valid statuses
+for status in open in_progress review closed blocked deferred; do
+    run_test "valid status: $status" "git issue update $ISSUE_ID --status=$status" "success"
 done
 
 # Test 15: Test all valid priorities
