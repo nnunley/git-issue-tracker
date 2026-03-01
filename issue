@@ -1,7 +1,7 @@
 id: ecdaeaa
 title: Fix Formula test block
 description: Test needs git init + initial commit before git issue commands work. Fix Ruby cd syntax: cd(testpath) do instead of cd testpath do. Test should verify create, list, show, and dep add.
-state: done
+status: closed
 priority: medium
 created: 2026-02-28T21:58:54Z
 updated: 2026-02-28T22:23:18Z
