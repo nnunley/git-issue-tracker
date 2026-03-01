@@ -1,7 +1,7 @@
 id: 96a11f9
 title: Update Formula URLs and metadata for nnunley/git-issue-tracker
 description: Replace your-username with nnunley, set proper homepage URL, add real source URL pointing to a GitHub release tarball, remove hardcoded source_dir hack.
-state: done
+status: closed
 priority: medium
 created: 2026-02-28T21:58:53Z
 updated: 2026-02-28T22:23:17Z
