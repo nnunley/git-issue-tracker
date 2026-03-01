@@ -1,7 +1,7 @@
 id: 9fb1122
 title: Add Beads JSONL import/export compatibility
 description: Support importing and exporting issues in Beads JSONL format for interoperability with steveyegge/beads. Includes field mapping, priority/status translation, dependency type mapping, and round-trip fidelity for core fields.
-state: open
+status: open
 priority: medium
 created: 2026-02-28T22:11:56Z
 updated: 2026-02-28T22:13:10Z
