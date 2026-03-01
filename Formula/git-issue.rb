@@ -25,6 +25,8 @@ class GitIssue < Formula
     doc.install "README.md"
     doc.install "LICENSE"
 
+    man1.install "man/man1/git-issue.1"
+
     pkgshare.install "examples"
   end
 
