@@ -25,14 +25,14 @@ read_issue_data_by_ref() {
     git cat-file -p "$blob_hash" 2>/dev/null || return 1
 }
 
-echo -e "${BLUE}📊 Issue Status Report${NC}"
+echo -e "${BLUE}Issue Status Report${NC}"
 echo -e "Generated: $(date)"
 echo ""
 
-# Count issues by state
+# Count issues by status
 open_count=0
 in_progress_count=0
-done_count=0
+closed_count=0
 blocked_count=0
 
 # Count by priority
@@ -43,13 +43,13 @@ low_count=0
 # Process each issue
 for ref in $(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | sort); do
     if data=$(read_issue_data_by_ref "$ref" 2>/dev/null); then
-        state=$(echo "$data" | grep "^state:" | cut -d' ' -f2)
+        status_val=$(echo "$data" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
         priority=$(echo "$data" | grep "^priority:" | cut -d' ' -f2)
-        
-        case "$state" in
+
+        case "$status_val" in
             open) open_count=$((open_count + 1)) ;;
-            in-progress) in_progress_count=$((in_progress_count + 1)) ;;
-            done) done_count=$((done_count + 1)) ;;
+            in_progress|in-progress) in_progress_count=$((in_progress_count + 1)) ;;
+            closed|done) closed_count=$((closed_count + 1)) ;;
             blocked) blocked_count=$((blocked_count + 1)) ;;
         esac
 
@@ -61,23 +61,23 @@ for ref in $(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/nu
     fi
 done
 
-total=$((open_count + in_progress_count + done_count + blocked_count))
+total=$((open_count + in_progress_count + closed_count + blocked_count))
 
 echo -e "${YELLOW}Summary:${NC}"
 echo "Total Issues: $total"
 echo ""
 
-echo -e "${YELLOW}By State:${NC}"
-echo "• Open: $open_count"
-echo "• In Progress: $in_progress_count"
-echo "• Done: $done_count"
-echo "• Blocked: $blocked_count"
+echo -e "${YELLOW}By Status:${NC}"
+echo "  Open: $open_count"
+echo "  In Progress: $in_progress_count"
+echo "  Closed: $closed_count"
+echo "  Blocked: $blocked_count"
 echo ""
 
 echo -e "${YELLOW}By Priority:${NC}"
-echo "• High/Critical: $high_count"
-echo "• Medium: $medium_count"
-echo "• Low: $low_count"
+echo "  High/Critical: $high_count"
+echo "  Medium: $medium_count"
+echo "  Low: $low_count"
 echo ""
 
 echo -e "${YELLOW}Open Issues by Priority:${NC}"

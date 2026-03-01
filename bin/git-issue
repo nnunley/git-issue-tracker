@@ -12,8 +12,9 @@ BLUE='\033[0;34m'
 GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
-# Issue states and priorities
-STATES=("open" "in-progress" "review" "done" "blocked")
+# Status machine — loaded from .git-issue/statuses.bash
+STATUSES=()
+STATUS_MODE="permissive"
 PRIORITIES=("low" "medium" "high" "critical")
 
 # Storage backend detection  
@@ -93,6 +94,105 @@ get_git_user() {
     echo "$CACHED_USER_NAME"
 }
 
+load_statuses() {
+    local git_root
+    git_root=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+    local def_file="$git_root/.git-issue/statuses"
+    local compiled="$git_root/.git-issue/statuses.bash"
+    local share_dir
+
+    # Find share dir (installed location or repo-local)
+    if [[ -d "$(dirname "$0")/../share/git-issue" ]]; then
+        share_dir="$(dirname "$0")/../share/git-issue"
+    elif [[ -d "/usr/local/share/git-issue" ]]; then
+        share_dir="/usr/local/share/git-issue"
+    fi
+
+    # Auto-create definition file from default preset
+    if [[ ! -f "$def_file" ]]; then
+        mkdir -p "$git_root/.git-issue"
+        if [[ -n "$share_dir" && -f "$share_dir/statuses.default" ]]; then
+            cp "$share_dir/statuses.default" "$def_file"
+        else
+            cat > "$def_file" << 'FALLBACK'
+mode: permissive
+
+status: open        | default | New issue, not yet started
+status: in_progress | yellow  | Actively being worked on
+status: review      | blue    | Awaiting feedback or review
+status: blocked     | red     | Blocked by a dependency
+status: deferred    | yellow  | On hold, will revisit later
+status: closed      | gray    | Completed or resolved
+
+transition: open → in_progress
+transition: open → blocked
+transition: open → deferred
+transition: open → closed
+transition: in_progress → review
+transition: in_progress → blocked
+transition: in_progress → deferred
+transition: in_progress → closed
+transition: review → in_progress
+transition: review → closed
+transition: blocked → open
+transition: blocked → in_progress
+transition: deferred → open
+transition: deferred → in_progress
+transition: closed → open
+FALLBACK
+        fi
+    fi
+
+    # Auto-compile if stale or missing
+    if [[ ! -f "$compiled" || "$def_file" -nt "$compiled" ]]; then
+        "$(dirname "$0")/git-issue-compile-statuses" "$def_file" >&2
+    fi
+
+    # Source compiled definitions
+    if [[ -f "$compiled" ]]; then
+        # shellcheck source=/dev/null
+        source "$compiled"
+    fi
+}
+
+check_transition() {
+    local from="$1" to="$2"
+    if ! validate_transition "$from" "$to" 2>/dev/null; then
+        if [[ "$STATUS_MODE" == "strict" ]]; then
+            echo -e "${RED}Error: Invalid transition: $from → $to${NC}" >&2
+            echo "Run 'git issue statuses' to see allowed transitions" >&2
+            return 1
+        else
+            echo -e "${YELLOW}Warning: Non-standard transition: $from → $to${NC}" >&2
+        fi
+    fi
+    return 0
+}
+
+show_statuses() {
+    echo -e "${BLUE}Status Machine${NC}"
+    echo "Mode: $STATUS_MODE"
+    echo ""
+    echo -e "${BLUE}Statuses:${NC}"
+    for s in "${STATUSES[@]}"; do
+        local desc
+        desc=$(status_description "$s")
+        printf "  %-15s %s\n" "$s" "$desc"
+    done
+    echo ""
+    echo -e "${BLUE}Transitions:${NC}"
+    for from in "${STATUSES[@]}"; do
+        local targets=""
+        for to in "${STATUSES[@]}"; do
+            if validate_transition "$from" "$to" 2>/dev/null; then
+                [[ -n "$targets" ]] && targets="$targets, "
+                targets="$targets$to"
+            fi
+        done
+        [[ -n "$targets" ]] && printf "  %-15s → %s\n" "$from" "$targets"
+    done
+}
+
 # Get storage path for issue (now always git refs)
 get_issue_storage_path() {
     local id="$1"
@@ -107,7 +207,7 @@ usage() {
     echo "  create <title> [--description=<desc>]  Create new issue (auto-generates hash ID)"
     echo "  list                                    List all issues"
     echo "  show <id> [--with-commits]              Show issue details (optionally with related commits)"
-    echo "  update <id> [--state=<state>] [--priority=<priority>] [--assignee=<assignee>] [--description=<desc>]  Update issue"
+    echo "  update <id> [--status=<status>] [--priority=<priority>] [--assignee=<assignee>] [--description=<desc>]  Update issue"
     echo "  comment <id> <text>                     Add comment to issue"
     echo "  link <id> <commit>                      Link issue to commit (git notes)"
     echo "  commit [--issue|--fixes|--closes] <id>  Add git trailer to commit"
@@ -118,13 +218,13 @@ usage() {
     echo "  dep rm <from> <type> <to>               Remove dependency"
     echo "  dep list [<id>]                          List dependencies"
     echo "  ready                                    List issues ready to work on (sorted by priority)"
-    echo "  topo                                     Topologically sorted ordering of non-done issues"
+    echo "  topo                                     Topologically sorted ordering of non-closed issues"
     echo "  deps [<id>] [--dot]                      Show dependency graph (text or Graphviz DOT)"
     echo "  setup-sync [enable|disable|status]     Configure automatic git notes sync"
     echo ""
     echo "Examples:"
     echo "  git issue create 'Add user authentication' --description='Implement OAuth2 login'"
-    echo "  git issue update a1b2c3d --state=in-progress --priority=high"
+    echo "  git issue update a1b2c3d --status=in_progress --priority=high"
     echo "  git issue update a1b2c3d --assignee='John Doe' --description='Updated requirements'"
     echo "  git issue comment a1b2c3d 'Started implementation'"
     echo "  git issue commit --fixes a1b2c3d      # Add trailer to HEAD commit"
@@ -279,7 +379,7 @@ title: $title"
     [[ -n "$description" ]] && issue_data="$issue_data
 description: $description"
     issue_data="$issue_data
-state: open
+status: open
 priority: medium
 created: $timestamp
 updated: $timestamp
@@ -287,9 +387,9 @@ author: $author
 assignee: $author
 hash_source: content
 ---"
-    
+
     write_issue_data "$id" "$issue_data"
-    
+
     echo -e "${GREEN}✓ Created issue #$id: $title${NC}"
     echo -e "${GRAY}   Use this ID for future operations: $id${NC}"
 }
@@ -305,21 +405,24 @@ list_issues() {
         if data=$(read_issue_data "$id" 2>/dev/null); then
             # Extract key fields
             title=$(echo "$data" | grep "^title:" | cut -d' ' -f2-)
-            state=$(echo "$data" | grep "^state:" | cut -d' ' -f2)
+            status_val=$(echo "$data" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
             priority=$(echo "$data" | grep "^priority:" | cut -d' ' -f2)
             assignee=$(echo "$data" | grep "^assignee:" | cut -d' ' -f2-)
-            
-            # Color based on state
-            case "$state" in
-                done) color=$GRAY ;;
-                blocked) color=$RED ;;
-                in-progress) color=$YELLOW ;;
-                review) color=$BLUE ;;
+
+            # Color based on status
+            local color_name
+            color_name=$(status_color "$status_val" 2>/dev/null || echo "")
+            case "$color_name" in
+                red) color=$RED ;;
+                yellow) color=$YELLOW ;;
+                blue) color=$BLUE ;;
+                gray) color=$GRAY ;;
+                green) color=$GREEN ;;
                 *) color=$NC ;;
             esac
-            
+
             # Format output
-            echo -ne "${color}#${id} [${state}] ${title} (P: ${priority})"
+            echo -ne "${color}#${id} [${status_val}] ${title} (P: ${priority})"
             [ -n "$assignee" ] && echo -n " → $assignee"
             echo -e "${NC}"
         fi
@@ -353,7 +456,8 @@ show_issue() {
     local jira_url=$(get_field_value "$front_matter" "jira_url")
     local gitlab_id=$(get_field_value "$front_matter" "gitlab_id")
     local gitlab_url=$(get_field_value "$front_matter" "gitlab_url")
-    local state=$(get_field_value "$front_matter" "state")
+    local status_val
+    status_val=$(echo "$front_matter" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2- | xargs)
     local priority=$(get_field_value "$front_matter" "priority")
     local created=$(get_field_value "$front_matter" "created")
     local updated=$(get_field_value "$front_matter" "updated")
@@ -375,7 +479,7 @@ show_issue() {
     [[ -n "$jira_id" ]] && echo "Jira: $jira_id ($jira_url)"
     [[ -n "$gitlab_id" ]] && echo "GitLab: #$gitlab_id ($gitlab_url)"
     
-    echo "State: $state"
+    echo "Status: $status_val"
     echo "Priority: $priority"
     echo "Author: $author"
     [[ -n "$assignee" ]] && echo "Assignee: $assignee"
@@ -409,10 +513,10 @@ update_issue() {
     
     # Validate field
     case "$field" in
-        state)
-            if [[ ! " ${STATES[*]} " =~ " ${value} " ]]; then
-                echo -e "${RED}Invalid state: $value${NC}"
-                echo "Valid states: ${STATES[*]}"
+        status)
+            if [[ ! " ${STATUSES[*]} " =~ " ${value} " ]]; then
+                echo -e "${RED}Invalid status: $value${NC}"
+                echo "Valid statuses: ${STATUSES[*]}"
                 return 1
             fi
             ;;
@@ -434,7 +538,7 @@ update_issue() {
             ;;
         *)
             echo -e "${RED}Invalid field: $field${NC}"
-            echo "Valid fields: state, priority, assignee, description, blocks, depends_on, parent_of, relates_to"
+            echo "Valid fields: status, priority, assignee, description, blocks, depends_on, parent_of, relates_to"
             return 1
             ;;
     esac
@@ -471,15 +575,15 @@ update_issue_with_flags() {
         return 1
     fi
     
-    local state="" priority="" assignee="" description=""
+    local status_val="" priority="" assignee="" description=""
     local blocks="" depends_on="" parent_of="" relates_to=""
     local has_updates=false
-    
+
     # Parse git-style flags
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --state=*)
-                state="${1#*=}"
+            --status=*)
+                status_val="${1#*=}"
                 has_updates=true
                 ;;
             --priority=*)
@@ -510,13 +614,13 @@ update_issue_with_flags() {
                 relates_to="${1#*=}"
                 has_updates=true
                 ;;
-            --state|--priority|--assignee|--description|--blocks|--depends-on|--parent-of|--relates-to)
+            --status|--priority|--assignee|--description|--blocks|--depends-on|--parent-of|--relates-to)
                 if [[ $# -lt 2 ]]; then
                     echo -e "${RED}Error: $1 requires a value${NC}" >&2
                     return 1
                 fi
                 case "$1" in
-                    --state) state="$2"; has_updates=true ;;
+                    --status) status_val="$2"; has_updates=true ;;
                     --priority) priority="$2"; has_updates=true ;;
                     --assignee) assignee="$2"; has_updates=true ;;
                     --description) description="$2"; has_updates=true ;;
@@ -529,29 +633,28 @@ update_issue_with_flags() {
                 ;;
             *)
                 echo -e "${RED}Error: Unknown flag '$1'${NC}" >&2
-                echo "Valid flags: --state, --priority, --assignee, --description, --blocks, --depends-on, --parent-of, --relates-to" >&2
+                echo "Valid flags: --status, --priority, --assignee, --description, --blocks, --depends-on, --parent-of, --relates-to" >&2
                 return 1
                 ;;
         esac
         shift
     done
-    
+
     if [[ "$has_updates" == "false" ]]; then
         echo -e "${RED}Error: No update flags provided${NC}" >&2
-        echo "Use --state, --priority, --assignee, --description, --blocks, --depends-on, --parent-of, or --relates-to" >&2
+        echo "Use --status, --priority, --assignee, --description, --blocks, --depends-on, --parent-of, or --relates-to" >&2
         return 1
     fi
-    
+
     # Validate values
-    if [[ -n "$state" ]]; then
-        case "$state" in
-            "open"|"in-progress"|"review"|"done"|"blocked") ;;
-            *) echo -e "${RED}Error: Invalid state '$state'${NC}" >&2
-               echo "Valid states: open, in-progress, review, done, blocked" >&2
-               return 1 ;;
-        esac
+    if [[ -n "$status_val" ]]; then
+        if [[ ! " ${STATUSES[*]} " =~ " ${status_val} " ]]; then
+            echo -e "${RED}Error: Invalid status '$status_val'${NC}" >&2
+            echo "Valid statuses: ${STATUSES[*]}" >&2
+            return 1
+        fi
     fi
-    
+
     if [[ -n "$priority" ]]; then
         case "$priority" in
             "low"|"medium"|"high"|"critical") ;;
@@ -560,15 +663,20 @@ update_issue_with_flags() {
                return 1 ;;
         esac
     fi
-    
+
     # Update using legacy function for each field
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local changes=""
-    
-    if [[ -n "$state" ]]; then
-        update_issue "$id" "state" "$state"
-        changes="state=$state "
-        if [[ "$state" == "done" ]]; then
+
+    if [[ -n "$status_val" ]]; then
+        local current_status
+        current_status=$(read_issue_data "$id" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
+        if [[ -n "$current_status" ]]; then
+            check_transition "$current_status" "$status_val" || return 1
+        fi
+        update_issue "$id" "status" "$status_val"
+        changes="status=$status_val "
+        if [[ "$status_val" == "closed" ]]; then
             cascade_unblock "$id"
         fi
     fi
@@ -1034,13 +1142,14 @@ export_to_github_format() {
     
     local title=$(get_field_value "$front_matter" "title")
     local description=$(get_field_value "$front_matter" "description")
-    local state=$(get_field_value "$front_matter" "state")
+    local status_val
+    status_val=$(echo "$front_matter" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2- | xargs)
     local labels=$(get_field_value "$front_matter" "labels")
-    
-    # Map git-issue state to GitHub state
+
+    # Map git-issue status to GitHub state
     local gh_state="open"
-    case "$state" in
-        done|closed) gh_state="closed" ;;
+    case "$status_val" in
+        closed) gh_state="closed" ;;
     esac
     
     # Output GitHub CLI compatible format
@@ -1318,8 +1427,8 @@ handle_commit_with_trailers() {
     # If this is a fixes/closes trailer, update the issue state
     if [[ "$trailer_type" == "fixes" || "$trailer_type" == "closes" ]]; then
         echo ""
-        echo -e "${YELLOW}Updating issue state...${NC}"
-        update_issue "$issue_id" state done
+        echo -e "${YELLOW}Updating issue status...${NC}"
+        update_issue "$issue_id" status closed
         
         # Add comment about the commit
         local commit_short=$(git rev-parse --short "$commit")
@@ -1709,8 +1818,8 @@ cascade_unblock() {
                 [[ -z "$blocker" ]] && continue
                 blocker=$(echo "$blocker" | xargs)
                 local blocker_state
-                blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
-                if [[ "$blocker_state" != "done" ]]; then
+                blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
+                if [[ "$blocker_state" != "closed" ]]; then
                     all_resolved=false
                     break
                 fi
@@ -1719,9 +1828,9 @@ cascade_unblock() {
 
             if [[ "$all_resolved" == "true" ]]; then
                 local current_state
-                current_state=$(echo "$dep_data" | grep "^state:" | cut -d' ' -f2)
+                current_state=$(echo "$dep_data" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
                 if [[ "$current_state" == "blocked" ]]; then
-                    update_issue "$dep_id" "state" "open"
+                    update_issue "$dep_id" "status" "open"
                     echo -e "${GREEN}Unblocked issue #$dep_id${NC}"
                 fi
             fi
@@ -1811,22 +1920,22 @@ dep_add() {
             ;;
     esac
 
-    # Auto-blocking: set the dependent issue to "blocked" if the blocker isn't done
+    # Auto-blocking: set the dependent issue to "blocked" if the blocker isn't closed
     case "$dep_type" in
         blocks)
-            # A blocks B => B should become blocked (unless B is already done)
+            # A blocks B => B should become blocked (unless B is already closed)
             local target_state
-            target_state=$(read_issue_data "$to_id" | grep "^state:" | cut -d' ' -f2)
-            if [[ "$target_state" != "done" ]]; then
-                update_issue "$to_id" "state" "blocked"
+            target_state=$(read_issue_data "$to_id" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
+            if [[ "$target_state" != "closed" ]]; then
+                update_issue "$to_id" "status" "blocked"
             fi
             ;;
         depends_on)
-            # A depends_on B => A should become blocked (unless A is already done)
+            # A depends_on B => A should become blocked (unless A is already closed)
             local from_state
-            from_state=$(read_issue_data "$from_id" | grep "^state:" | cut -d' ' -f2)
-            if [[ "$from_state" != "done" ]]; then
-                update_issue "$from_id" "state" "blocked"
+            from_state=$(read_issue_data "$from_id" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
+            if [[ "$from_state" != "closed" ]]; then
+                update_issue "$from_id" "status" "blocked"
             fi
             ;;
     esac
@@ -1904,21 +2013,21 @@ dep_rm() {
         remaining_blockers=$(read_issue_data "$unblock_target" 2>/dev/null | grep "^depends_on:" | cut -d' ' -f2- | xargs)
         if [[ -z "$remaining_blockers" ]]; then
             local current_state
-            current_state=$(read_issue_data "$unblock_target" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
+            current_state=$(read_issue_data "$unblock_target" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
             if [[ "$current_state" == "blocked" ]]; then
-                update_issue "$unblock_target" "state" "open"
+                update_issue "$unblock_target" "status" "open"
                 echo -e "${GREEN}Unblocked issue #$unblock_target${NC}"
             fi
         else
-            # There are remaining blockers -- check if all are done
+            # There are remaining blockers -- check if all are closed
             local all_resolved=true
             local IFS=','
             for blocker in $remaining_blockers; do
                 [[ -z "$blocker" ]] && continue
                 blocker=$(echo "$blocker" | xargs)
                 local blocker_state
-                blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
-                if [[ "$blocker_state" != "done" ]]; then
+                blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
+                if [[ "$blocker_state" != "closed" ]]; then
                     all_resolved=false
                     break
                 fi
@@ -1926,9 +2035,9 @@ dep_rm() {
             unset IFS
             if [[ "$all_resolved" == "true" ]]; then
                 local current_state
-                current_state=$(read_issue_data "$unblock_target" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
+                current_state=$(read_issue_data "$unblock_target" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
                 if [[ "$current_state" == "blocked" ]]; then
-                    update_issue "$unblock_target" "state" "open"
+                    update_issue "$unblock_target" "status" "open"
                     echo -e "${GREEN}Unblocked issue #$unblock_target${NC}"
                 fi
             fi
@@ -2085,13 +2194,13 @@ list_ready_issues() {
         local data
         data=$(read_issue_data "$id" 2>/dev/null) || continue
 
-        local state
-        state=$(echo "$data" | grep "^state:" | cut -d' ' -f2)
+        local status_val
+        status_val=$(echo "$data" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
 
-        # Skip done and blocked issues
-        [[ "$state" == "done" || "$state" == "blocked" ]] && continue
+        # Skip closed and blocked issues
+        [[ "$status_val" == "closed" || "$status_val" == "blocked" ]] && continue
 
-        # Check depends_on: all blockers must be done
+        # Check depends_on: all blockers must be closed
         local depends_on
         depends_on=$(echo "$data" | grep "^depends_on:" | cut -d' ' -f2- | xargs)
         if [[ -n "$depends_on" ]]; then
@@ -2101,8 +2210,8 @@ list_ready_issues() {
                 blocker=$(echo "$blocker" | xargs)
                 [[ -z "$blocker" ]] && continue
                 local blocker_state
-                blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
-                if [[ "$blocker_state" != "done" ]]; then
+                blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
+                if [[ "$blocker_state" != "closed" ]]; then
                     all_done=false
                     break
                 fi
@@ -2128,7 +2237,7 @@ list_ready_issues() {
             *)        rank=9 ;;
         esac
 
-        local line="#${id} [${state}]  ${title}  (P: ${priority})"
+        local line="#${id} [${status_val}]  ${title}  (P: ${priority})"
         [[ -n "$assignee" ]] && line="${line} -> ${assignee}"
         results="${results}${rank} ${line}"$'\n'
     done
@@ -2150,19 +2259,19 @@ topo_sort_issues() {
     local edge_data
     edge_data=$(read_edge_index)
 
-    # Collect all non-done issue IDs
+    # Collect all non-closed issue IDs
     local non_done_ids=()
     for ref in $(list_all_issues); do
         local id
         id=$(extract_issue_id "$ref")
-        local state
-        state=$(read_issue_data "$id" 2>/dev/null | grep "^state:" | cut -d' ' -f2)
-        [[ "$state" == "done" ]] && continue
+        local status_val
+        status_val=$(read_issue_data "$id" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
+        [[ "$status_val" == "closed" ]] && continue
         non_done_ids+=("$id")
     done
 
     if [[ ${#non_done_ids[@]} -eq 0 ]]; then
-        echo "No non-done issues found."
+        echo "No non-closed issues found."
         return 0
     fi
 
@@ -2398,6 +2507,7 @@ handle_deps_command() {
 
 # Initialize storage backend before any operations
 detect_storage_backend
+load_statuses
 
 # Main script logic
 case "$1" in
@@ -2429,7 +2539,7 @@ case "$1" in
         author=$(get_git_user)
         issue_data="id: $manual_id
 title: $manual_title
-state: open
+status: open
 priority: medium
 created: $timestamp
 updated: $timestamp
@@ -2480,7 +2590,7 @@ hash_source: manual
     update)
         if [ $# -lt 2 ]; then
             echo -e "${RED}Error: 'update' requires issue id and flags${NC}"
-            echo "Usage: git issue update <id> --state=<state> [--priority=<priority>] [--assignee=<assignee>]"
+            echo "Usage: git issue update <id> --status=<status> [--priority=<priority>] [--assignee=<assignee>]"
             exit 1
         fi
         update_issue_with_flags "${@:2}"
@@ -2533,6 +2643,9 @@ hash_source: manual
     deps)
         shift
         handle_deps_command "$@"
+        ;;
+    statuses)
+        show_statuses
         ;;
     "--help"|"-h"|"help")
         usage
