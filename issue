@@ -1,7 +1,7 @@
 id: 313d4ae
 title: dep: Write benchmark harness
 description: tests/bench_deps.sh. Generate N issues, time ready/topo/deps/rebuild.
-state: done
+status: closed
 priority: medium
 created: 2026-02-28T20:45:45Z
 updated: 2026-02-28T22:16:32Z
