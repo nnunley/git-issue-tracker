@@ -1,6 +1,7 @@
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
 DOCDIR = $(PREFIX)/share/doc/git-issue
+SHAREDIR = $(PREFIX)/share/git-issue
 
 .PHONY: install uninstall test test-deps bench-deps clean install-mcp uninstall-mcp test-mcp build-mcp clean-mcp
 
@@ -11,6 +12,10 @@ install:
 	install -m 755 bin/git-issue $(BINDIR)/
 	install -m 755 bin/git-issue-status $(BINDIR)/
 	install -m 755 bin/git-note-commit $(BINDIR)/
+	install -m 755 bin/git-issue-compile-statuses $(BINDIR)/
+	install -d $(SHAREDIR)
+	install -m 644 share/git-issue/statuses.default $(SHAREDIR)/
+	install -m 644 share/git-issue/statuses.beads $(SHAREDIR)/
 	install -m 644 docs/* $(DOCDIR)/ 2>/dev/null || true
 	@echo "Installation complete!"
 	@echo ""
@@ -22,9 +27,11 @@ install:
 uninstall:
 	@echo "Uninstalling git-issue..."
 	rm -f $(BINDIR)/git-issue
-	rm -f $(BINDIR)/git-issue-status  
+	rm -f $(BINDIR)/git-issue-status
 	rm -f $(BINDIR)/git-note-commit
+	rm -f $(BINDIR)/git-issue-compile-statuses
 	rm -rf $(DOCDIR)
+	rm -rf $(SHAREDIR)
 	@echo "Uninstall complete!"
 
 test:

@@ -1,6 +1,10 @@
 #!/bin/bash
 # Test that plumbing optimizations work correctly and maintain compatibility
 
+# Add the git-issue script to PATH for testing (resolve before cd)
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+export PATH="$SCRIPT_DIR/bin:$PATH"
+
 # Setup test environment
 TEST_DIR="/tmp/git-issue-plumbing-test-$$"
 mkdir -p "$TEST_DIR"
@@ -8,10 +12,6 @@ cd "$TEST_DIR"
 git init >/dev/null 2>&1
 git config user.name "Test User"
 git config user.email "test@example.com"
-
-# Add the git-issue script to PATH for testing
-SCRIPT_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
-export PATH="$SCRIPT_DIR/bin:$PATH"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -90,9 +90,11 @@ else
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
 
-# Test 8: Verify issue data is readable via git cat-file
+# Test 8: Verify issue data is readable via git plumbing
 echo -n "Verifying cat-file compatibility... "
-ISSUE_DATA=$(git cat-file -p "$ISSUE_REF" 2>/dev/null)
+TREE_HASH=$(git cat-file -p "$ISSUE_REF" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
+BLOB_HASH=$(git ls-tree "$TREE_HASH" 2>/dev/null | awk '{print $3}' | head -1)
+ISSUE_DATA=$(git cat-file -p "$BLOB_HASH" 2>/dev/null)
 if [[ -n "$ISSUE_DATA" ]] && echo "$ISSUE_DATA" | grep -q "title: Test issue for plumbing"; then
     echo -e "${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -122,9 +124,11 @@ TESTS_RUN=$((TESTS_RUN + 1))
 
 # Test 10: Verify cached user name works
 echo -n "Testing cached user name... "
-USER1=$(git issue create "Test user caching 1" 2>&1)
-USER2=$(git issue create "Test user caching 2" 2>&1)
-if echo "$USER1" | grep -q "Test User" && echo "$USER2" | grep -q "Test User"; then
+USER_ID1=$(git issue create "Test user caching 1" 2>&1 | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
+USER_ID2=$(git issue create "Test user caching 2" 2>&1 | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
+SHOW1=$(git issue show "$USER_ID1" 2>&1)
+SHOW2=$(git issue show "$USER_ID2" 2>&1)
+if echo "$SHOW1" | grep -q "Test User" && echo "$SHOW2" | grep -q "Test User"; then
     echo -e "${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else

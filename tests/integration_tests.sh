@@ -172,11 +172,13 @@ test_git_repository_integration() {
     
     # Test in clean repo
     local status_before
-    status_before=$(git status --porcelain)
-    
-    # Create and modify issues
+    # Create issues (first call auto-creates .git-issue/ dir)
     local id1 id2
     id1=$(git issue create "Integration test 1" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
+
+    # Capture status after first-use setup
+    status_before=$(git status --porcelain)
+
     id2=$(git issue create "Integration test 2" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
     
     git issue update "$id1" --status=in_progress >/dev/null 2>&1

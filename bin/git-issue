@@ -12,6 +12,9 @@ BLUE='\033[0;34m'
 GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
+# Script directory (for finding companion scripts and share files)
+GIT_ISSUE_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Status machine — loaded from .git-issue/statuses.bash
 STATUSES=()
 STATUS_MODE="permissive"
@@ -102,8 +105,8 @@ load_statuses() {
     local share_dir
 
     # Find share dir (installed location or repo-local)
-    if [[ -d "$(dirname "$0")/../share/git-issue" ]]; then
-        share_dir="$(dirname "$0")/../share/git-issue"
+    if [[ -d "$GIT_ISSUE_BIN_DIR/../share/git-issue" ]]; then
+        share_dir="$GIT_ISSUE_BIN_DIR/../share/git-issue"
     elif [[ -d "/usr/local/share/git-issue" ]]; then
         share_dir="/usr/local/share/git-issue"
     fi
@@ -145,7 +148,15 @@ FALLBACK
 
     # Auto-compile if stale or missing
     if [[ ! -f "$compiled" || "$def_file" -nt "$compiled" ]]; then
-        "$(dirname "$0")/git-issue-compile-statuses" "$def_file" >&2
+        local compiler=""
+        if [[ -x "$GIT_ISSUE_BIN_DIR/git-issue-compile-statuses" ]]; then
+            compiler="$GIT_ISSUE_BIN_DIR/git-issue-compile-statuses"
+        elif command -v git-issue-compile-statuses >/dev/null 2>&1; then
+            compiler="git-issue-compile-statuses"
+        fi
+        if [[ -n "$compiler" ]]; then
+            "$compiler" "$def_file" >&2
+        fi
     fi
 
     # Source compiled definitions

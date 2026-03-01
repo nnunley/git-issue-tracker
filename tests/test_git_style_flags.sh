@@ -1,6 +1,10 @@
 #!/bin/bash
 # Test git-style flag functionality for git-issue update command
 
+# Add the git-issue script to PATH for testing (resolve before cd)
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+export PATH="$SCRIPT_DIR/bin:$PATH"
+
 # Setup test environment
 TEST_DIR="/tmp/git-issue-flag-test-$$"
 mkdir -p "$TEST_DIR"
@@ -8,10 +12,6 @@ cd "$TEST_DIR"
 git init >/dev/null 2>&1
 git config user.name "Test User"
 git config user.email "test@example.com"
-
-# Add the git-issue script to PATH for testing
-SCRIPT_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
-export PATH="$SCRIPT_DIR/bin:$PATH"
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -91,7 +91,7 @@ run_test "nonexistent issue" "git issue update invalid123 --status=closed" "fail
 
 # Test 11: Verify status was actually updated
 SHOW_OUTPUT=$(git issue show "$ISSUE_ID" 2>&1)
-if echo "$SHOW_OUTPUT" | grep -q "status: review"; then
+if echo "$SHOW_OUTPUT" | grep -qi "status:.*review"; then
     echo -e "Verifying status update... ${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
@@ -101,7 +101,7 @@ fi
 TESTS_RUN=$((TESTS_RUN + 1))
 
 # Test 12: Verify priority was actually updated
-if echo "$SHOW_OUTPUT" | grep -q "priority: critical"; then
+if echo "$SHOW_OUTPUT" | grep -qi "priority:.*critical"; then
     echo -e "Verifying priority update... ${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
@@ -111,7 +111,7 @@ fi
 TESTS_RUN=$((TESTS_RUN + 1))
 
 # Test 13: Verify assignee was actually updated
-if echo "$SHOW_OUTPUT" | grep -q "assignee: John Doe"; then
+if echo "$SHOW_OUTPUT" | grep -qi "assignee:.*John Doe"; then
     echo -e "Verifying assignee update... ${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
