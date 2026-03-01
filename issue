@@ -1,7 +1,7 @@
 id: 0b406b8
 title: dep: Write comprehensive test suite
 description: Fill test coverage gaps per design doc. Add test-deps Makefile target.
-state: done
+status: closed
 priority: medium
 created: 2026-02-28T20:45:44Z
 updated: 2026-02-28T22:16:28Z
