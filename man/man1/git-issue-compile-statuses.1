@@ -1,0 +1,53 @@
+.TH GIT\-ISSUE\-COMPILE\-STATUSES 1 "2026-03-01" "git-issue 1.0.0-rc1" "Git Issue Tracker"
+.SH NAME
+git\-issue\-compile\-statuses \- compile a status definition to bash
+.SH SYNOPSIS
+.B git\-issue\-compile\-statuses
+.RI [ input ]
+.SH DESCRIPTION
+Reads a status definition file and writes a compiled bash file
+in the same directory.
+The compiled file contains arrays and case statements for
+status validation, color mapping, and transition checking.
+.PP
+.B git\-issue
+runs this automatically when the definition file is newer
+than the compiled output.
+You rarely need to run it by hand.
+.SH ARGUMENTS
+.TP
+.I input
+Path to the definition file.
+Defaults to
+.BR .git\-issue/statuses .
+.SH OUTPUT
+Writes
+.I input
+with the extension replaced by
+.BR .bash .
+For the default input, this is
+.BR .git\-issue/statuses.bash .
+.PP
+Prints a summary:
+.PP
+.RS
+.nf
+Compiled 6 statuses, 15 transitions \(-> .git\-issue/statuses.bash
+.fi
+.RE
+.SH DEFINITION FORMAT
+See
+.BR git\-issue (8)
+for the full definition file format.
+.SH EXIT STATUS
+.TP
+.B 0
+Compilation succeeded.
+.TP
+.B 1
+Input file not found, or no statuses defined.
+.SH SEE ALSO
+.BR git\-issue (1),
+.BR git\-issue (8)
+.SH AUTHORS
+Norman Nunley, Jr.

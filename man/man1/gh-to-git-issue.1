@@ -1,0 +1,50 @@
+.TH GH\-TO\-GIT\-ISSUE 1 "2026-03-01" "git-issue 1.0.0-rc1" "Git Issue Tracker"
+.SH NAME
+gh\-to\-git\-issue \- convert GitHub issues to git-issue format
+.SH SYNOPSIS
+.B gh issue list \-\-json ... |
+.B gh\-to\-git\-issue
+.SH DESCRIPTION
+Reads GitHub issue JSON from standard input (as produced by
+.BR "gh issue list \-\-json" )
+and writes git-issue\-compatible records to standard output,
+suitable for piping into
+.BR "git issue import" .
+.PP
+Requires
+.BR jq (1).
+.SH FIELD MAPPING
+.TS
+l l.
+GitHub field	git-issue field
+_
+number	(used for hash ID)
+title	title
+body	description
+state	status (closed\(->closed, *\(->open)
+author.login	author
+labels	priority (inferred from label names)
+createdAt	created
+updatedAt	updated
+url	(preserved as comment)
+.TE
+.SH INPUT LIMITS
+Title, description, author, and label fields are truncated to
+prevent oversized imports.
+.SH EXAMPLES
+Import all open issues from a GitHub repo:
+.PP
+.RS
+.nf
+gh issue list \-\-json number,title,body,state,author,createdAt,updatedAt,url \e
+  | gh\-to\-git\-issue \e
+  | git issue import
+.fi
+.RE
+.SH SEE ALSO
+.BR git\-issue (1),
+.BR git\-issue\-to\-gh (1),
+.BR gh (1),
+.BR jq (1)
+.SH AUTHORS
+Norman Nunley, Jr.

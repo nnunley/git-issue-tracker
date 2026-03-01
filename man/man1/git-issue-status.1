@@ -1,0 +1,36 @@
+.TH GIT\-ISSUE\-STATUS 1 "2026-03-01" "git-issue 1.0.0-rc1" "Git Issue Tracker"
+.SH NAME
+git\-issue\-status \- print an issue status report
+.SH SYNOPSIS
+.B git\-issue\-status
+.SH DESCRIPTION
+Prints a summary of all issues: counts by status and by priority,
+followed by a list of open issues sorted by priority.
+.PP
+Reads issue data directly from git refs using plumbing commands.
+.SH OUTPUT
+.nf
+Issue Status Report
+Generated: 2026-03-01 12:00:00
+
+Summary:
+Total Issues: 26
+
+By Status:
+  Open: 5
+  In Progress: 3
+  Closed: 15
+  Blocked: 3
+
+By Priority:
+  High/Critical: 4
+  Medium: 18
+  Low: 4
+
+Open Issues by Priority:
+  ...
+.fi
+.SH SEE ALSO
+.BR git\-issue (1)
+.SH AUTHORS
+Norman Nunley, Jr.

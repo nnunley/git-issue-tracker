@@ -1,0 +1,36 @@
+.TH GIT\-ISSUE\-TO\-GH 1 "2026-03-01" "git-issue 1.0.0-rc1" "Git Issue Tracker"
+.SH NAME
+git\-issue\-to\-gh \- convert git-issue data to GitHub JSON
+.SH SYNOPSIS
+.B git issue export |
+.B git\-issue\-to\-gh
+.SH DESCRIPTION
+Reads git-issue export data from standard input and writes
+GitHub-compatible JSON to standard output.
+.PP
+Maps git-issue statuses to GitHub states and converts priorities
+to GitHub labels.
+.SH FIELD MAPPING
+.TS
+l l.
+git-issue field	GitHub field
+_
+title	title
+description	body
+status	state (closed\(->closed, *\(->open)
+priority	labels (as priority:\fIlevel\fR)
+.TE
+.SH EXAMPLES
+Export all issues to GitHub JSON:
+.PP
+.RS
+.nf
+git issue export | git\-issue\-to\-gh > issues.json
+.fi
+.RE
+.SH SEE ALSO
+.BR git\-issue (1),
+.BR gh\-to\-git\-issue (1),
+.BR gh (1)
+.SH AUTHORS
+Norman Nunley, Jr.

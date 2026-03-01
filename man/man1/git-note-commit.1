@@ -1,0 +1,57 @@
+.TH GIT\-NOTE\-COMMIT 1 "2026-03-01" "git-issue 1.0.0-rc1" "Git Issue Tracker"
+.SH NAME
+git\-note\-commit \- attach issue notes to git commits
+.SH SYNOPSIS
+.B git\-note\-commit
+.I command
+.RI [ options ]
+.SH DESCRIPTION
+Manages structured notes on git commits, linking commits to issues
+and recording developer thoughts.
+Notes are stored using git's built-in notes system
+.RB ( git\-notes (1)).
+.SH COMMANDS
+.TP
+.BI "add " "commit issue " [ thoughts ]
+Attach a note to
+.IR commit .
+.I issue
+is one or more issue references (e.g.,
+.BR #102 ,
+.BR "#103,#211" ).
+.I thoughts
+is an optional free-text annotation.
+Appends to existing notes if the commit already has one.
+.TP
+.B list
+List commits that have notes.
+.TP
+.BI "show " commit
+Print the note attached to
+.IR commit .
+.TP
+.B template
+Print a template for manual use with
+.BR "git notes add" .
+.SH NOTE FORMAT
+.nf
+Issue: #102
+Thoughts: Started session management implementation
+Date: 2026-03-01 12:00:00
+Author: Jane Doe
+.fi
+.PP
+Multiple notes on the same commit are separated by
+.BR \-\-\- .
+.SH EXAMPLES
+.nf
+git\-note\-commit add HEAD '#102' 'Began OAuth2 work'
+git\-note\-commit add abc123 '#103,#211' 'RBAC affects admin pages'
+git\-note\-commit show HEAD
+git\-note\-commit list
+.fi
+.SH SEE ALSO
+.BR git\-issue (1),
+.BR git\-notes (1)
+.SH AUTHORS
+Norman Nunley, Jr.

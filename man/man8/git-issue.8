@@ -1,0 +1,309 @@
+.TH GIT\-ISSUE 8 "2026-03-01" "git-issue 1.0.0-rc1" "Git Issue Tracker Internals"
+.SH NAME
+git\-issue \- technical reference for git-issue internals
+.SH DESCRIPTION
+This page documents the storage format, data model, work claiming
+protocol, and federation properties of
+.BR git\-issue (1).
+For everyday usage, see
+.BR git\-issue (1).
+.SH DATA MODEL
+Each issue is a git note blob containing YAML-like front-matter
+followed by a comment log.
+A
+.B \-\-\-
+line separates the two sections.
+.SS Fields
+.TS
+l l l l.
+Field	Type	Default	Set by
+_
+id	string (7 hex chars)	auto	create
+title	string	(required)	create
+description	string	(empty)	create, update
+status	enum	open	create, update
+priority	enum	medium	create, update
+assignee	string	(empty)	update
+lease_ttl	integer (seconds)	(empty)	update
+author	string	git user.name	create
+created	ISO 8601 timestamp	now	create
+updated	ISO 8601 timestamp	now	any write
+blocks	comma-separated IDs	(empty)	dep add/rm
+depends_on	comma-separated IDs	(empty)	dep add/rm
+parent_of	comma-separated IDs	(empty)	dep add/rm
+relates_to	comma-separated IDs	(empty)	dep add/rm
+.TE
+.SS Example
+.PP
+.RS
+.nf
+id: a1b2c3d
+title: Fix authentication bug
+status: in_progress
+priority: high
+assignee: agent\-7
+lease_ttl: 600
+author: Jane Doe
+created: 2026\-02\-28T19:30:00Z
+updated: 2026\-02\-28T20:15:00Z
+blocks: b2c3d4e
+depends_on: c3d4e5f
+description: OAuth2 token refresh fails silently
+\-\-\-
+[2026\-02\-28T19:45:00Z] Jane Doe: Started investigating token flow
+[2026\-02\-28T20:15:00Z] agent\-7: Found root cause in refresh handler
+.fi
+.RE
+.SS Comments
+Comments appear below the
+.B \-\-\-
+separator, one per line, in the format:
+.PP
+.RS
+.B [\fItimestamp\fB] \fIauthor\fB: \fItext\fR
+.RE
+.PP
+Each
+.B "git issue comment"
+appends a line.
+Linked commits and trailer references also appear as comments.
+.SS ID Generation
+IDs are the first 7 characters of a SHA-1 hash computed from:
+.PP
+.RS
+.I title + timestamp + random-salt
+.RE
+.PP
+This makes collisions unlikely but not impossible across
+independent clones creating issues concurrently.
+.SH STORAGE
+.SS Issue Refs
+Each issue lives at
+.BI refs/notes/issue\- id\fR.
+The ref points to a commit object whose tree contains one blob
+named
+.BR issue .
+.PP
+To read an issue's raw data:
+.PP
+.RS
+.nf
+ref=refs/notes/issue\-a1b2c3d
+tree=$(git cat\-file \-p "$ref" | grep ^tree | cut \-d' ' \-f2)
+blob=$(git ls\-tree "$tree" | awk '$4=="issue" {print $3}')
+git cat\-file \-p "$blob"
+.fi
+.RE
+.SS Edge Index
+The dependency graph is cached at
+.BR refs/notes/dep\-graph .
+The tree contains one blob named
+.BR edges ,
+with one edge per line:
+.PP
+.RS
+.nf
+\fIfrom-id\fR \fItype\fR \fIto-id\fR
+.fi
+.RE
+.PP
+The index is rebuilt automatically on writes and can be
+forced with
+.BR "git issue dep rebuild" .
+The issue front-matter fields
+.RB ( blocks: ,
+.BR depends_on: ,
+etc.) are the source of truth; the index is derived.
+.SS Legacy Format
+Older versions stored the blob under a commit-SHA name instead
+of
+.BR issue .
+The reader falls back to the last blob in the tree
+if no
+.B issue
+blob exists.
+.SH STATUS MACHINE
+.SS Definition File
+.B .git\-issue/statuses
+uses pipe-delimited lines:
+.PP
+.RS
+.nf
+mode: permissive | strict
+status: \fIname\fR | \fIcolor\fR | \fIdescription\fR
+transition: \fIfrom\fR \(-> \fIto\fR
+.fi
+.RE
+.PP
+Colors:
+.BR default ,
+.BR red ,
+.BR green ,
+.BR yellow ,
+.BR blue ,
+.BR gray .
+.PP
+Lines beginning with
+.B #
+are comments.
+Blank lines are ignored.
+.SS Compilation
+.BR git\-issue\-compile\-statuses (1)
+reads the definition file and writes
+.BR .git\-issue/statuses.bash ,
+which contains:
+.PP
+.RS
+.nf
+STATUSES=("open" "in_progress" ...)
+STATUS_MODE="permissive"
+status_color()    { case "$1" in ...; esac; }
+status_description() { case "$1" in ...; esac; }
+validate_transition() { case "${from}\(->${to}" in ...; esac; }
+.fi
+.RE
+.PP
+.B git\-issue
+sources this file at startup.
+If the definition is newer than the compiled output, recompilation
+happens automatically.
+If the compiler is not installed, git-issue proceeds without
+transition validation.
+.SS Presets
+Installed to
+.BR share/git\-issue/ :
+.TP
+.B statuses.default
+open, in_progress, review, blocked, deferred, closed.
+15 transitions.
+.TP
+.B statuses.beads
+open, in_progress, blocked, deferred, closed (no review).
+12 transitions.
+.SH WORK CLAIMING
+Work claiming coordinates multiple agents (human or automated)
+to avoid duplicate effort.
+.SS Protocol
+.IP 1. 4
+.B Claim.
+Set
+.B assignee
+and
+.BR status=in_progress .
+Optionally set
+.B lease_ttl
+(seconds).
+.IP 2. 4
+.B Heartbeat.
+Any write to the issue (comment, update, link) updates the
+ref's commit timestamp, extending the lease.
+.IP 3. 4
+.B Release.
+Clear
+.B assignee
+and set
+.BR status=open .
+.IP 4. 4
+.B Steal.
+If
+.I now \- last_write > lease_ttl\fR,
+the claim has expired.
+An orchestrator clears the assignee and resets status.
+.SS Timestamps
+The claim timestamp is implicit: the author date of the
+last commit on the issue's ref.
+.PP
+.RS
+.nf
+git log \-1 \-\-format=%aI refs/notes/issue\-a1b2c3d
+.fi
+.RE
+.PP
+This avoids a dedicated
+.B claimed_at
+field.
+Every write is a heartbeat.
+.SS Interaction with ready
+.B "git issue ready"
+skips issues where:
+.PP
+.RS
+assignee is set AND lease has not expired
+.RE
+.PP
+Issues with expired leases appear in
+.B ready
+as if unclaimed.
+.\" Future: ready --full shows all unblocked issues regardless of claims
+.SH FEDERATION
+.B git\-issue
+inherits git's distributed properties.
+Pushing and pulling refs synchronizes issues across clones.
+.SS What Works
+.IP \(bu 3
+Each clone has its own copy of issue refs.
+.IP \(bu 3
+Merge conflicts surface explicitly through git's ref update mechanism.
+.IP \(bu 3
+Push/pull is opt-in.
+.IP \(bu 3
+Full audit trail via commit history.
+.SS Limitations
+.IP \(bu 3
+No access control.
+Any clone can modify any issue.
+.IP \(bu 3
+No authority model.
+There is no way to mark one clone as canonical.
+.IP \(bu 3
+ID collisions are possible (unlikely) across independent clones.
+.IP \(bu 3
+Concurrent status changes follow last-write-wins at the ref level.
+.IP \(bu 3
+Transition validation is local.
+A permissive clone can write transitions that a strict clone
+would reject.
+.PP
+For multi-agent coordination, use an orchestrator to manage
+work allocation.
+.B git\-issue
+provides the data; the orchestrator provides the policy.
+.SH MIGRATION
+.SS state to status (v1.0.0-rc1)
+.B "git issue migrate\-status"
+rewrites all issues:
+.IP \(bu 3
+Renames the
+.B state:
+field to
+.BR status: .
+.IP \(bu 3
+Maps
+.B in\-progress
+to
+.BR in_progress .
+.IP \(bu 3
+Maps
+.B done
+to
+.BR closed .
+.IP \(bu 3
+Skips issues that already have a
+.B status:
+field.
+.PP
+The read path accepts both
+.B state:
+and
+.B status:
+for backward compatibility, but new writes always use
+.BR status: .
+.SH SEE ALSO
+.BR git\-issue (1),
+.BR git\-issue\-compile\-statuses (1),
+.BR git\-notes (1),
+.BR git\-cat\-file (1),
+.BR git\-for\-each\-ref (1),
+.BR tsort (1)
+.SH AUTHORS
+Norman Nunley, Jr.

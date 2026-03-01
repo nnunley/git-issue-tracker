@@ -1,564 +1,233 @@
 .TH GIT\-ISSUE 1 "2026-03-01" "git-issue 1.0.0-rc1" "Git Issue Tracker"
 .SH NAME
-git\-issue \- git-native issue tracking using hash-based IDs and git notes
+git\-issue \- track issues with git notes
 .SH SYNOPSIS
 .B git issue
 .I command
 .RI [ options ]
 .SH DESCRIPTION
 .B git\-issue
-is a lightweight issue tracker built entirely on git primitives.
-Issues are stored as git notes at
-.BR refs/notes/issue\- \fIid\fR,
-using a YAML-like front-matter format.
-Each issue gets an auto-generated 7-character hash ID derived from its
-title, timestamp, and random salt.
+tracks issues inside a git repository.
+Each issue is a git note at
+.BI refs/notes/issue\- id
+with a 7-character hash ID.
+Issues travel with the repo\(empush, pull, clone, and fork all work.
+No server required.
 .PP
-Because issues live in git refs, they are automatically versioned,
-distributed via
-.BR git\ push / pull ,
-and merge-compatible across clones.
-No external database or server is required.
-.PP
-The status machine is configurable via a human-editable definition file
-at
-.BR .git\-issue/statuses ,
-which is compiled to bash case statements for zero-overhead validation at runtime.
+Statuses are configurable.
+Edit
+.B .git\-issue/statuses
+to define your own statuses, colors, and allowed transitions.
 .SH COMMANDS
-.SS Issue Lifecycle
+.SS Creating and Viewing
 .TP
-.BI "create " "title " "[--description=" desc "]"
-Create a new issue with an auto-generated hash ID.
-Prints the new issue's ID on success.
+.BI "create " title " [--description=" desc ]
+Create an issue.
+Prints the new ID.
 .TP
-.BI "show " "id " "[--with-commits]"
-Display issue details including title, status, priority, assignee,
-description, and dependency information.
-With
-.BR \-\-with\-commits ,
-also show commits linked to the issue via trailers or
-.BR "git issue link" .
-.TP
-.BI "update " id " [--status=" status "] [--priority=" priority "] [--assignee=" name "] [--description=" desc ]
-Update one or more fields on an existing issue.
-Multiple flags can be combined in a single invocation.
-Status transitions are validated against the status machine
-(see
-.BR "STATUS MACHINE" ).
-.TP
-.BI "comment " "id text"
-Append a timestamped comment to the issue body.
-Comments are stored below the front-matter separator
-.RB ( \-\-\- )
-in the issue data.
+.BI "show " id " [--with-commits]"
+Show an issue.
+.B \-\-with\-commits
+includes linked commits.
 .TP
 .B list
-List all issues with their status, title, priority, and assignee.
-Issues are color-coded by status.
+List all issues, color-coded by status.
+.SS Updating
+.TP
+.BI "update " id " [--status=" s "] [--priority=" p "] [--assignee=" name "] [--description=" desc ]
+Change one or more fields.
+Flags combine freely.
+Status transitions are checked against the status machine (see
+.BR "STATUSES" ).
+.TP
+.BI "comment " "id text"
+Add a timestamped comment.
 .TP
 .BI "link " "id commit"
-Link an issue to a git commit.
-Adds a comment recording the association.
-The commit ref is resolved via
-.BR git\ rev\-parse .
-.SS Git Trailer Integration
+Link an issue to a commit.
+.SS Commit Trailers
 .TP
 .BI "commit [--issue|--fixes|--closes|--related-to] " id " [--commit " hash ]
-Add a git trailer to a commit message for standardized issue tracking.
-.RS
-.TP
-.B \-\-issue
-Add an
-.B Issue:
-trailer (default).
-.TP
+Add a trailer to a commit message.
 .B \-\-fixes
-Add a
-.B Fixes:
-trailer and set the issue status to
-.BR closed .
-.TP
+and
 .B \-\-closes
-Add a
-.B Closes:
-trailer and set the issue status to
-.BR closed .
-.TP
-.B \-\-related\-to
-Add a
-.B Related-to:
-trailer without changing issue status.
-.TP
-.BI \-\-commit " hash"
-Target a specific commit instead of HEAD.
-.RE
+also close the issue.
+.B \-\-commit
+targets a commit other than HEAD.
 .TP
 .BI "scan-commits [--since=" date ]
-Scan commit messages for issue trailers
-.RB ( Issue: ,
-.BR Fixes: ,
-.BR Closes: )
-and report references found.
-Useful for auditing commit-issue linkage.
+Find issue references in commit trailers.
 .SS Import and Export
 .TP
 .BI "import [--stdin|--file " path "|--bulk " "path ...] [--format=" fmt ]
-Import issues from external sources.
-.RS
-.TP
+Import issues.
 .B \-\-stdin
-Read JSON issue data from standard input.
-.TP
-.BI \-\-file " path"
-Import from a single file.
-.TP
-.BI \-\-bulk " path ..."
-Import from multiple files.
-.TP
-.BI \-\-format " fmt"
-Specify input format (default: auto-detect).
-.RE
+reads JSON from standard input;
+.B \-\-file
+reads one file;
+.B \-\-bulk
+reads many.
 .TP
 .BI "export [--format=" fmt "] [" "id ..." ]
-Export issues in structured format.
-Exports all issues if no IDs are specified.
-.RS
-.TP
-.BI \-\-format " fmt"
-Output format.
-Supported:
+Export issues.
+Without IDs, exports all.
+Format:
 .BR github .
-.RE
-.SS Dependency Management
+.SS Dependencies
 .TP
-.BI "dep add " "from-id type to-id"
-Add a dependency relationship between two issues.
-.I type
-must be one of:
+.BI "dep add " "from type to"
+Add a dependency.
+Types:
 .BR blocks ,
 .BR depends_on ,
 .BR parent_of ,
 .BR relates_to .
 .RS
 .PP
-When adding a
+Adding a
 .B blocks
-relationship, the blocked issue is automatically set to
-.B blocked
-status if it is currently
-.BR open .
+edge sets the downstream issue to
+.BR blocked .
+Closing a blocker unblocks downstream issues that have no remaining blockers.
 .RE
 .TP
-.BI "dep rm " "from-id type to-id"
-Remove a dependency relationship.
-If the removed relationship was the last blocker on an issue, that
-issue is automatically unblocked (set back to
-.BR open ).
+.BI "dep rm " "from type to"
+Remove a dependency.
+Unblocks the downstream issue if this was its last blocker.
 .TP
 .BI "dep list [" id ]
-List dependencies.
-Without an ID, shows all dependency edges.
-With an ID, shows dependencies for that specific issue.
+List dependency edges, optionally filtered to one issue.
 .TP
-.B "dep rebuild"
-Force a full rebuild of the dependency edge index at
-.BR refs/notes/dep\-graph .
+.B dep rebuild
+Rebuild the edge index from scratch.
 .SS Queries
 .TP
 .B ready
-List issues that are ready to work on: status is
-.B open
-or
-.BR in_progress ,
-with no unresolved blockers.
-Results are sorted by priority (critical first).
+List unblocked issues sorted by priority.
+Skips issues with an active assignee lease (see
+.BR git\-issue (8)).
 .\" Future: --full flag to include claimed issues
 .TP
 .B topo
-Display non-closed issues in topological order based on their
-dependency graph.
-Issues with no dependencies appear first.
+List non-closed issues in topological (dependency) order.
 .TP
 .BI "deps [" id "] [--dot]"
-Show the dependency graph.
-Without
-.BR \-\-dot ,
-prints a text tree.
-With
-.BR \-\-dot ,
-outputs Graphviz DOT format suitable for piping to
-.BR dot (1).
-If
-.I id
-is given, shows only the subgraph reachable from that issue.
-.SS Configuration and Maintenance
+Print the dependency graph as text, or as Graphviz DOT with
+.BR \-\-dot .
+.SS Configuration
 .TP
 .B statuses
-Display the configured status machine: available statuses, their
-descriptions, and allowed transitions.
+Show configured statuses and transitions.
 .TP
 .B migrate\-status
-One-time migration of issue data from the legacy
+Migrate issues from the legacy
 .B state:
 field to
 .BR status: .
-Remaps values:
-.B in\-progress
-becomes
-.BR in_progress ;
-.B done
-becomes
-.BR closed .
-Issues already using
-.B status:
-are skipped.
+Run once after upgrading.
 .TP
 .BI "setup-sync [enable|disable|status]"
-Configure automatic git notes synchronization.
-When enabled, issue notes are pushed/pulled alongside regular git operations.
-.SH STATUS MACHINE
-Issue statuses and their allowed transitions are defined in
-.BR .git\-issue/statuses ,
-a human-editable definition file at the repository root.
-On first use,
-.B git\-issue
-copies the default preset from
-.BR share/git\-issue/statuses.default .
+Toggle automatic git notes sync on push and pull.
+.SH STATUSES
+Six statuses ship by default:
+.BR open ,
+.BR in_progress ,
+.BR review ,
+.BR blocked ,
+.BR deferred ,
+.BR closed .
 .PP
-The definition file uses a pipe-delimited format:
+To customize, edit
+.BR .git\-issue/statuses .
+Each line defines a status or transition:
 .PP
 .RS
 .nf
 mode: permissive
-
-status: open        | default | New issue, not yet started
-status: in_progress | yellow  | Actively being worked on
-status: review      | blue    | Awaiting feedback or review
-status: blocked     | red     | Blocked by a dependency
-status: deferred    | yellow  | On hold, will revisit later
-status: closed      | gray    | Completed or resolved
-
-transition: open \(-> in_progress
+status: open     | default | Not yet started
+status: closed   | gray    | Done
 transition: open \(-> closed
-transition: in_progress \(-> review
-transition: review \(-> closed
-\&...
 .fi
 .RE
 .PP
-The compiler
-.RB ( git\-issue\-compile\-statuses (1))
-generates
-.B .git\-issue/statuses.bash
-with bash case statements for zero-overhead runtime validation.
-Recompilation happens automatically when the definition file is newer
-than the compiled output.
-.SS Enforcement Modes
-.TP
+In
 .B strict
-Invalid transitions are rejected with an error.
-.TP
+mode, invalid transitions are rejected.
+In
 .B permissive
-Invalid transitions produce a warning but are allowed.
-This is the default.
-.SS Default Statuses
-.TS
-l l l.
-Status	Color	Description
-_
-open	default	New issue, not yet started
-in_progress	yellow	Actively being worked on
-review	blue	Awaiting feedback or review
-blocked	red	Blocked by a dependency
-deferred	yellow	On hold, will revisit later
-closed	gray	Completed or resolved
-.TE
-.SS Presets
-Two preset configurations are shipped:
-.TP
-.B statuses.default
-Six statuses including
-.BR review .
-15 transitions.
-.TP
-.B statuses.beads
-Five statuses (no
-.BR review ).
-12 transitions.
-Compatible with the Beads issue tracker.
+mode (the default), they produce a warning.
+.PP
+Changes take effect on the next
+.B git issue
+invocation.
 .SH PRIORITIES
-Issues have four priority levels:
 .BR low ,
-.BR medium ,
+.BR medium
+(default),
 .BR high ,
 .BR critical .
-The default priority for new issues is
-.BR medium .
 .SH DEPENDENCIES
-Four relationship types are supported:
 .TS
 l l l.
-Type	Semantics	Affects ready?
+Type	Meaning	Blocks ready?
 _
-blocks	Issue X must close before Y can start	Yes
+blocks	X must close before Y starts	Yes
 depends_on	Inverse of blocks	Yes
-parent_of	Hierarchical grouping (epic/subtask)	Yes
-relates_to	Soft reference link	No
+parent_of	Epic/subtask grouping	Yes
+relates_to	Soft link	No
 .TE
-.PP
-Dependency data is stored in comma-separated header fields in the
-issue front-matter
-.RB ( blocks: ,
-.BR depends_on: ,
-.BR parent_of: ,
-.BR relates_to: ).
-An edge index is maintained at
-.B refs/notes/dep\-graph
-for efficient graph queries.
-.SS Auto-blocking
-When a
-.B blocks
-relationship is added, the downstream issue is automatically
-set to
-.B blocked
-status.
-When a blocking issue is marked
-.BR closed ,
-downstream issues are automatically unblocked if they have no
-remaining blockers (cascade unblock).
-.SH WORK CLAIMING
-Issues support agent-based work claiming through the
-.B assignee
-field and git's implicit timestamps.
-.SS Claiming
-An agent claims work by setting the assignee:
-.PP
-.RS
+.SH EXAMPLES
 .nf
-git issue update <id> \-\-status=in_progress \-\-assignee='agent\-7'
+# Create an issue
+git issue create 'Fix login timeout' \-\-description='Sessions expire too early'
+
+# Work on it
+git issue update a1b2c3d \-\-status=in_progress \-\-priority=high
+
+# Add a dependency
+git issue dep add a1b2c3d blocks b2c3d4e
+
+# Find ready work
+git issue ready
+
+# Close via commit trailer
+git issue commit \-\-fixes a1b2c3d
+
+# Import from GitHub
+gh issue list \-\-json number,title,body,state,author,createdAt,updatedAt,url \e
+  | gh\-to\-git\-issue | git issue import
+
+# Dependency diagram
+git issue deps \-\-dot | dot \-Tpng \-o deps.png
+
+# Claim work (agent)
+git issue update a1b2c3d \-\-status=in_progress \-\-assignee='agent\-3'
+
+# Show status machine
+git issue statuses
 .fi
-.RE
-.SS Lease Expiry
-The
-.B lease_ttl
-field (in seconds) specifies how long a claim is valid.
-The implicit claim timestamp is the last commit time on the issue's
-ref, obtainable via:
-.PP
-.RS
-.nf
-git log \-1 \-\-format=%aI refs/notes/issue\-<id>
-.fi
-.RE
-.PP
-A claim is expired when
-.I now \- last_commit_time > lease_ttl.
-Any write to the issue (comment, status update, link) naturally
-extends the lease by updating the ref's commit timestamp.
-.SS Release
-An agent voluntarily releases work by clearing the assignee:
-.PP
-.RS
-.nf
-git issue update <id> \-\-status=open \-\-assignee=''
-.fi
-.RE
-.SS Stealing
-An orchestrator reclaims expired work by checking the ref timestamp
-against the
-.B lease_ttl
-and reassigning:
-.PP
-.RS
-.nf
-git issue update <id> \-\-status=open \-\-assignee=''
-.fi
-.RE
-.PP
-The
-.B ready
-command skips issues with unexpired leases.
-Expired leases are treated as unclaimed.
-.\" Future: ready --full shows all unblocked issues including claimed
-.SH DATA FORMAT
-Issues are stored as YAML-like front-matter in git note blobs:
-.PP
-.RS
-.nf
-id: a1b2c3d
-title: Fix authentication bug
-status: in_progress
-priority: high
-assignee: agent\-7
-lease_ttl: 600
-author: Jane Doe
-created: 2026\-02\-28T19:30:00Z
-updated: 2026\-02\-28T20:15:00Z
-blocks: b2c3d4e
-depends_on: c3d4e5f
-description: OAuth2 token refresh fails silently
-\-\-\-
-[2026\-02\-28T19:45:00Z] Jane Doe: Started investigating token flow
-[2026\-02\-28T20:15:00Z] agent\-7: Found root cause in refresh handler
-.fi
-.RE
-.PP
-Fields above the
-.B \-\-\-
-separator are structured metadata (front-matter).
-Content below is the comment log.
-.SH STORAGE
-Issues are stored as git notes at
-.BI refs/notes/issue\- id\fR.
-Each ref points to a commit whose tree contains a single blob named
-.BR issue .
-.PP
-The dependency edge index lives at
-.BR refs/notes/dep\-graph .
-.PP
-The compiled status machine is at
-.BR .git\-issue/statuses.bash
-(auto-generated, should be in
-.BR .gitignore ).
-The status definition source is at
-.BR .git\-issue/statuses
-(should be tracked in git).
 .SH ENVIRONMENT
 .TP
 .B GIT_DIR
-Respected for locating the git repository.
-If not inside a git repository,
+If set, locates the git repository.
+Outside a repo,
 .B git\-issue
-falls back to an XDG-compliant standalone directory.
+uses an XDG-compliant standalone directory.
 .SH FILES
 .TP
 .B .git\-issue/statuses
-Status machine definition file.
-Human-editable.
+Status definitions. Track this in git.
 .TP
 .B .git\-issue/statuses.bash
-Compiled status machine.
-Auto-generated; do not edit.
-.TP
-.B share/git\-issue/statuses.default
-Default status preset (installed by Homebrew or make install).
-.TP
-.B share/git\-issue/statuses.beads
-Beads-compatible status preset.
-.SH COMPANION TOOLS
-.TP
-.BR git\-issue\-status (1)
-Quick status report showing issue counts by status and priority.
-.TP
-.BR git\-issue\-compile\-statuses (1)
-Compile a status definition file to bash case statements.
-.TP
-.BR git\-note\-commit (1)
-Add issue tracking notes to git commits.
-Supports
-.BR add ,
-.BR list ,
-.BR show ,
-and
-.B template
-subcommands.
-.TP
-.BR gh\-to\-git\-issue (1)
-Convert GitHub Issues JSON (from
-.BR "gh issue list \-\-json" )
-to git-issue import format.
-Requires
-.BR jq (1).
-.TP
-.BR git\-issue\-to\-gh (1)
-Export git-issue data to GitHub-compatible JSON format.
-.SH EXAMPLES
-Create an issue:
-.PP
-.RS
-.nf
-git issue create 'Add user authentication' \-\-description='Implement OAuth2'
-.fi
-.RE
-.PP
-Update status and priority:
-.PP
-.RS
-.nf
-git issue update a1b2c3d \-\-status=in_progress \-\-priority=high
-.fi
-.RE
-.PP
-Add a dependency:
-.PP
-.RS
-.nf
-git issue dep add a1b2c3d blocks b2c3d4e
-.fi
-.RE
-.PP
-Find ready work:
-.PP
-.RS
-.nf
-git issue ready
-.fi
-.RE
-.PP
-Mark fixed via commit trailer:
-.PP
-.RS
-.nf
-git issue commit \-\-fixes a1b2c3d
-.fi
-.RE
-.PP
-Import from GitHub:
-.PP
-.RS
-.nf
-gh issue list \-\-json number,title,body,state,author,createdAt,updatedAt,url \e
-  | gh\-to\-git\-issue | git issue import
-.fi
-.RE
-.PP
-Generate a Graphviz dependency diagram:
-.PP
-.RS
-.nf
-git issue deps \-\-dot | dot \-Tpng \-o deps.png
-.fi
-.RE
-.PP
-Claim work as an agent with a 10-minute lease:
-.PP
-.RS
-.nf
-git issue update a1b2c3d \-\-status=in_progress \-\-assignee='agent\-3'
-.fi
-.RE
-.PP
-View the status machine configuration:
-.PP
-.RS
-.nf
-git issue statuses
-.fi
-.RE
-.PP
-Migrate from legacy state field:
-.PP
-.RS
-.nf
-git issue migrate\-status
-.fi
-.RE
+Compiled statuses. Auto-generated; add to
+.BR .gitignore .
 .SH SEE ALSO
-.BR git\-notes (1),
-.BR git\-cat\-file (1),
-.BR git\-for\-each\-ref (1),
-.BR tsort (1),
-.BR dot (1),
-.BR jq (1)
+.BR git\-issue (8),
+.BR git\-issue\-status (1),
+.BR git\-issue\-compile\-statuses (1),
+.BR git\-note\-commit (1),
+.BR gh\-to\-git\-issue (1),
+.BR git\-issue\-to\-gh (1)
 .SH AUTHORS
 Norman Nunley, Jr.
