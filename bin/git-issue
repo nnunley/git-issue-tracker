@@ -220,6 +220,7 @@ usage() {
     echo "  ready                                    List issues ready to work on (sorted by priority)"
     echo "  topo                                     Topologically sorted ordering of non-closed issues"
     echo "  deps [<id>] [--dot]                      Show dependency graph (text or Graphviz DOT)"
+    echo "  migrate-status                                                              Migrate issue data from state→status"
     echo "  setup-sync [enable|disable|status]     Configure automatic git notes sync"
     echo ""
     echo "Examples:"
@@ -2505,6 +2506,47 @@ handle_deps_command() {
     fi
 }
 
+# Migrate issue data from state→status field naming
+migrate_status() {
+    local migrated=0
+    local skipped=0
+
+    echo -e "${BLUE}Migrating issues from state→status...${NC}"
+
+    for ref in $(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | sort); do
+        local id
+        id=$(echo "$ref" | sed 's|refs/notes/issue-||')
+        local data
+        data=$(read_issue_data "$id" 2>/dev/null) || continue
+
+        # Skip if already migrated (has status: field)
+        if echo "$data" | grep -q "^status:"; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        # Skip if no state: field to migrate
+        if ! echo "$data" | grep -q "^state:"; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        # Replace state: with status: and map values
+        local new_data
+        new_data=$(echo "$data" | sed \
+            -e 's/^state: in-progress$/status: in_progress/' \
+            -e 's/^state: done$/status: closed/' \
+            -e 's/^state: /status: /')
+
+        write_issue_data "$id" "$new_data"
+        migrated=$((migrated + 1))
+        echo "  Migrated #$id"
+    done
+
+    echo ""
+    echo -e "${GREEN}Migration complete: $migrated migrated, $skipped already up to date${NC}"
+}
+
 # Initialize storage backend before any operations
 detect_storage_backend
 load_statuses
@@ -2643,6 +2685,9 @@ hash_source: manual
     deps)
         shift
         handle_deps_command "$@"
+        ;;
+    migrate-status)
+        migrate_status
         ;;
     statuses)
         show_statuses
