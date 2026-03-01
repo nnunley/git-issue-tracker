@@ -1,7 +1,7 @@
 id: 5a1954f
 title: Add all binaries to Formula install block
 description: Add git-issue-to-gh to bin.install list. Verify all 5 binaries are installed: git-issue, git-issue-status, git-note-commit, gh-to-git-issue, git-issue-to-gh.
-state: done
+status: closed
 priority: medium
 created: 2026-02-28T21:58:54Z
 updated: 2026-02-28T22:23:18Z
