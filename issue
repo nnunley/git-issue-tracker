@@ -1,7 +1,7 @@
 id: 8d53dc4
 title: Fix git-issue-status to use git plumbing instead of git notes API
 description: git-issue-status still uses git notes show which breaks when HEAD changes. Update to use the same git cat-file/ls-tree plumbing as the main script.
-state: done
+status: closed
 priority: medium
 created: 2026-02-28T22:03:42Z
 updated: 2026-02-28T22:23:07Z
