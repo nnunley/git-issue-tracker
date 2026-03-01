@@ -1,0 +1,21 @@
+# git-issue status machine definition (Beads-compatible)
+mode: permissive
+
+status: open        | default | New issue, not yet started
+status: in_progress | yellow  | Actively being worked on
+status: blocked     | red     | Blocked by a dependency
+status: deferred    | yellow  | On hold, will revisit later
+status: closed      | gray    | Completed or resolved
+
+transition: open → in_progress
+transition: open → blocked
+transition: open → deferred
+transition: open → closed
+transition: in_progress → blocked
+transition: in_progress → deferred
+transition: in_progress → closed
+transition: blocked → open
+transition: blocked → in_progress
+transition: deferred → open
+transition: deferred → in_progress
+transition: closed → open
