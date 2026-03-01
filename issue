@@ -4,9 +4,10 @@ description: Testing external_ref and external_refs fields
 status: open
 priority: medium
 created: 2026-03-01T23:57:51Z
-updated: 2026-03-01T23:58:01Z
+updated: 2026-03-01T23:58:44Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
 external_ref: gh-123
+external_refs: gh-123,jira-ABC-456
 ---
