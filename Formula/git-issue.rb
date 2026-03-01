@@ -2,7 +2,7 @@ class GitIssue < Formula
   desc "Git-native issue tracking using hash-based IDs and git notes"
   homepage "https://github.com/nnunley/git-issue-tracker"
   head "https://github.com/nnunley/git-issue-tracker.git", branch: "main"
-  version "1.0.0-dev"
+  version "1.0.0-rc1"
   license "MIT"
 
   depends_on "git"
@@ -11,9 +11,13 @@ class GitIssue < Formula
   def install
     bin.install "bin/git-issue"
     bin.install "bin/git-issue-status"
+    bin.install "bin/git-issue-compile-statuses"
     bin.install "bin/git-note-commit"
     bin.install "bin/gh-to-git-issue"
     bin.install "bin/git-issue-to-gh"
+
+    (share/"git-issue").install "share/git-issue/statuses.default"
+    (share/"git-issue").install "share/git-issue/statuses.beads"
 
     doc.install Dir["docs/*"]
     doc.install "README.md"
