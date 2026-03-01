@@ -30,8 +30,8 @@ git issue add custom-id "Manual ID issue"
 
 ### Standard Operations with Hash IDs
 ```bash
-# Update issue state
-git issue update b2c5e8a state in-progress
+# Update issue status
+git issue update b2c5e8a --status=in_progress
 
 # Add comments
 git issue comment b2c5e8a "Started responsive breakpoint work"
@@ -57,9 +57,9 @@ Issues:
 #102 [open] Add session management (P: medium)
 #103 [open] Implement role-based access control (P: medium)  
 #117 [open] Add ArgoCD deployment metrics integration (P: medium)
-#216 [in-progress] Extract issue tracking CLI into standalone project (P: medium)
+#216 [in_progress] Extract issue tracking CLI into standalone project (P: medium)
 #413307f [open] Another test issue with different hash (P: medium)
-#a064d35 [in-progress] Test hash-based issue IDs for git integration (P: medium)
+#a064d35 [in_progress] Test hash-based issue IDs for git integration (P: medium)
 #legacy-test [open] Test legacy add command still works (P: medium)
 ```
 

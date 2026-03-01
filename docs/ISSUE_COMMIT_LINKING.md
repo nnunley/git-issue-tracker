@@ -144,7 +144,7 @@ git issue link 103 abc123
 **During development:**
 ```bash
 # 1. Start working on an issue
-git issue update 213 state in-progress
+git issue update 213 --status=in_progress
 
 # 2. Make commits as normal
 git commit -m "refactor: Extract common UI patterns"
@@ -155,8 +155,8 @@ git issue link 213 HEAD
 # 4. Add progress comments
 git issue comment 213 "Completed semantic HTML improvements"
 
-# 5. Mark complete when done
-git issue update 213 state done
+# 5. Mark complete when closed
+git issue update 213 --status=closed
 ```
 
 **Code review integration:**
@@ -310,7 +310,7 @@ git issue link 214 abc123  # Add to new issue
 
 1. **Link early and often** - Don't wait until the end to create links
 2. **Use meaningful commit messages** - Even with links, clear messages help
-3. **Update issue status** - Keep issues current as you make progress
+3. **Update issue status** - Keep issue status current as you make progress
 4. **Add context comments** - Explain complex relationships
 5. **Review links during code review** - Ensure traceability is maintained
 6. **Backup notes regularly** - Push to remote to avoid losing links

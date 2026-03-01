@@ -45,8 +45,8 @@ git issue create "Fix navbar responsive design" --description="Navbar overlaps c
 # List all issues
 git issue list
 
-# Update issue state and description
-git issue update a064d35 --state=in-progress --description="Updated requirements after review"
+# Update issue status and description
+git issue update a064d35 --status=in_progress --description="Updated requirements after review"
 
 # Add comments
 git issue comment a064d35 "Started responsive breakpoint work"
@@ -55,7 +55,7 @@ git issue comment a064d35 "Started responsive breakpoint work"
 git commit -m "Fix navbar mobile layout"
 git issue link a064d35 HEAD
 
-# View issue details (shows description, state, etc.)
+# View issue details (shows description, status, etc.)
 git issue show a064d35
 
 # Setup automatic sync with remotes
@@ -72,7 +72,8 @@ git issue-status
 | `git issue create <title> [--description=<desc>]` | Create new issue (auto-generates hash ID) |
 | `git issue list` | List all issues |
 | `git issue show <id>` | Show issue details |
-| `git issue update <id> [--state=<state>] [--priority=<priority>] [--assignee=<assignee>] [--description=<desc>]` | Update issue with git-style flags |
+| `git issue update <id> [--status=<status>] [--priority=<priority>] [--assignee=<assignee>] [--description=<desc>]` | Update issue with git-style flags |
+| `git issue statuses` | Show configured statuses and allowed transitions |
 | `git issue comment <id> <text>` | Add comment to issue |
 | `git issue link <id> <commit>` | Link issue to commit |
 | `git issue setup-sync [enable\|disable\|status]` | Configure automatic git notes sync |
@@ -85,12 +86,15 @@ git issue-status
 | `git issue deps [<id>] [--dot]` | Dependency graph (text or Graphviz DOT) |
 | `git issue-status` | Show status summary |
 
-### States
-- `open` - New issue
-- `in-progress` - Being worked on
-- `review` - Under review
-- `done` - Completed
-- `blocked` - Blocked by dependencies
+### Statuses
+- `open` - New issue, not yet started
+- `in_progress` - Actively being worked on
+- `review` - Awaiting feedback or review
+- `blocked` - Blocked by a dependency
+- `deferred` - On hold, will revisit later
+- `closed` - Completed or resolved
+
+Statuses and their allowed transitions are configurable via `.git-issue/statuses`. Run `git issue statuses` to view the current configuration.
 
 ### Priorities
 - `low` - Nice to have
@@ -114,7 +118,7 @@ Dependencies are **bidirectional**: `dep add A blocks B` automatically sets `dep
 ```bash
 # Add a dependency
 git issue dep add a1b2c3d blocks d4e5f6a
-# Auto-sets d4e5f6a to "blocked" state
+# Auto-sets d4e5f6a to "blocked" status
 
 # Remove a dependency
 git issue dep rm a1b2c3d blocks d4e5f6a
@@ -122,8 +126,8 @@ git issue dep rm a1b2c3d blocks d4e5f6a
 # List dependencies for an issue
 git issue dep list a1b2c3d
 
-# Mark blocker done — auto-unblocks dependents
-git issue update a1b2c3d --state=done
+# Mark blocker closed — auto-unblocks dependents
+git issue update a1b2c3d --status=closed
 
 # List issues with no open blockers (ready to work on)
 git issue ready
@@ -142,8 +146,8 @@ git issue deps --dot | dot -Tpng -o deps.png
 ```
 
 **Key behaviors:**
-- Blocked issues auto-transition to `blocked` state when a blocking dependency is added
-- Marking a blocker `done` cascades unblock to dependents
+- Blocked issues auto-transition to `blocked` status when a blocking dependency is added
+- Marking a blocker `closed` cascades unblock to dependents
 - Cycle detection via POSIX `tsort` prevents circular dependencies
 - `dep rebuild` regenerates the edge index if it gets out of sync
 
@@ -190,7 +194,7 @@ git-issue stores issues as git notes with structured data:
 id: a064d35
 title: Fix navbar responsive design
 description: Navbar overlaps content on mobile devices below 768px
-state: in-progress
+status: in_progress
 priority: medium
 created: 2025-07-12T16:57:31Z
 updated: 2025-07-12T16:57:50Z
@@ -277,7 +281,7 @@ Imported issues maintain links to their GitHub origins:
 id: a064d35
 title: Fix navbar responsive design
 description: Navigation overlaps content on mobile
-state: open
+status: open
 priority: high
 github_id: 42
 github_url: https://github.com/example/repo/issues/42
@@ -298,7 +302,7 @@ gh issue list --state=all --json number,title,body,state,author,assignees,labels
 ```bash
 # Work with issues locally
 git issue create "Add new feature" --description="Implement user dashboard"
-git issue update a064d35 --state=in-progress
+git issue update a064d35 --status=in_progress
 
 # Export changes back to GitHub (manual process)
 git issue export --github a064d35 | gh issue create --body-file -
