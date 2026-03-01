@@ -1,8 +1,10 @@
 class GitIssue < Formula
   desc "Git-native issue tracking using hash-based IDs and git notes"
   homepage "https://github.com/nnunley/git-issue-tracker"
-  head "https://github.com/nnunley/git-issue-tracker.git", branch: "main"
+  url "https://github.com/nnunley/git-issue-tracker/archive/refs/tags/v1.0.0-rc1.tar.gz"
+  sha256 "de760da1458e21a5029b36d6455d5ae55b44b6f5f9b7894cf95c16d7e9426425"
   version "1.0.0-rc1"
+  head "https://github.com/nnunley/git-issue-tracker.git", branch: "main"
   license "MIT"
 
   depends_on "git"
