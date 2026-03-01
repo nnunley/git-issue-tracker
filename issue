@@ -10,3 +10,5 @@ assignee: Norman Nunley, Jr
 hash_source: content
 blocks: 38ad0f1,59f1c56,2ce45cf,6b20c83
 ---
+
+[2026-03-01T00:56:33Z] Norman Nunley, Jr: Completed: state→status rename with configurable status machine, compiler, presets, and migrate-status command. Commits 24701e1..0e1642c.
