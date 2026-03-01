@@ -10,3 +10,5 @@ assignee: Norman Nunley, Jr
 hash_source: content
 depends_on: a16c143
 ---
+
+[2026-03-01T00:56:34Z] Norman Nunley, Jr: Completed: Created https://github.com/nnunley/homebrew-git-issue, pushed formula, verified brew tap + install + test.
