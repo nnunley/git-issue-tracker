@@ -1,10 +1,10 @@
 id: 1027c78
 title: Create homebrew-tap repo and publish formula
 description: Create nnunley/homebrew-git-issue repo on GitHub. Copy validated formula there. Verify brew tap nnunley/git-issue && brew install git-issue works end to end.
-status: blocked
+status: open
 priority: medium
 created: 2026-02-28T21:58:55Z
-updated: 2026-02-28T21:59:20Z
+updated: 2026-03-01T00:56:21Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
