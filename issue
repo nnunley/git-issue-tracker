@@ -11,3 +11,5 @@ hash_source: content
 blocks: 48137e7,bc4e044
 depends_on: a1005ab
 ---
+
+[2026-03-02T00:02:23Z] Norman Nunley, Jr: Implemented external_ref (singular) and external_refs (plural) fields. Display prefers plural if set, otherwise falls back to singular. Added --external-ref and --external-refs flags to update command. Updated man pages.
