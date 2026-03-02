@@ -1,10 +1,10 @@
 id: ef3f1f1
 title: Test external ref
 description: Testing external_ref and external_refs fields
-status: open
+status: closed
 priority: medium
 created: 2026-03-01T23:57:51Z
-updated: 2026-03-01T23:59:05Z
+updated: 2026-03-02T00:00:54Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
