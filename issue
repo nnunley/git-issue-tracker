@@ -1,10 +1,10 @@
 id: b6d4099
 title: Test issue_type and labels
 description: Testing new fields
-status: open
+status: closed
 priority: medium
 created: 2026-03-03T02:27:53Z
-updated: 2026-03-03T02:28:27Z
+updated: 2026-03-03T02:29:02Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
