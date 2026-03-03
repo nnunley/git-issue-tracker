@@ -1,10 +1,10 @@
 id: 59f1c56
 title: Add labels field to data model
 description: Add labels header field as comma-separated values. Add to update allowlist (--labels=bug,ui), show output, and list filtering. Beads stores labels as a string array.
-status: open
+status: closed
 priority: medium
 created: 2026-02-28T22:12:21Z
-updated: 2026-03-01T00:56:20Z
+updated: 2026-03-03T02:30:04Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
