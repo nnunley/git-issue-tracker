@@ -339,16 +339,27 @@ issue_exists() {
     git show-ref --verify --quiet "$ref"
 }
 
-# Parse front matter from issue data  
+# Parse front matter from issue data (headers before first blank line)
 parse_front_matter() {
     local data="$1"
-    echo "$data" | awk '/^---$/{p=1; next} /^---$/{p=0} !p && /^[a-z_]+:/ {print}'
+    echo "$data" | awk '/^$/{exit} /^[a-z_]+:/{print}'
 }
 
-# Parse comments from issue data
+# Parse body from issue data (between first blank line and ## Comments)
+parse_body() {
+    local data="$1"
+    echo "$data" | awk '
+        BEGIN { in_body=0 }
+        !in_body && /^$/ { in_body=1; next }
+        in_body && /^## Comments$/ { exit }
+        in_body { print }
+    '
+}
+
+# Parse comments from issue data (after ## Comments marker)
 parse_comments() {
     local data="$1"
-    echo "$data" | awk '/^---$/{p++; next} p>=2 {print}'
+    echo "$data" | awk '/^## Comments$/{p=1; next} p{print}'
 }
 
 # Get field value from front matter
@@ -387,18 +398,20 @@ create_issue() {
     
     # Create issue data (only include non-empty fields)
     local issue_data="id: $id
-title: $title"
-    [[ -n "$description" ]] && issue_data="$issue_data
-description: $description"
-    issue_data="$issue_data
+title: $title
 status: open
 priority: medium
 created: $timestamp
 updated: $timestamp
 author: $author
 assignee: $author
-hash_source: content
----"
+hash_source: content"
+    # Body after blank line (multiline description support)
+    if [[ -n "$description" ]]; then
+        issue_data="$issue_data
+
+$description"
+    fi
 
     write_issue_data "$id" "$issue_data"
 
@@ -416,10 +429,10 @@ list_issues() {
         id=$(extract_issue_id "$ref")
         if data=$(read_issue_data "$id" 2>/dev/null); then
             # Extract key fields
-            title=$(echo "$data" | grep "^title:" | cut -d' ' -f2-)
+            title=$(echo "$data" | grep "^title:" | head -1 | cut -d' ' -f2-)
             status_val=$(echo "$data" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
-            priority=$(echo "$data" | grep "^priority:" | cut -d' ' -f2)
-            assignee=$(echo "$data" | grep "^assignee:" | cut -d' ' -f2-)
+            priority=$(echo "$data" | grep "^priority:" | head -1 | cut -d' ' -f2)
+            assignee=$(echo "$data" | grep "^assignee:" | head -1 | cut -d' ' -f2-)
 
             # Color based on status
             local color_name
@@ -457,11 +470,12 @@ show_issue() {
     
     local data=$(read_issue_data "$id")
     local front_matter=$(parse_front_matter "$data")
+    local body=$(parse_body "$data")
     local comments=$(parse_comments "$data")
-    
+
     # Extract fields
     local title=$(get_field_value "$front_matter" "title")
-    local description=$(get_field_value "$front_matter" "description")
+    local description="$body"
     local github_id=$(get_field_value "$front_matter" "github_id")
     local github_url=$(get_field_value "$front_matter" "github_url")
     local jira_id=$(get_field_value "$front_matter" "jira_id")
@@ -484,7 +498,12 @@ show_issue() {
     echo -e "${BOLD}Issue #$id${NC}"
     echo "============"
     echo "Title: $title"
-    [[ -n "$description" ]] && echo "Description: $description"
+    if [[ -n "$description" ]]; then
+        echo ""
+        echo "Description:"
+        echo "---------"
+        echo "$description"
+    fi
     
     # Show external provider links
     [[ -n "$github_id" ]] && echo "GitHub: #$github_id ($github_url)"
@@ -557,17 +576,44 @@ update_issue() {
     
     # Get current data
     data=$(read_issue_data "$id")
-    
-    # Update the field
-    updated_data=$(echo "$data" | awk -v field="$field:" -v value="$value" -v ts="$timestamp" '
-        BEGIN { found=0; in_body=0 }
-        /^---$/ { if (!found) { print field, value; found=1 }; in_body=1; print; next }
-        in_body { print; next }
-        $1 == field { print field, value; found=1; next }
-        $1 == "updated:" { print "updated:", ts; next }
-        { print }
-    ')
-    
+
+    if [[ "$field" == "description" ]]; then
+        # Description lives in the body (after blank line, before ## Comments)
+        local headers
+        headers=$(parse_front_matter "$data")
+        local comments
+        comments=$(parse_comments "$data")
+        # Update the timestamp in headers
+        headers=$(echo "$headers" | awk -v ts="$timestamp" '
+            $1 == "updated:" { print "updated:", ts; next }
+            { print }
+        ')
+        # Reconstruct: headers + blank line + new body + comments
+        local updated_data="$headers"
+        if [[ -n "$value" ]]; then
+            updated_data="$updated_data
+
+$value"
+        fi
+        if [[ -n "$comments" ]]; then
+            updated_data="$updated_data
+
+## Comments
+$comments"
+        fi
+    else
+        # Header field update: awk splits on blank line instead of ---
+        updated_data=$(echo "$data" | awk -v field="$field:" -v value="$value" -v ts="$timestamp" '
+            BEGIN { found=0; in_body=0 }
+            !in_body && /^$/ { if (!found) { print field, value }; in_body=1; print; next }
+            in_body { print; next }
+            $1 == field { print field, value; found=1; next }
+            $1 == "updated:" { print "updated:", ts; next }
+            { print }
+            END { if (!found && !in_body) print field, value }
+        ')
+    fi
+
     # Save updated data
     write_issue_data "$id" "$updated_data"
 }
@@ -1000,10 +1046,10 @@ import_from_stdin() {
     
     echo -e "${BLUE}📥 Importing issues from stdin...${NC}" >&2
     
-    # Read issue data blocks separated by blank lines
+    # Read issue data blocks separated by --- lines
     local issue_data=""
     while IFS= read -r line; do
-        if [[ -z "$line" && -n "$issue_data" ]]; then
+        if [[ "$line" == "---" && -n "$issue_data" ]]; then
             # Process complete issue
             if import_single_issue "$issue_data"; then
                 count=$((count + 1))
@@ -1065,21 +1111,21 @@ import_single_issue() {
     local data="$1"
     
     # Extract ID and validate format
-    local id=$(echo "$data" | grep "^id:" | cut -d' ' -f2- | xargs)
+    local id=$(echo "$data" | grep "^id:" | head -1 | cut -d' ' -f2- | xargs)
     if [[ -z "$id" ]]; then
         echo -e "${RED}Warning: Issue data missing ID, skipping${NC}" >&2
         return 1
     fi
-    
+
     # Check if issue already exists
     if issue_exists "$id"; then
         echo -e "${YELLOW}Warning: Issue #$id already exists, skipping${NC}" >&2
         return 1
     fi
-    
+
     # Write issue data
     if write_issue_data "$id" "$data"; then
-        local title=$(echo "$data" | grep "^title:" | cut -d' ' -f2- | xargs)
+        local title=$(echo "$data" | grep "^title:" | head -1 | cut -d' ' -f2- | xargs)
         echo -e "${GREEN}✓ Imported issue #$id: $title${NC}" >&2
         return 0
     else
@@ -1141,7 +1187,7 @@ export_issues() {
                 ;;
             git-issue|*)
                 echo "$data"
-                echo ""  # Separator between issues
+                echo "---"  # Separator between issues
                 ;;
         esac
     done
@@ -1153,7 +1199,7 @@ export_to_github_format() {
     local front_matter=$(parse_front_matter "$data")
     
     local title=$(get_field_value "$front_matter" "title")
-    local description=$(get_field_value "$front_matter" "description")
+    local description=$(parse_body "$data")
     local status_val
     status_val=$(echo "$front_matter" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2- | xargs)
     local labels=$(get_field_value "$front_matter" "labels")
@@ -1164,11 +1210,15 @@ export_to_github_format() {
         closed) gh_state="closed" ;;
     esac
     
+    # Escape newlines and quotes for JSON body
+    local json_body
+    json_body=$(printf '%s' "$description" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
+
     # Output GitHub CLI compatible format
     cat << EOF
 {
   "title": "$title",
-  "body": "$description",
+  "body": "$json_body",
   "state": "$gh_state",
   "labels": [$(echo "$labels" | sed 's/,/", "/g' | sed 's/^/"/; s/$/"/' | sed 's/""//g')]
 }
@@ -1187,12 +1237,21 @@ add_comment() {
         return 1
     fi
     
-    # Get current data and append comment
+    # Get current data and append comment under ## Comments marker
     data=$(read_issue_data "$id")
-    updated_data="$data
 
+    if echo "$data" | grep -q "^## Comments$"; then
+        # Append to existing comments section
+        updated_data="$data
 [$timestamp] $author: $comment"
-    
+    else
+        # Add new ## Comments section
+        updated_data="$data
+
+## Comments
+[$timestamp] $author: $comment"
+    fi
+
     write_issue_data "$id" "$updated_data"
     
     echo -e "${GREEN}✓ Added comment to issue #$id${NC}"
@@ -1653,7 +1712,7 @@ ensure_edge_index_current() {
             # Parse dep fields and add new edges
             for field in blocks depends_on parent_of relates_to; do
                 local values
-                values=$(echo "$data" | grep "^${field}:" | cut -d' ' -f2- | xargs)
+                values=$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2- | xargs)
                 if [[ -n "$values" ]]; then
                     for target in $(echo "$values" | tr ',' '\n'); do
                         target=$(echo "$target" | xargs)
@@ -1710,7 +1769,7 @@ append_to_field() {
 
     # Get current field value
     local current
-    current=$(echo "$data" | grep "^${field}:" | cut -d' ' -f2- | xargs)
+    current=$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2- | xargs)
 
     # Check for duplicate
     if [[ -n "$current" ]]; then
@@ -1734,11 +1793,12 @@ append_to_field() {
     local updated_data
     updated_data=$(echo "$data" | awk -v field="${field}:" -v value="$new_value" -v ts="$timestamp" '
         BEGIN { found=0; in_body=0 }
-        /^---$/ { if (!found) { print field, value; found=1 }; in_body=1; print; next }
+        !in_body && /^$/ { if (!found) { print field, value }; in_body=1; print; next }
         in_body { print; next }
         $1 == field { print field, value; found=1; next }
         $1 == "updated:" { print "updated:", ts; next }
         { print }
+        END { if (!found && !in_body) print field, value }
     ')
 
     write_issue_data "$id" "$updated_data"
@@ -1760,7 +1820,7 @@ remove_from_field() {
 
     # Get current field value
     local current
-    current=$(echo "$data" | grep "^${field}:" | cut -d' ' -f2- | xargs)
+    current=$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2- | xargs)
 
     if [[ -z "$current" ]]; then
         return 0  # Nothing to remove
@@ -1794,11 +1854,12 @@ remove_from_field() {
         local updated_data
         updated_data=$(echo "$data" | awk -v field="${field}:" -v value="$new_value" -v ts="$timestamp" '
             BEGIN { found=0; in_body=0 }
-            /^---$/ { if (!found) { print field, value; found=1 }; in_body=1; print; next }
+            !in_body && /^$/ { if (!found) { print field, value }; in_body=1; print; next }
             in_body { print; next }
             $1 == field { print field, value; found=1; next }
             $1 == "updated:" { print "updated:", ts; next }
             { print }
+            END { if (!found && !in_body) print field, value }
         ')
     fi
 
@@ -1822,7 +1883,7 @@ cascade_unblock() {
             local dep_data
             dep_data=$(read_issue_data "$dep_id" 2>/dev/null) || continue
             local all_blockers
-            all_blockers=$(echo "$dep_data" | grep "^depends_on:" | cut -d' ' -f2- | xargs)
+            all_blockers=$(echo "$dep_data" | grep "^depends_on:" | head -1 | cut -d' ' -f2- | xargs)
 
             local all_resolved=true
             local IFS=','
@@ -2022,7 +2083,7 @@ dep_rm() {
 
     if [[ -n "$unblock_target" ]]; then
         local remaining_blockers
-        remaining_blockers=$(read_issue_data "$unblock_target" 2>/dev/null | grep "^depends_on:" | cut -d' ' -f2- | xargs)
+        remaining_blockers=$(read_issue_data "$unblock_target" 2>/dev/null | grep "^depends_on:" | head -1 | cut -d' ' -f2- | xargs)
         if [[ -z "$remaining_blockers" ]]; then
             local current_state
             current_state=$(read_issue_data "$unblock_target" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
@@ -2214,7 +2275,7 @@ list_ready_issues() {
 
         # Check depends_on: all blockers must be closed
         local depends_on
-        depends_on=$(echo "$data" | grep "^depends_on:" | cut -d' ' -f2- | xargs)
+        depends_on=$(echo "$data" | grep "^depends_on:" | head -1 | cut -d' ' -f2- | xargs)
         if [[ -n "$depends_on" ]]; then
             local all_done=true
             local IFS=','
@@ -2233,11 +2294,11 @@ list_ready_issues() {
         fi
 
         local title
-        title=$(echo "$data" | grep "^title:" | cut -d' ' -f2-)
+        title=$(echo "$data" | grep "^title:" | head -1 | cut -d' ' -f2-)
         local priority
-        priority=$(echo "$data" | grep "^priority:" | cut -d' ' -f2)
+        priority=$(echo "$data" | grep "^priority:" | head -1 | cut -d' ' -f2)
         local assignee
-        assignee=$(echo "$data" | grep "^assignee:" | cut -d' ' -f2-)
+        assignee=$(echo "$data" | grep "^assignee:" | head -1 | cut -d' ' -f2-)
 
         # Numeric rank for sorting (lower = higher priority)
         local rank
@@ -2326,11 +2387,11 @@ topo_sort_issues() {
         local data
         data=$(read_issue_data "$id" 2>/dev/null) || continue
         local title
-        title=$(echo "$data" | grep "^title:" | cut -d' ' -f2-)
+        title=$(echo "$data" | grep "^title:" | head -1 | cut -d' ' -f2-)
         local priority
-        priority=$(echo "$data" | grep "^priority:" | cut -d' ' -f2)
+        priority=$(echo "$data" | grep "^priority:" | head -1 | cut -d' ' -f2)
         local depends_on
-        depends_on=$(echo "$data" | grep "^depends_on:" | cut -d' ' -f2- | xargs)
+        depends_on=$(echo "$data" | grep "^depends_on:" | head -1 | cut -d' ' -f2- | xargs)
 
         local line="${num}. #${id}  ${title}  (P: ${priority})"
         if [[ -n "$depends_on" ]]; then
@@ -2408,8 +2469,8 @@ show_deps() {
     echo "$edges_to_show" | while read -r from type to; do
         [[ -z "$from" ]] && continue
         local from_title to_title
-        from_title=$(read_issue_data "$from" 2>/dev/null | grep "^title:" | cut -d' ' -f2-)
-        to_title=$(read_issue_data "$to" 2>/dev/null | grep "^title:" | cut -d' ' -f2-)
+        from_title=$(read_issue_data "$from" 2>/dev/null | grep "^title:" | head -1 | cut -d' ' -f2-)
+        to_title=$(read_issue_data "$to" 2>/dev/null | grep "^title:" | head -1 | cut -d' ' -f2-)
         echo "#${from} (${from_title}) -[${type}]-> #${to} (${to_title})"
     done
 }
@@ -2476,7 +2537,7 @@ show_deps_dot() {
     echo "$node_ids" | while IFS= read -r nid; do
         [[ -z "$nid" ]] && continue
         local title
-        title=$(read_issue_data "$nid" 2>/dev/null | grep "^title:" | cut -d' ' -f2-)
+        title=$(read_issue_data "$nid" 2>/dev/null | grep "^title:" | head -1 | cut -d' ' -f2-)
         echo "  \"${nid}\" [label=\"${nid}\\n${title}\"];"
     done
 
@@ -2558,6 +2619,68 @@ migrate_status() {
     echo -e "${GREEN}Migration complete: $migrated migrated, $skipped already up to date${NC}"
 }
 
+# Migrate issue data from old --- format to new blank-line format
+migrate_format() {
+    local migrated=0
+    local skipped=0
+
+    echo -e "${BLUE}Migrating issues from --- format to blank-line format...${NC}"
+
+    for ref in $(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | sort); do
+        local id
+        id=$(echo "$ref" | sed 's|refs/notes/issue-||')
+        local data
+        data=$(read_issue_data "$id" 2>/dev/null) || continue
+
+        # Detect old format: has a ^---$ line
+        if ! echo "$data" | grep -q "^---$"; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        # Extract headers (before first ---)
+        local headers
+        headers=$(echo "$data" | awk '/^---$/{exit} {print}')
+
+        # Extract description from headers if present
+        local desc_value
+        desc_value=$(echo "$headers" | grep "^description:" | head -1 | cut -d' ' -f2-)
+
+        # Remove description: line from headers
+        headers=$(echo "$headers" | grep -v "^description:")
+
+        # Extract comments (after first ---), trim leading blank lines
+        local comments
+        comments=$(echo "$data" | awk '/^---$/{p=1; next} p{print}' | awk 'NF{found=1} found{print}')
+
+        # Reconstruct in new format: headers + blank line + body + ## Comments
+        local new_data="$headers"
+        if [[ -n "$desc_value" ]]; then
+            new_data="$new_data
+
+$desc_value"
+        fi
+        if [[ -n "$comments" ]]; then
+            # Ensure blank line before ## Comments if no body
+            if [[ -z "$desc_value" ]]; then
+                new_data="$new_data
+"
+            fi
+            new_data="$new_data
+
+## Comments
+$comments"
+        fi
+
+        write_issue_data "$id" "$new_data"
+        migrated=$((migrated + 1))
+        echo "  Migrated #$id"
+    done
+
+    echo ""
+    echo -e "${GREEN}Format migration complete: $migrated migrated, $skipped already up to date${NC}"
+}
+
 # Initialize storage backend before any operations
 detect_storage_backend
 load_statuses
@@ -2598,8 +2721,7 @@ created: $timestamp
 updated: $timestamp
 author: $author
 assignee:
-hash_source: manual
----"
+hash_source: manual"
         write_issue_data "$manual_id" "$issue_data"
         echo -e "${GREEN}✓ Created issue #$manual_id: $manual_title${NC}"
         ;;
@@ -2699,6 +2821,9 @@ hash_source: manual
         ;;
     migrate-status)
         migrate_status
+        ;;
+    migrate-format)
+        migrate_format
         ;;
     statuses)
         show_statuses

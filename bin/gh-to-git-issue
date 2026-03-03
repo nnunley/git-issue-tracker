@@ -77,7 +77,6 @@ convert_issue() {
     {
         echo "id: $id"
         echo "title: $title"
-        [[ -n "$body" ]] && echo "description: $body"
         echo "state: $state"
         echo "priority: $priority"
         [[ -n "$labels" ]] && echo "labels: $labels"
@@ -88,8 +87,12 @@ convert_issue() {
         echo "author: $author"
         [[ -n "$assignee" ]] && echo "assignee: $assignee"
         echo "hash_source: github_import"
-        echo "---"
-        echo ""  # Single separator line between issues
+        # Body after blank line (multiline description)
+        if [[ -n "$body" ]]; then
+            echo ""
+            echo "$body"
+        fi
+        echo "---"  # Inter-issue separator
     }
 }
 

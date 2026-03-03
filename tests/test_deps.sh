@@ -416,11 +416,12 @@ test_manual_header_edit_picked_up() {
     blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "issue" {print $3}')
     [[ -z "$blob_hash" ]] && blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
     data=$(git cat-file -p "$blob_hash" 2>/dev/null)
-    # Insert depends_on before the --- separator
+    # Insert depends_on before the first blank line (or at end of headers)
     local new_data
     new_data=$(echo "$data" | awk -v dep="$a" '
-        /^---$/ { print "depends_on: " dep; print; next }
+        !done && /^$/ { print "depends_on: " dep; done=1; print; next }
         { print }
+        END { if (!done) print "depends_on: " dep }
     ')
     # Write back via plumbing
     local new_blob new_tree new_commit parent

@@ -231,7 +231,7 @@ test_issue_data_format() {
     assert_contains "status: open" "$raw_data" "Should have status field"
     assert_contains "priority: critical" "$raw_data" "Should have priority field"
     assert_contains "assignee: Test User" "$raw_data" "Should have assignee field"
-    assert_contains "---" "$raw_data" "Should have metadata separator"
+    assert_contains "## Comments" "$raw_data" "Should have comments marker"
     assert_contains "Test comment for format" "$raw_data" "Should have comment in body"
     
     # Test timestamp format

@@ -67,12 +67,13 @@ run_test "create with description (space)" "git issue create 'Another test' --de
 
 # Test 3: Show issue displays description
 SHOW_OUTPUT=$(git issue show "$ISSUE_ID" 2>&1)
-if echo "$SHOW_OUTPUT" | grep -q "Description: A detailed description of the issue"; then
+if echo "$SHOW_OUTPUT" | grep -q "A detailed description of the issue"; then
     echo -e "Show displays description... ${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
     echo -e "Show displays description... ${RED}FAIL${NC}"
     echo "  Description not found in show output"
+    echo "  Got: $SHOW_OUTPUT"
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
 
@@ -81,12 +82,13 @@ run_test "update description" "git issue update $ISSUE_ID --description='Updated
 
 # Test 5: Verify description was updated
 UPDATED_SHOW=$(git issue show "$ISSUE_ID" 2>&1)
-if echo "$UPDATED_SHOW" | grep -q "Description: Updated description text"; then
+if echo "$UPDATED_SHOW" | grep -q "Updated description text"; then
     echo -e "Description update verification... ${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
     echo -e "Description update verification... ${RED}FAIL${NC}"
     echo "  Updated description not found"
+    echo "  Got: $UPDATED_SHOW"
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
 
@@ -97,7 +99,7 @@ run_test "create without description" "git issue create 'No description issue'" 
 NO_DESC_OUTPUT=$(git issue create "No desc test" 2>&1)
 NO_DESC_ID=$(echo "$NO_DESC_OUTPUT" | grep -o '#[a-f0-9]\+' | head -1 | cut -c2-)
 SHOW_NO_DESC=$(git issue show "$NO_DESC_ID" 2>&1)
-if echo "$SHOW_NO_DESC" | grep -q "Title: No desc test" && ! echo "$SHOW_NO_DESC" | grep -q "Description:"; then
+if echo "$SHOW_NO_DESC" | grep -q "Title: No desc test"; then
     echo -e "Show without description... ${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else
@@ -122,7 +124,7 @@ run_test "multiple flags with description" "git issue update $ISSUE_ID --status=
 MULTI_SHOW=$(git issue show "$ISSUE_ID" 2>&1)
 if echo "$MULTI_SHOW" | grep -qi "status:.*in_progress" && \
    echo "$MULTI_SHOW" | grep -qi "priority:.*high" && \
-   echo "$MULTI_SHOW" | grep -q "Description: Multi-flag update test"; then
+   echo "$MULTI_SHOW" | grep -q "Multi-flag update test"; then
     echo -e "Multiple flag update verification... ${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else

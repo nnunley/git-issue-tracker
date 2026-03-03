@@ -41,33 +41,56 @@ build_github_labels() {
 convert_issue() {
     local title description state priority assignee labels github_id github_url created updated author
     local gh_labels gh_state
-    
-    # Extract fields from git-issue format
-    while IFS=': ' read -r field value; do
-        case "$field" in
-            title) title="$value" ;;
-            description) description="$value" ;;
-            state) state="$value" ;;
-            priority) priority="$value" ;;
-            assignee) assignee="$value" ;;
-            labels) labels="$value" ;;
-            github_id) github_id="$value" ;;
-            github_url) github_url="$value" ;;
-            created) created="$value" ;;
-            updated) updated="$value" ;;
-            author) author="$value" ;;
-            ---) break ;;
-        esac
+    local in_body=false
+    local body=""
+
+    # Extract fields from git-issue format (headers until blank line, then body)
+    while IFS= read -r line; do
+        if [[ "$in_body" == "true" ]]; then
+            # Stop at ## Comments marker
+            [[ "$line" == "## Comments" ]] && break
+            if [[ -n "$body" ]]; then
+                body="$body
+$line"
+            else
+                body="$line"
+            fi
+        elif [[ -z "$line" ]]; then
+            in_body=true
+        else
+            # Parse header fields
+            local field="${line%%:*}"
+            local value="${line#*: }"
+            case "$field" in
+                title) title="$value" ;;
+                state) state="$value" ;;
+                status) state="$value" ;;
+                priority) priority="$value" ;;
+                assignee) assignee="$value" ;;
+                labels) labels="$value" ;;
+                github_id) github_id="$value" ;;
+                github_url) github_url="$value" ;;
+                created) created="$value" ;;
+                updated) updated="$value" ;;
+                author) author="$value" ;;
+            esac
+        fi
     done
-    
+
+    description="$body"
+
     # Convert values for GitHub
     gh_state=$(map_state_to_github "$state")
     gh_labels=$(build_github_labels "$priority" "$labels")
-    
+
+    # Escape description for JSON
+    local json_body
+    json_body=$(printf '%s' "$description" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
+
     # Output GitHub-compatible JSON
     echo "{"
     echo "  \"title\": \"$title\","
-    [[ -n "$description" ]] && echo "  \"body\": \"$description\","
+    [[ -n "$description" ]] && echo "  \"body\": \"$json_body\","
     echo "  \"state\": \"$gh_state\","
     [[ -n "$gh_labels" ]] && echo "  \"labels\": [$(echo "$gh_labels" | sed 's/,/", "/g' | sed 's/^/"/; s/$/"/')],"
     [[ -n "$assignee" ]] && echo "  \"assignee\": \"$assignee\","
