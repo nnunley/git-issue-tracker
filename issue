@@ -11,3 +11,5 @@ hash_source: content
 blocks: 48137e7,bc4e044
 depends_on: a1005ab
 ---
+
+[2026-03-03T04:33:22Z] Norman Nunley, Jr: Added waits_for, duplicates, supersedes, caused_by dependency types. Updated dep add/rm validation and handling. waits_for is blocking (affects ready, sets dependent to blocked). Others are non-blocking reference types. Updated man pages.
