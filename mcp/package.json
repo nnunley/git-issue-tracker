@@ -1,0 +1,44 @@
+{
+  "name": "git-issue-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for git-issue-tracker with AI-powered project management",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "git-issue-mcp-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "node --test dist/**/*.test.js",
+    "clean": "rm -rf dist",
+    "lint": "eslint src/**/*.ts",
+    "format": "prettier --write src/**/*.ts"
+  },
+  "keywords": [
+    "mcp",
+    "git",
+    "issue-tracking", 
+    "project-management",
+    "claude",
+    "ai"
+  ],
+  "author": "Norman Nunley Jr.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.25.32"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "eslint": "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "prettier": "^3.0.0"
+  }
+}

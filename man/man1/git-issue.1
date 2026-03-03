@@ -34,11 +34,27 @@ includes linked commits.
 List all issues, color-coded by status.
 .SS Updating
 .TP
-.BI "update " id " [--status=" s "] [--priority=" p "] [--assignee=" name "] [--description=" desc ]
+.BI "update " id " [--status=" s "] [--priority=" p "] [--issue-type=" type "] [--assignee=" name "] [--description=" desc "] [--external-ref=" ref "] [--external-refs=" refs ","] [--labels=" labels ","]
 Change one or more fields.
 Flags combine freely.
 Status transitions are checked against the status machine (see
 .BR "STATUSES" ).
+.PP
+Valid issue types:
+.BR bug ,
+.BR feature ,
+.BR task ,
+.BR epic ,
+.BR chore ,
+.BR molecule ,
+.BR gate .
+.PP
+.B \-\-external\-refs
+and
+.B \-\-labels
+accept comma-separated values.
+.B \-\-external\-ref
+is a shortcut for single references.
 .TP
 .BI "comment " "id text"
 Add a timestamped comment.
@@ -73,7 +89,10 @@ reads many.
 Export issues.
 Without IDs, exports all.
 Format:
+.BR beads ,
 .BR github .
+.br
+Beads format is JSONL (one JSON object per line) for interoperability with steveyegge/beads.
 .SS Dependencies
 .TP
 .BI "dep add " "from type to"
@@ -82,14 +101,21 @@ Types:
 .BR blocks ,
 .BR depends_on ,
 .BR parent_of ,
-.BR relates_to .
+.BR relates_to ,
+.BR waits_for ,
+.BR duplicates ,
+.BR supersedes ,
+.BR caused_by .
 .RS
 .PP
-Adding a
-.B blocks
-edge sets the downstream issue to
+Blocking types
+.RB ( blocks, depends_on, waits_for )
+affect ready calculation and set downstream to
 .BR blocked .
-Closing a blocker unblocks downstream issues that have no remaining blockers.
+.PP
+Non-blocking types
+.RB ( parent_of, relates_to, duplicates, supersedes, caused_by )
+are for reference only.
 .RE
 .TP
 .BI "dep rm " "from type to"
@@ -138,9 +164,7 @@ Six statuses ship by default:
 .BR deferred ,
 .BR closed .
 .PP
-To customize, edit
-.BR .git\-issue/statuses .
-Each line defines a status or transition:
+Each line in the definition file defines a status or transition:
 .PP
 .RS
 .nf
@@ -157,6 +181,25 @@ mode, invalid transitions are rejected.
 In
 .B permissive
 mode (the default), they produce a warning.
+.PP
+The definition file is resolved in this order (first match wins):
+.IP 1. 4
+.BI "git config git\-issue.statuses\-file" " path"
+\(em explicit override
+.IP 2. 4
+.B .git/git\-issue/statuses
+\(em local override (not tracked)
+.IP 3. 4
+.B .git\-issue/statuses
+\(em project-level (track this in git for your team)
+.IP 4. 4
+.I $(prefix)/share/git-issue/statuses.default
+\(em installed preset
+.PP
+If none exist,
+.B git\-issue
+writes the default preset to
+.BR .git\-issue/statuses .
 .PP
 Changes take effect on the next
 .B git issue
@@ -217,11 +260,16 @@ uses an XDG-compliant standalone directory.
 .SH FILES
 .TP
 .B .git\-issue/statuses
-Status definitions. Track this in git.
+Project-level status definitions.
+Track this in git so the team shares the same workflow.
 .TP
-.B .git\-issue/statuses.bash
-Compiled statuses. Auto-generated; add to
-.BR .gitignore .
+.B .git/git\-issue/statuses
+Local status definitions.
+Overrides the project-level file for this clone only.
+.TP
+.B .git/git\-issue/statuses.bash
+Compiled statuses.
+Auto-generated; never needs manual editing.
 .SH SEE ALSO
 .BR git\-issue (8),
 .BR git\-issue\-status (1),

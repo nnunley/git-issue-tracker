@@ -23,8 +23,12 @@ title	string	(required)	create
 description	string	(empty)	create, update
 status	enum	open	create, update
 priority	enum	medium	create, update
+issue_type	enum	task	create, update
 assignee	string	(empty)	update
 lease_ttl	integer (seconds)	(empty)	update
+external_ref	string	(empty)	update
+external_refs	comma-separated strings	(empty)	update
+labels	comma-separated strings	(empty)	update
 author	string	git user.name	create
 created	ISO 8601 timestamp	now	create
 updated	ISO 8601 timestamp	now	any write
@@ -33,6 +37,44 @@ depends_on	comma-separated IDs	(empty)	dep add/rm
 parent_of	comma-separated IDs	(empty)	dep add/rm
 relates_to	comma-separated IDs	(empty)	dep add/rm
 .TE
+.PP
+.BR issue_type :
+Categorizes the work.
+Values:
+.BR bug ,
+.BR feature ,
+.BR task ,
+.BR epic ,
+.BR chore ,
+.BR molecule ,
+.BR gate .
+.br
+.B molecule
+marks template issues for hierarchies.
+.B gate
+marks async coordination points.
+.PP
+.B external_refs
+is the source of truth for external references.
+.B external_ref
+is a convenience alias for the common single-reference case.
+Display prefers
+.B external_refs
+if set, otherwise falls back to
+.BR external_ref .
+Values use the format
+.BR system-id :
+.RS
+.PP
+gh-42
+.br
+jira-ABC-123
+.br
+gl-7 (GitLab)
+.RE
+.PP
+.B labels
+are comma-separated tags for filtering and organization.
 .SS Example
 .PP
 .RS
@@ -107,6 +149,22 @@ with one edge per line:
 .fi
 .RE
 .PP
+Dependency types:
+.RS
+.IP \(bu 3
+Blocking (affects ready calculation):
+.BR blocks ,
+.BR depends_on ,
+.BR waits_for
+.IP \(bu 3
+Non-blocking (reference only):
+.BR parent_of ,
+.BR relates_to ,
+.BR duplicates ,
+.BR supersedes ,
+.BR caused_by
+.RE
+.PP
 The index is rebuilt automatically on writes and can be
 forced with
 .BR "git issue dep rebuild" .
@@ -124,8 +182,7 @@ if no
 blob exists.
 .SH STATUS MACHINE
 .SS Definition File
-.B .git\-issue/statuses
-uses pipe-delimited lines:
+The statuses definition uses pipe-delimited lines:
 .PP
 .RS
 .nf
@@ -147,10 +204,39 @@ Lines beginning with
 .B #
 are comments.
 Blank lines are ignored.
+.SS Resolution Order
+.B git\-issue
+searches for the definition file in this order (first match wins):
+.IP 1. 4
+.BI "git config git\-issue.statuses\-file" " path"
+\(em explicit path override, set with
+.BR "git config" .
+.IP 2. 4
+.B .git/git\-issue/statuses
+\(em local override.
+Stays in this clone; not tracked or pushed.
+Use this for per-developer customization.
+.IP 3. 4
+.B .git\-issue/statuses
+\(em project-level.
+Track this in git so the team shares the same workflow.
+.IP 4. 4
+.I $(prefix)/share/git\-issue/statuses.default
+\(em installed preset.
+.PP
+If no definition exists at any level,
+.B git\-issue
+writes the default preset to
+.BR .git\-issue/statuses .
+.PP
+This mirrors git's own layering (e.g.,
+.B .gitignore
+vs
+.BR .git/info/exclude ).
 .SS Compilation
 .BR git\-issue\-compile\-statuses (1)
 reads the definition file and writes
-.BR .git\-issue/statuses.bash ,
+.BR .git/git\-issue/statuses.bash ,
 which contains:
 .PP
 .RS
