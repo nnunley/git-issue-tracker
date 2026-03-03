@@ -11,3 +11,5 @@ hash_source: content
 blocks: 48137e7,bc4e044
 depends_on: a1005ab
 ---
+
+[2026-03-03T02:29:33Z] Norman Nunley, Jr: Added issue_type field with enum: bug, feature, task, epic, chore, molecule, gate. Added --issue-type flag to update command. Updated man pages.
