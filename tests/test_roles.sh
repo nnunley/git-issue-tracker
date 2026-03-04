@@ -115,6 +115,49 @@ run_test "queue alias works" \
 run_test_not_contains "queue alias filters correctly" \
     "git issue queue coder" "Reviewer task"
 
+# Test transition-based role assignment
+echo ""
+echo "Testing transition-based role assignment..."
+
+# Write custom statuses with role rules
+mkdir -p "$TEST_DIR/.git-issue"
+cat > "$TEST_DIR/.git-issue/statuses" << 'STATEOF'
+mode: permissive
+
+status: open        | default | New issue
+status: in_progress | yellow  | Working
+status: review      | blue    | Under review
+status: closed      | gray    | Done
+
+transition: open → in_progress
+transition: in_progress → review (role=reviewer)
+transition: review → in_progress (role=coder)
+transition: review → closed (role=)
+transition: closed → open
+STATEOF
+
+# Compile statuses
+git-issue-compile-statuses "$TEST_DIR/.git-issue/statuses" "$TEST_DIR/.git-issue/statuses.bash" >/dev/null 2>&1
+
+ID5=$(git issue create "Transition role test" 2>&1 | grep -o '#[a-f0-9]\+' | head -1 | cut -c2-)
+git issue update "$ID5" --status=in_progress >/dev/null 2>&1
+
+# Moving to review should auto-assign role=reviewer
+git issue update "$ID5" --status=review >/dev/null 2>&1
+run_test "transition sets role to reviewer" \
+    "git issue show $ID5" "Role: reviewer"
+
+# Moving back to in_progress should auto-assign role=coder
+git issue update "$ID5" --status=in_progress >/dev/null 2>&1
+run_test "transition sets role to coder" \
+    "git issue show $ID5" "Role: coder"
+
+# Moving to closed should clear role (role=)
+git issue update "$ID5" --status=review >/dev/null 2>&1
+git issue update "$ID5" --status=closed >/dev/null 2>&1
+run_test_not_contains "transition clears role on close" \
+    "git issue show $ID5" "Role:"
+
 # Cleanup
 echo ""
 echo "Results: $TESTS_PASSED/$TESTS_RUN passed"

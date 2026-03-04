@@ -749,6 +749,14 @@ update_issue_with_flags() {
         if [[ -n "$current_status" ]]; then
             check_transition "$current_status" "$status_val" || return 1
         fi
+            # Apply transition role if configured and not explicitly overridden
+            if [[ "$role_val" == "__unset__" ]] && type -t transition_role &>/dev/null; then
+                local trans_role
+                if trans_role=$(transition_role "$current_status" "$status_val"); then
+                    update_issue "$id" "role" "$trans_role"
+                    changes="${changes}role=$trans_role "
+                fi
+            fi
         update_issue "$id" "status" "$status_val"
         changes="status=$status_val "
         if [[ "$status_val" == "closed" ]]; then

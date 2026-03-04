@@ -17,6 +17,7 @@ statuses=()
 colors=()
 descriptions=()
 transitions=()
+transition_roles=()
 mode="permissive"
 
 while IFS= read -r line; do
@@ -30,8 +31,11 @@ while IFS= read -r line; do
         statuses+=("${BASH_REMATCH[1]}")
         colors+=("${BASH_REMATCH[2]// /}")
         descriptions+=("${BASH_REMATCH[3]}")
-    elif [[ "$line" =~ ^transition:\ *([a-z_]+)\ *→\ *([a-z_]+)$ ]]; then
+    elif [[ "$line" =~ ^transition:\ *([a-z_]+)\ *→\ *([a-z_]+)(\ *\(role=([a-z_]*)\))?$ ]]; then
         transitions+=("${BASH_REMATCH[1]}→${BASH_REMATCH[2]}")
+        if [[ -n "${BASH_REMATCH[3]}" ]]; then
+            transition_roles+=("${BASH_REMATCH[1]}→${BASH_REMATCH[2]}=${BASH_REMATCH[4]}")
+        fi
     fi
 done < "$input"
 
@@ -82,6 +86,18 @@ if [[ ${#transitions[@]} -gt 0 ]]; then
         pattern="${pattern}${t}"
     done
     printf '        %s) return 0 ;;\n' "$pattern" >> "$output"
+fi
+printf '        *) return 1 ;;\n' >> "$output"
+printf '    esac\n}\n' >> "$output"
+
+# transition_role()
+printf '\ntransition_role() {\n    local from="$1" to="$2"\n    case "${from}→${to}" in\n' >> "$output"
+if [[ ${#transition_roles[@]} -gt 0 ]]; then
+    for tr in "${transition_roles[@]}"; do
+        key="${tr%%=*}"
+        val="${tr#*=}"
+        printf '        %s) echo "%s"; return 0 ;;\n' "$key" "$val" >> "$output"
+    done
 fi
 printf '        *) return 1 ;;\n' >> "$output"
 printf '    esac\n}\n' >> "$output"
