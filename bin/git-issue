@@ -219,6 +219,9 @@ usage() {
     echo "  list                                    List all issues"
     echo "  show <id> [--with-commits]              Show issue details (optionally with related commits)"
     echo "  update <id> [--status=<status>] [--priority=<priority>] [--assignee=<assignee>] [--description=<desc>]  Update issue"
+    echo "  start <id>                             Set status to in_progress"
+    echo "  close <id>                             Set status to closed"
+    echo "  reopen <id>                            Set status to open"
     echo "  comment <id> <text>                     Add comment to issue"
     echo "  link <id> <commit>                      Link issue to commit (git notes)"
     echo "  commit [--issue|--fixes|--closes] <id>  Add git trailer to commit"
@@ -433,6 +436,7 @@ list_issues() {
             status_val=$(echo "$data" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
             priority=$(echo "$data" | grep "^priority:" | head -1 | cut -d' ' -f2)
             assignee=$(echo "$data" | grep "^assignee:" | head -1 | cut -d' ' -f2-)
+            role=$(echo "$data" | grep "^role:" | head -1 | cut -d' ' -f2-)
 
             # Color based on status
             local color_name
@@ -448,6 +452,7 @@ list_issues() {
 
             # Format output
             echo -ne "${color}#${id} [${status_val}] ${title} (P: ${priority})"
+            [ -n "$role" ] && echo -n " [$role]"
             [ -n "$assignee" ] && echo -n " → $assignee"
             echo -e "${NC}"
         fi
@@ -489,6 +494,7 @@ show_issue() {
     local updated=$(get_field_value "$front_matter" "updated")
     local author=$(get_field_value "$front_matter" "author")
     local assignee=$(get_field_value "$front_matter" "assignee")
+    local role=$(get_field_value "$front_matter" "role")
     local blocks=$(get_field_value "$front_matter" "blocks")
     local depends_on=$(get_field_value "$front_matter" "depends_on")
     local parent_of=$(get_field_value "$front_matter" "parent_of")
@@ -514,6 +520,7 @@ show_issue() {
     echo "Priority: $priority"
     echo "Author: $author"
     [[ -n "$assignee" ]] && echo "Assignee: $assignee"
+    [[ -n "$role" ]] && echo "Role: $role"
     [[ -n "$blocks" ]] && echo "Blocks: $blocks"
     [[ -n "$depends_on" ]] && echo "Depends on: $depends_on"
     [[ -n "$parent_of" ]] && echo "Parent of: $parent_of"
@@ -561,6 +568,9 @@ update_issue() {
         assignee)
             # Accept any value for assignee
             ;;
+        role)
+            # Accept any value for role
+            ;;
         description)
             # Accept any value for description
             ;;
@@ -569,7 +579,7 @@ update_issue() {
             ;;
         *)
             echo -e "${RED}Invalid field: $field${NC}"
-            echo "Valid fields: status, priority, assignee, description, blocks, depends_on, parent_of, relates_to"
+            echo "Valid fields: status, priority, assignee, role, description, blocks, depends_on, parent_of, relates_to"
             return 1
             ;;
     esac
@@ -634,6 +644,7 @@ update_issue_with_flags() {
     fi
     
     local status_val="" priority="" assignee="" description=""
+    local role_val="__unset__"
     local blocks="" depends_on="" parent_of="" relates_to=""
     local has_updates=false
 
@@ -656,6 +667,10 @@ update_issue_with_flags() {
                 description="${1#*=}"
                 has_updates=true
                 ;;
+            --role=*)
+                role_val="${1#*=}"
+                has_updates=true
+                ;;
             --blocks=*)
                 blocks="${1#*=}"
                 has_updates=true
@@ -672,7 +687,7 @@ update_issue_with_flags() {
                 relates_to="${1#*=}"
                 has_updates=true
                 ;;
-            --status|--priority|--assignee|--description|--blocks|--depends-on|--parent-of|--relates-to)
+            --status|--priority|--assignee|--role|--description|--blocks|--depends-on|--parent-of|--relates-to)
                 if [[ $# -lt 2 ]]; then
                     echo -e "${RED}Error: $1 requires a value${NC}" >&2
                     return 1
@@ -681,6 +696,7 @@ update_issue_with_flags() {
                     --status) status_val="$2"; has_updates=true ;;
                     --priority) priority="$2"; has_updates=true ;;
                     --assignee) assignee="$2"; has_updates=true ;;
+                    --role) role_val="$2"; has_updates=true ;;
                     --description) description="$2"; has_updates=true ;;
                     --blocks) blocks="$2"; has_updates=true ;;
                     --depends-on) depends_on="$2"; has_updates=true ;;
@@ -691,7 +707,7 @@ update_issue_with_flags() {
                 ;;
             *)
                 echo -e "${RED}Error: Unknown flag '$1'${NC}" >&2
-                echo "Valid flags: --status, --priority, --assignee, --description, --blocks, --depends-on, --parent-of, --relates-to" >&2
+                echo "Valid flags: --status, --priority, --assignee, --role, --description, --blocks, --depends-on, --parent-of, --relates-to" >&2
                 return 1
                 ;;
         esac
@@ -700,7 +716,7 @@ update_issue_with_flags() {
 
     if [[ "$has_updates" == "false" ]]; then
         echo -e "${RED}Error: No update flags provided${NC}" >&2
-        echo "Use --status, --priority, --assignee, --description, --blocks, --depends-on, --parent-of, or --relates-to" >&2
+        echo "Use --status, --priority, --assignee, --role, --description, --blocks, --depends-on, --parent-of, or --relates-to" >&2
         return 1
     fi
 
@@ -745,6 +761,10 @@ update_issue_with_flags() {
     if [[ -n "$assignee" ]]; then
         update_issue "$id" "assignee" "$assignee"
         changes="${changes}assignee=$assignee "
+    fi
+    if [[ "$role_val" != "__unset__" ]]; then
+        update_issue "$id" "role" "$role_val"
+        changes="${changes}role=$role_val "
     fi
     if [[ -n "$description" ]]; then
         update_issue "$id" "description" "$description"
@@ -2769,6 +2789,30 @@ hash_source: manual"
             exit 1
         fi
         update_issue_with_flags "${@:2}"
+        ;;
+    start)
+        if [ $# -lt 2 ]; then
+            echo -e "${RED}Error: 'start' requires issue id${NC}"
+            echo "Usage: git issue start <id>"
+            exit 1
+        fi
+        update_issue_with_flags "$2" "--status=in_progress"
+        ;;
+    close)
+        if [ $# -lt 2 ]; then
+            echo -e "${RED}Error: 'close' requires issue id${NC}"
+            echo "Usage: git issue close <id>"
+            exit 1
+        fi
+        update_issue_with_flags "$2" "--status=closed"
+        ;;
+    reopen)
+        if [ $# -lt 2 ]; then
+            echo -e "${RED}Error: 'reopen' requires issue id${NC}"
+            echo "Usage: git issue reopen <id>"
+            exit 1
+        fi
+        update_issue_with_flags "$2" "--status=open"
         ;;
     comment)
         if [ $# -lt 3 ]; then

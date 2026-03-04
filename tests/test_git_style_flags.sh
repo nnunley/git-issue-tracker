@@ -134,6 +134,15 @@ done
 # This tests the old syntax to ensure we don't break existing scripts
 # run_test "legacy syntax" "git issue update $ISSUE_ID state open" "success"
 
+# Test: role flag with equals
+run_test "role flag with equals" "git issue update $ISSUE_ID --role=reviewer" "success"
+
+# Verify role was stored
+run_test "role stored in issue data" "git issue show $ISSUE_ID" "Role: reviewer"
+
+# Test: clear role
+run_test "clear role" "git issue update $ISSUE_ID --role=" "success"
+
 echo ""
 echo -e "${BLUE}Test Results:${NC}"
 echo "============="
