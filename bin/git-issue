@@ -231,7 +231,8 @@ usage() {
     echo "  dep add <from> <type> <to>              Add dependency (blocks, depends_on, parent_of, relates_to)"
     echo "  dep rm <from> <type> <to>               Remove dependency"
     echo "  dep list [<id>]                          List dependencies"
-    echo "  ready                                    List issues ready to work on (sorted by priority)"
+    echo "  ready [--role=<role>]                   List issues ready to work on (sorted by priority)"
+    echo "  queue <role>                            List ready issues for a given role"
     echo "  topo                                     Topologically sorted ordering of non-closed issues"
     echo "  deps [<id>] [--dot]                      Show dependency graph (text or Graphviz DOT)"
     echo "  migrate-status                                                              Migrate issue data from state→status"
@@ -2277,6 +2278,27 @@ handle_dep() {
 # List issues ready to work on
 # Ready = not done, not blocked, and all depends_on targets are done
 list_ready_issues() {
+    local role_filter=""
+
+    # Parse flags
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --role=*)
+                role_filter="${1#*=}"
+                ;;
+            --role)
+                role_filter="$2"
+                shift
+                ;;
+            *)
+                echo -e "${RED}Error: Unknown flag '$1'${NC}" >&2
+                echo "Usage: git issue ready [--role=<role>]" >&2
+                return 1
+                ;;
+        esac
+        shift
+    done
+
     ensure_edge_index_current
 
     local results=""
@@ -2320,6 +2342,14 @@ list_ready_issues() {
         local assignee
         assignee=$(echo "$data" | grep "^assignee:" | head -1 | cut -d' ' -f2-)
 
+        local role
+        role=$(echo "$data" | grep "^role:" | head -1 | cut -d' ' -f2-)
+
+        # Filter by role if specified
+        if [[ -n "$role_filter" && "$role" != "$role_filter" ]]; then
+            continue
+        fi
+
         # Numeric rank for sorting (lower = higher priority)
         local rank
         case "$priority" in
@@ -2331,6 +2361,7 @@ list_ready_issues() {
         esac
 
         local line="#${id} [${status_val}]  ${title}  (P: ${priority})"
+        [[ -n "$role" ]] && line="${line} [${role}]"
         [[ -n "$assignee" ]] && line="${line} -> ${assignee}"
         results="${results}${rank} ${line}"$'\n'
     done
@@ -2854,7 +2885,16 @@ hash_source: manual"
         handle_dep "$@"
         ;;
     ready)
-        list_ready_issues
+        shift
+        list_ready_issues "$@"
+        ;;
+    queue)
+        if [ $# -lt 2 ]; then
+            echo -e "${RED}Error: 'queue' requires a role name${NC}"
+            echo "Usage: git issue queue <role>"
+            exit 1
+        fi
+        list_ready_issues "--role=$2"
         ;;
     topo)
         topo_sort_issues
