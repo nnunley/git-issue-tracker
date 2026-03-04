@@ -218,7 +218,7 @@ usage() {
     echo "  create <title> [--description=<desc>]  Create new issue (auto-generates hash ID)"
     echo "  list                                    List all issues"
     echo "  show <id> [--with-commits]              Show issue details (optionally with related commits)"
-    echo "  update <id> [--status=<status>] [--priority=<priority>] [--assignee=<assignee>] [--description=<desc>]  Update issue"
+    echo "  update <id> [--status=<s>] [--priority=<p>] [--assignee=<a>] [--role=<r>] [--description=<d>]  Update issue"
     echo "  start <id>                             Set status to in_progress"
     echo "  close <id>                             Set status to closed"
     echo "  reopen <id>                            Set status to open"
@@ -2785,7 +2785,7 @@ hash_source: manual"
     update)
         if [ $# -lt 2 ]; then
             echo -e "${RED}Error: 'update' requires issue id and flags${NC}"
-            echo "Usage: git issue update <id> --status=<status> [--priority=<priority>] [--assignee=<assignee>]"
+            echo "Usage: git issue update <id> [--status=<s>] [--priority=<p>] [--assignee=<a>] [--role=<r>]"
             exit 1
         fi
         update_issue_with_flags "${@:2}"

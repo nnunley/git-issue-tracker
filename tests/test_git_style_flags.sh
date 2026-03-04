@@ -143,6 +143,19 @@ run_test "role stored in issue data" "git issue show $ISSUE_ID" "Role: reviewer"
 # Test: clear role
 run_test "clear role" "git issue update $ISSUE_ID --role=" "success"
 
+# Verify role was actually cleared (should NOT contain "Role:")
+SHOW_OUTPUT=$(git issue show "$ISSUE_ID" 2>&1)
+TESTS_RUN=$((TESTS_RUN + 1))
+echo -n "Testing role actually cleared from data... "
+if [[ "$SHOW_OUTPUT" != *"Role:"* ]]; then
+    echo -e "${GREEN}PASS${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${RED}FAIL${NC}"
+    echo "  Expected: no 'Role:' in output"
+    echo "  Got: $SHOW_OUTPUT"
+fi
+
 echo ""
 echo -e "${BLUE}Test Results:${NC}"
 echo "============="
