@@ -145,18 +145,18 @@ git issue update "$ID5" --status=in_progress >/dev/null 2>&1
 # Moving to review should auto-assign role=reviewer
 git issue update "$ID5" --status=review >/dev/null 2>&1
 run_test "transition sets role to reviewer" \
-    "git issue show $ID5" "Role: reviewer"
+    "git issue show $ID5" "role: reviewer"
 
 # Moving back to in_progress should auto-assign role=coder
 git issue update "$ID5" --status=in_progress >/dev/null 2>&1
 run_test "transition sets role to coder" \
-    "git issue show $ID5" "Role: coder"
+    "git issue show $ID5" "role: coder"
 
 # Moving to closed should clear role (role=)
 git issue update "$ID5" --status=review >/dev/null 2>&1
 git issue update "$ID5" --status=closed >/dev/null 2>&1
 run_test_not_contains "transition clears role on close" \
-    "git issue show $ID5" "Role:"
+    "git issue show $ID5" "role:"
 
 # Cleanup
 echo ""

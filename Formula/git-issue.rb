@@ -20,6 +20,8 @@ class GitIssue < Formula
 
     (share/"git-issue").install "share/git-issue/statuses.default"
     (share/"git-issue").install "share/git-issue/statuses.beads"
+    (share/"git-issue/hooks").install "hooks/post-merge"
+    (share/"git-issue/hooks").install "hooks/pre-push"
 
     doc.install Dir["docs/*"]
     doc.install "README.md"

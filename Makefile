@@ -18,6 +18,9 @@ install:
 	install -d $(SHAREDIR)
 	install -m 644 share/git-issue/statuses.default $(SHAREDIR)/
 	install -m 644 share/git-issue/statuses.beads $(SHAREDIR)/
+	install -d $(SHAREDIR)/hooks
+	install -m 755 hooks/post-merge $(SHAREDIR)/hooks/
+	install -m 755 hooks/pre-push $(SHAREDIR)/hooks/
 	install -m 644 docs/* $(DOCDIR)/ 2>/dev/null || true
 	install -d $(MAN1DIR)
 	install -d $(MAN8DIR)

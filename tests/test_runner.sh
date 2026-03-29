@@ -153,7 +153,7 @@ test_issue_update() {
     # Verify update
     local show_output
     show_output=$(git issue show "$issue_id")
-    assert_contains "Status: in_progress" "$show_output" "Should show updated status"
+    assert_contains "status: in_progress" "$show_output" "Should show updated status"
 }
 
 test_issue_comments() {

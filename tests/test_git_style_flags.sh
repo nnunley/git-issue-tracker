@@ -138,16 +138,16 @@ done
 run_test "role flag with equals" "git issue update $ISSUE_ID --role=reviewer" "success"
 
 # Verify role was stored
-run_test "role stored in issue data" "git issue show $ISSUE_ID" "Role: reviewer"
+run_test "role stored in issue data" "git issue show $ISSUE_ID" "role: reviewer"
 
 # Test: clear role
 run_test "clear role" "git issue update $ISSUE_ID --role=" "success"
 
-# Verify role was actually cleared (should NOT contain "Role:")
+# Verify role was actually cleared (should NOT contain "role:")
 SHOW_OUTPUT=$(git issue show "$ISSUE_ID" 2>&1)
 TESTS_RUN=$((TESTS_RUN + 1))
 echo -n "Testing role actually cleared from data... "
-if [[ "$SHOW_OUTPUT" != *"Role:"* ]]; then
+if [[ "$SHOW_OUTPUT" != *"role:"* ]]; then
     echo -e "${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else

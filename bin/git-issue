@@ -231,7 +231,7 @@ usage() {
     echo "  dep add <from> <type> <to>              Add dependency (blocks, depends_on, parent_of, relates_to)"
     echo "  dep rm <from> <type> <to>               Remove dependency"
     echo "  dep list [<id>]                          List dependencies"
-    echo "  ready [--role=<role>]                   List issues ready to work on (sorted by priority)"
+    echo "  ready [--role=<role>] [--limit=<n>]     List issues ready to work on (sorted by priority)"
     echo "  queue <role>                            List ready issues for a given role"
     echo "  topo                                     Topologically sorted ordering of non-closed issues"
     echo "  deps [<id>] [--dot]                      Show dependency graph (text or Graphviz DOT)"
@@ -278,6 +278,36 @@ read_issue_data() {
     git cat-file -p "$blob_hash" 2>/dev/null || return 1
 }
 
+# Batch-read all issue data using git cat-file --batch (3 git processes total
+# instead of 3 per issue).  Outputs __ISSUE__-delimited stream of issue blobs.
+# Consumers pipe through awk to extract fields they need.
+# Legacy issues (no "issue" blob) fall back to per-issue reads.
+_batch_issue_stream() {
+    # Step 1: resolve ref:issue -> blob hash (batch-check)
+    # Step 2: read all blobs at once (batch)
+    git for-each-ref --format='%(refname):issue' 'refs/notes/issue-*' 2>/dev/null \
+        | git cat-file --batch-check 2>/dev/null \
+        | grep -v missing \
+        | awk '{print $1}' \
+        | git cat-file --batch='__ISSUE__' 2>/dev/null
+    echo "__ISSUE__"
+
+    # Legacy fallback: any refs whose tree lacks an "issue" blob
+    local all_refs legacy_ids
+    all_refs=$(git for-each-ref --format='%(refname)' 'refs/notes/issue-*' 2>/dev/null)
+    legacy_ids=$(echo "$all_refs" | sed 's/$/:issue/' \
+        | git cat-file --batch-check 2>/dev/null \
+        | grep missing | awk '{split($1,a,":"); split(a[1],b,"-"); print b[3]}')
+    if [[ -n "$legacy_ids" ]]; then
+        while IFS= read -r id; do
+            [[ -z "$id" ]] && continue
+            echo "__ISSUE__"
+            read_issue_data "$id" 2>/dev/null || true
+        done <<< "$legacy_ids"
+        echo "__ISSUE__"
+    fi
+}
+
 # Write issue data using git plumbing (hash-object + mktree + commit-tree + update-ref)
 write_issue_data() {
     local id="$1"
@@ -304,6 +334,9 @@ write_issue_data() {
 
     # Point the ref at the new commit
     git update-ref "$ref" "$commit_hash"
+
+    # Trigger auto-gc (no-op when below threshold, background by default)
+    git gc --auto 2>/dev/null &
 }
 
 # List all issues (always git refs now)
@@ -382,9 +415,14 @@ parse_front_matter() {
                     break
                 }
             }
-            # Build set of trailing keys (trailing values take precedence)
+            # Find first blank line to know where top headers end
+            first_blank = n + 1
+            for (i = 1; i <= n; i++) {
+                if (lines[i] == "") { first_blank = i; break }
+            }
+            # Only treat as trailing headers if they come after the top block
             trail_count = 0
-            if (trail_start <= trail_end) {
+            if (trail_start > first_blank && trail_start <= trail_end) {
                 for (i = trail_start; i <= trail_end; i++) {
                     if (lines[i] ~ /^[a-z_]+:/) {
                         trail_count++
@@ -439,7 +477,12 @@ parse_body() {
                 if (lines[i] == "") { body_start = i + 1; break }
             }
             if (body_start == 0) body_start = n + 1
-            body_end = trail_start - 1
+            # Only treat as trailing headers if they come after the body start
+            if (trail_start > body_start) {
+                body_end = trail_start - 1
+            } else {
+                body_end = comments_at - 1
+            }
             if (body_end >= comments_at) body_end = comments_at - 1
             # Trim trailing blank lines from body
             while (body_end >= body_start && lines[body_end] == "") body_end--
@@ -517,36 +560,40 @@ $description"
 list_issues() {
     echo -e "${BLUE}Issues:${NC}"
     echo ""
-    
-    # Find all issue refs
-    for ref in $(list_all_issues); do
-        id=$(extract_issue_id "$ref")
-        if data=$(read_issue_data "$id" 2>/dev/null); then
-            # Extract key fields
-            title=$(echo "$data" | grep "^title:" | head -1 | cut -d' ' -f2-)
-            status_val=$(echo "$data" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
-            priority=$(echo "$data" | grep "^priority:" | head -1 | cut -d' ' -f2)
-            assignee=$(echo "$data" | grep "^assignee:" | head -1 | cut -d' ' -f2-)
-            role=$(echo "$data" | grep "^role:" | head -1 | cut -d' ' -f2-)
 
-            # Color based on status
-            local color_name
-            color_name=$(status_color "$status_val" 2>/dev/null || echo "")
-            case "$color_name" in
-                red) color=$RED ;;
-                yellow) color=$YELLOW ;;
-                blue) color=$BLUE ;;
-                gray) color=$GRAY ;;
-                green) color=$GREEN ;;
-                *) color=$NC ;;
-            esac
+    # Batch-read all issues, extract fields via awk (3 git processes total)
+    _batch_issue_stream | awk '
+        /^__ISSUE__/ {
+            if (length(id) > 0)
+                printf "%s\t%s\t%s\t%s\t%s\t%s\n", id, status, title, priority, assignee, role
+            id = ""; status = ""; title = ""; priority = ""; assignee = ""; role = ""
+            next
+        }
+        /^id: /       { id = substr($0, 5) }
+        /^title: /    { title = substr($0, 8) }
+        /^status: /   { status = $2 }
+        /^state: /    { if (length(status) == 0) status = $2 }
+        /^priority: / { priority = $2 }
+        /^assignee: / { assignee = substr($0, 11) }
+        /^role: /     { role = substr($0, 7) }
+    ' | while IFS=$'\t' read -r id status_val title priority assignee role; do
+        # Color based on status
+        local color_name
+        color_name=$(status_color "$status_val" 2>/dev/null || echo "")
+        case "$color_name" in
+            red) color=$RED ;;
+            yellow) color=$YELLOW ;;
+            blue) color=$BLUE ;;
+            gray) color=$GRAY ;;
+            green) color=$GREEN ;;
+            *) color=$NC ;;
+        esac
 
-            # Format output
-            echo -ne "${color}#${id} [${status_val}] ${title} (P: ${priority})"
-            [ -n "$role" ] && echo -n " [$role]"
-            [ -n "$assignee" ] && echo -n " → $assignee"
-            echo -e "${NC}"
-        fi
+        # Format output
+        echo -ne "${color}#${id} [${status_val}] ${title} (P: ${priority})"
+        [ -n "$role" ] && echo -n " [$role]"
+        [ -n "$assignee" ] && echo -n " → $assignee"
+        echo -e "${NC}"
     done
 }
 
@@ -594,7 +641,7 @@ show_issue() {
     # Display issue
     echo -e "${BOLD}Issue #$id${NC}"
     echo "============"
-    echo "Title: $title"
+    echo "title: $title"
     if [[ -n "$description" ]]; then
         echo ""
         echo "Description:"
@@ -607,17 +654,17 @@ show_issue() {
     [[ -n "$jira_id" ]] && echo "Jira: $jira_id ($jira_url)"
     [[ -n "$gitlab_id" ]] && echo "GitLab: #$gitlab_id ($gitlab_url)"
     
-    echo "Status: $status_val"
-    echo "Priority: $priority"
-    echo "Author: $author"
-    [[ -n "$assignee" ]] && echo "Assignee: $assignee"
-    [[ -n "$role" ]] && echo "Role: $role"
-    [[ -n "$blocks" ]] && echo "Blocks: $blocks"
-    [[ -n "$depends_on" ]] && echo "Depends on: $depends_on"
-    [[ -n "$parent_of" ]] && echo "Parent of: $parent_of"
-    [[ -n "$relates_to" ]] && echo "Relates to: $relates_to"
-    echo "Created: $created"
-    echo "Updated: $updated"
+    echo "status: $status_val"
+    echo "priority: $priority"
+    echo "author: $author"
+    [[ -n "$assignee" ]] && echo "assignee: $assignee"
+    [[ -n "$role" ]] && echo "role: $role"
+    [[ -n "$blocks" ]] && echo "blocks: $blocks"
+    [[ -n "$depends_on" ]] && echo "depends_on: $depends_on"
+    [[ -n "$parent_of" ]] && echo "parent_of: $parent_of"
+    [[ -n "$relates_to" ]] && echo "relates_to: $relates_to"
+    echo "created: $created"
+    echo "updated: $updated"
     
     if [[ -n "$comments" ]]; then
         echo ""
@@ -704,9 +751,13 @@ $comments"
         fi
     else
         # Header field update: awk splits on blank line instead of ---
+        # Also strips matching fields from trailing headers in the body
+        # to prevent parse_front_matter's trailing-header-overrides-top logic
+        # from reverting the update.
         updated_data=$(echo "$data" | awk -v field="$field:" -v value="$value" -v ts="$timestamp" '
             BEGIN { found=0; in_body=0 }
             !in_body && /^$/ { if (!found) { print field, value }; in_body=1; print; next }
+            in_body && $1 == field { next }
             in_body { print; next }
             $1 == field { print field, value; found=1; next }
             $1 == "updated:" { print "updated:", ts; next }
@@ -833,37 +884,64 @@ update_issue_with_flags() {
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local changes=""
 
+    # Read issue data once for all comparisons
+    local issue_data
+    issue_data=$(read_issue_data "$id")
+
+    # Helper: get authoritative value of a header field (uses parse_front_matter
+    # which respects trailing-header-overrides-top semantics)
+    local _front_matter
+    _front_matter=$(parse_front_matter "$issue_data")
+    _current_val() { echo "$_front_matter" | grep -E "^$1:" | head -1 | cut -d' ' -f2-; }
+
     if [[ -n "$status_val" ]]; then
         local current_status
-        current_status=$(read_issue_data "$id" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
-        if [[ -n "$current_status" ]]; then
-            check_transition "$current_status" "$status_val" || return 1
-            # Apply transition role if configured and not explicitly overridden
-            if [[ "$role_val" == "__unset__" ]] && type -t transition_role &>/dev/null; then
-                local trans_role
-                if trans_role=$(transition_role "$current_status" "$status_val"); then
-                    update_issue "$id" "role" "$trans_role"
-                    changes="${changes}role=$trans_role "
+        current_status=$(_current_val "status")
+        [[ -z "$current_status" ]] && current_status=$(_current_val "state")
+        if [[ "$current_status" == "$status_val" ]]; then
+            echo -e "${YELLOW}Issue #$id already has status '$status_val'${NC}" >&2
+        else
+            if [[ -n "$current_status" ]]; then
+                check_transition "$current_status" "$status_val" || return 1
+                # Apply transition role if configured and not explicitly overridden
+                if [[ "$role_val" == "__unset__" ]] && type -t transition_role &>/dev/null; then
+                    local trans_role
+                    if trans_role=$(transition_role "$current_status" "$status_val"); then
+                        update_issue "$id" "role" "$trans_role"
+                        changes="${changes}role=$trans_role "
+                    fi
                 fi
             fi
-        fi
-        update_issue "$id" "status" "$status_val"
-        changes="${changes}status=$status_val "
-        if [[ "$status_val" == "closed" ]]; then
-            cascade_unblock "$id"
+            update_issue "$id" "status" "$status_val"
+            changes="${changes}status=$status_val "
+            if [[ "$status_val" == "closed" ]]; then
+                cascade_unblock "$id"
+            fi
         fi
     fi
     if [[ -n "$priority" ]]; then
-        update_issue "$id" "priority" "$priority"
-        changes="${changes}priority=$priority "
+        if [[ "$(_current_val "priority")" == "$priority" ]]; then
+            echo -e "${YELLOW}Issue #$id already has priority '$priority'${NC}" >&2
+        else
+            update_issue "$id" "priority" "$priority"
+            changes="${changes}priority=$priority "
+        fi
     fi
     if [[ -n "$assignee" ]]; then
-        update_issue "$id" "assignee" "$assignee"
-        changes="${changes}assignee=$assignee "
+        if [[ "$(_current_val "assignee")" == "$assignee" ]]; then
+            echo -e "${YELLOW}Issue #$id already has assignee '$assignee'${NC}" >&2
+        else
+            update_issue "$id" "assignee" "$assignee"
+            changes="${changes}assignee=$assignee "
+        fi
     fi
     if [[ "$role_val" != "__unset__" ]]; then
-        update_issue "$id" "role" "$role_val"
-        changes="${changes}role=$role_val "
+        if [[ "$(_current_val "role")" == "$role_val" ]]; then
+            echo -e "${YELLOW}Issue #$id already has role '$role_val'${NC}" >&2
+        else
+            update_issue "$id" "role" "$role_val"
+            changes="${changes}role=$role_val "
+        fi
     fi
     if [[ -n "$description" ]]; then
         update_issue "$id" "description" "$description"
@@ -886,7 +964,9 @@ update_issue_with_flags() {
         changes="${changes}relates_to=$relates_to "
     fi
 
-    echo -e "${GREEN}✓ Updated issue #$id: ${changes}${NC}"
+    if [[ -n "$changes" ]]; then
+        echo -e "${GREEN}✓ Updated issue #$id: ${changes}${NC}"
+    fi
 }
 
 # Create issue with git-style flags
@@ -970,39 +1050,61 @@ setup_sync_enable() {
     local git_dir=$(git rev-parse --git-dir)
     local hooks_dir="$git_dir/hooks"
     local script_dir="$(dirname "$(realpath "$0")")"
+
+    # Look for hooks in multiple locations:
+    # 1. Relative to script (source tree / make install)
+    # 2. Homebrew share directory
+    # 3. Standard share directory
+    local hooks_source=""
+    for candidate in \
+        "$script_dir/../hooks" \
+        "$script_dir/../share/git-issue/hooks" \
+        "/opt/homebrew/share/git-issue/hooks" \
+        "/usr/local/share/git-issue/hooks"; do
+        if [[ -d "$candidate" ]]; then
+            hooks_source="$candidate"
+            break
+        fi
+    done
     
     echo -e "${BLUE}🔧 Setting up automatic git notes synchronization...${NC}"
-    
+
+    if [[ -z "$hooks_source" ]]; then
+        echo -e "${RED}❌ Could not find hook templates in any known location${NC}"
+        echo -e "${YELLOW}   Searched: relative to script, Homebrew share, /usr/local/share${NC}"
+        return 1
+    fi
+
     # Create hooks directory if it doesn't exist
     mkdir -p "$hooks_dir"
-    
+
     # Install post-merge hook
     if [[ -f "$hooks_dir/post-merge" ]]; then
         echo -e "${YELLOW}⚠️  Existing post-merge hook found, backing up to post-merge.backup${NC}"
         mv "$hooks_dir/post-merge" "$hooks_dir/post-merge.backup"
     fi
-    
-    if [[ -f "$script_dir/../hooks/post-merge" ]]; then
-        cp "$script_dir/../hooks/post-merge" "$hooks_dir/post-merge"
+
+    if [[ -f "$hooks_source/post-merge" ]]; then
+        cp "$hooks_source/post-merge" "$hooks_dir/post-merge"
         chmod +x "$hooks_dir/post-merge"
         echo -e "${GREEN}✓ Installed post-merge hook (auto-fetch notes)${NC}"
     else
-        echo -e "${RED}❌ Could not find post-merge hook template${NC}"
+        echo -e "${RED}❌ Could not find post-merge hook template in $hooks_source${NC}"
         return 1
     fi
-    
+
     # Install pre-push hook
     if [[ -f "$hooks_dir/pre-push" ]]; then
         echo -e "${YELLOW}⚠️  Existing pre-push hook found, backing up to pre-push.backup${NC}"
         mv "$hooks_dir/pre-push" "$hooks_dir/pre-push.backup"
     fi
-    
-    if [[ -f "$script_dir/../hooks/pre-push" ]]; then
-        cp "$script_dir/../hooks/pre-push" "$hooks_dir/pre-push"
+
+    if [[ -f "$hooks_source/pre-push" ]]; then
+        cp "$hooks_source/pre-push" "$hooks_dir/pre-push"
         chmod +x "$hooks_dir/pre-push"
         echo -e "${GREEN}✓ Installed pre-push hook (auto-push notes)${NC}"
     else
-        echo -e "${RED}❌ Could not find pre-push hook template${NC}"
+        echo -e "${RED}❌ Could not find pre-push hook template in $hooks_source${NC}"
         return 1
     fi
     
@@ -1802,20 +1904,18 @@ ensure_edge_index_current() {
     local last_rebuilt
     last_rebuilt=$(echo "$edge_data" | grep "^last_rebuilt_from:" | cut -d' ' -f2-)
 
-    # Find issue notes modified since last rebuild
+    # Find issue notes modified since last rebuild (single git call)
     local needs_rebuild=false
     local changed_ids=()
 
-    for ref in $(git for-each-ref --format="%(refname)" 'refs/notes/issue-*' 2>/dev/null); do
-        local ref_date
-        ref_date=$(git for-each-ref --format="%(committerdate:iso-strict)" "$ref" 2>/dev/null)
+    while IFS=$'\t' read -r ref ref_date; do
+        [[ -z "$ref" ]] && continue
         if [[ -z "$last_rebuilt" ]] || [[ "$ref_date" > "$last_rebuilt" ]]; then
-            local id
-            id=$(echo "$ref" | sed 's/refs\/notes\/issue-//')
+            local id="${ref#refs/notes/issue-}"
             changed_ids+=("$id")
             needs_rebuild=true
         fi
-    done
+    done < <(git for-each-ref --format="%(refname)%09%(committerdate:iso-strict)" 'refs/notes/issue-*' 2>/dev/null)
 
     if [[ "$needs_rebuild" == "true" ]]; then
         # Re-parse only changed issues and update edges
@@ -2377,6 +2477,7 @@ handle_dep() {
 # Ready = not done, not blocked, and all depends_on targets are done
 list_ready_issues() {
     local role_filter=""
+    local limit=0
 
     # Parse flags
     while [[ $# -gt 0 ]]; do
@@ -2388,9 +2489,16 @@ list_ready_issues() {
                 role_filter="$2"
                 shift
                 ;;
+            --limit=*)
+                limit="${1#*=}"
+                ;;
+            --limit)
+                limit="$2"
+                shift
+                ;;
             *)
                 echo -e "${RED}Error: Unknown flag '$1'${NC}" >&2
-                echo "Usage: git issue ready [--role=<role>]" >&2
+                echo "Usage: git issue ready [--role=<role>] [--limit=<n>]" >&2
                 return 1
                 ;;
         esac
@@ -2399,32 +2507,50 @@ list_ready_issues() {
 
     ensure_edge_index_current
 
+    # Batch-read all issues into TSV: id, status, title, priority, assignee, role, depends_on
+    local all_tsv
+    all_tsv=$(_batch_issue_stream | awk '
+        /^__ISSUE__/ {
+            if (length(id) > 0)
+                printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", id, status, title, priority, assignee, role, depends_on
+            id = ""; status = ""; title = ""; priority = ""; assignee = ""; role = ""; depends_on = ""
+            next
+        }
+        /^id: /         { id = substr($0, 5) }
+        /^title: /      { title = substr($0, 8) }
+        /^status: /     { status = $2 }
+        /^state: /      { if (length(status) == 0) status = $2 }
+        /^priority: /   { priority = $2 }
+        /^assignee: /   { assignee = substr($0, 11) }
+        /^role: /       { role = substr($0, 7) }
+        /^depends_on: / { depends_on = substr($0, 13) }
+    ')
+
+    # Build status lookup (id:status per line, for grep-based lookup)
+    local status_index=""
+    while IFS=$'\t' read -r id status_val _ _ _ _ _; do
+        [[ -z "$id" ]] && continue
+        status_index="${status_index}${id}:${status_val}"$'\n'
+    done <<< "$all_tsv"
+
+    # Filter and collect results
     local results=""
-
-    for ref in $(list_all_issues); do
-        local id
-        id=$(extract_issue_id "$ref")
-        local data
-        data=$(read_issue_data "$id" 2>/dev/null) || continue
-
-        local status_val
-        status_val=$(echo "$data" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
+    while IFS=$'\t' read -r id status_val title priority assignee role depends_on; do
+        [[ -z "$id" ]] && continue
 
         # Skip closed and blocked issues
         [[ "$status_val" == "closed" || "$status_val" == "blocked" ]] && continue
 
         # Check depends_on: all blockers must be closed
-        local depends_on
-        depends_on=$(echo "$data" | grep "^depends_on:" | head -1 | cut -d' ' -f2- | xargs)
         if [[ -n "$depends_on" ]]; then
             local all_done=true
             local IFS=','
             for blocker in $depends_on; do
                 blocker=$(echo "$blocker" | xargs)
                 [[ -z "$blocker" ]] && continue
-                local blocker_state
-                blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
-                if [[ "$blocker_state" != "closed" ]]; then
+                local blocker_status
+                blocker_status=$(echo "$status_index" | grep "^${blocker}:" | head -1 | cut -d: -f2)
+                if [[ "$blocker_status" != "closed" ]]; then
                     all_done=false
                     break
                 fi
@@ -2432,16 +2558,6 @@ list_ready_issues() {
             unset IFS
             [[ "$all_done" == "false" ]] && continue
         fi
-
-        local title
-        title=$(echo "$data" | grep "^title:" | head -1 | cut -d' ' -f2-)
-        local priority
-        priority=$(echo "$data" | grep "^priority:" | head -1 | cut -d' ' -f2)
-        local assignee
-        assignee=$(echo "$data" | grep "^assignee:" | head -1 | cut -d' ' -f2-)
-
-        local role
-        role=$(echo "$data" | grep "^role:" | head -1 | cut -d' ' -f2-)
 
         # Filter by role if specified
         if [[ -n "$role_filter" && "$role" != "$role_filter" ]]; then
@@ -2462,15 +2578,19 @@ list_ready_issues() {
         [[ -n "$role" ]] && line="${line} [${role}]"
         [[ -n "$assignee" ]] && line="${line} -> ${assignee}"
         results="${results}${rank} ${line}"$'\n'
-    done
+    done <<< "$all_tsv"
 
     echo -e "${BLUE}Ready to work on:${NC}"
     if [[ -z "$results" ]]; then
         echo "  (none)"
     else
-        echo "$results" | sort -n | sed 's/^[0-9] //' | while IFS= read -r line; do
-            [[ -n "$line" ]] && echo "$line"
-        done
+        local sorted
+        sorted=$(echo "$results" | sort -n | sed 's/^[0-9] //' | grep -v '^$')
+        if [[ "$limit" -gt 0 ]]; then
+            echo "$sorted" | head -n "$limit"
+        else
+            echo "$sorted"
+        fi
     fi
 }
 
@@ -2481,16 +2601,34 @@ topo_sort_issues() {
     local edge_data
     edge_data=$(read_edge_index)
 
-    # Collect all non-closed issue IDs
+    # Batch-read all issues to get status, title, priority, depends_on
+    local all_tsv
+    all_tsv=$(_batch_issue_stream | awk '
+        /^__ISSUE__/ {
+            if (length(id) > 0)
+                printf "%s\t%s\t%s\t%s\t%s\n", id, status, title, priority, depends_on
+            id = ""; status = ""; title = ""; priority = ""; depends_on = ""
+            next
+        }
+        /^id: /         { id = substr($0, 5) }
+        /^title: /      { title = substr($0, 8) }
+        /^status: /     { status = $2 }
+        /^state: /      { if (length(status) == 0) status = $2 }
+        /^priority: /   { priority = $2 }
+        /^depends_on: / { depends_on = substr($0, 13) }
+    ')
+
+    # Collect non-closed issue IDs and build lookup index (bash 3.2 compatible)
     local non_done_ids=()
-    for ref in $(list_all_issues); do
-        local id
-        id=$(extract_issue_id "$ref")
-        local status_val
-        status_val=$(read_issue_data "$id" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
+    local issue_index=""  # id\ttitle\tpriority\tdepends_on per line
+    local non_done_list=""
+    while IFS=$'\t' read -r id status_val title priority depends_on; do
+        [[ -z "$id" ]] && continue
         [[ "$status_val" == "closed" ]] && continue
         non_done_ids+=("$id")
-    done
+        non_done_list="${non_done_list}${id}"$'\n'
+        issue_index="${issue_index}${id}"$'\t'"${title}"$'\t'"${priority}"$'\t'"${depends_on}"$'\n'
+    done <<< "$all_tsv"
 
     if [[ ${#non_done_ids[@]} -eq 0 ]]; then
         echo "No non-closed issues found."
@@ -2503,13 +2641,7 @@ topo_sort_issues() {
 
     while read -r from type to; do
         [[ -z "$from" || "$type" != "blocks" ]] && continue
-        # Only include edges where both endpoints are non-done
-        local from_ok=false to_ok=false
-        for nid in "${non_done_ids[@]}"; do
-            [[ "$nid" == "$from" ]] && from_ok=true
-            [[ "$nid" == "$to" ]] && to_ok=true
-        done
-        if [[ "$from_ok" == "true" && "$to_ok" == "true" ]]; then
+        if echo "$non_done_list" | grep -qF "$from" && echo "$non_done_list" | grep -qF "$to"; then
             tsort_input="${tsort_input}${from} ${to}"$'\n'
             ids_in_edges="${ids_in_edges}${from}"$'\n'"${to}"$'\n'
         fi
@@ -2533,14 +2665,13 @@ topo_sort_issues() {
     local num=1
     echo "$sorted" | while IFS= read -r id; do
         [[ -z "$id" ]] && continue
-        local data
-        data=$(read_issue_data "$id" 2>/dev/null) || continue
-        local title
-        title=$(echo "$data" | grep "^title:" | head -1 | cut -d' ' -f2-)
-        local priority
-        priority=$(echo "$data" | grep "^priority:" | head -1 | cut -d' ' -f2)
-        local depends_on
-        depends_on=$(echo "$data" | grep "^depends_on:" | head -1 | cut -d' ' -f2- | xargs)
+        # Look up fields from index
+        local idx_line
+        idx_line=$(echo "$issue_index" | grep "^${id}"$'\t' | head -1)
+        local title priority depends_on
+        title=$(echo "$idx_line" | cut -f2)
+        priority=$(echo "$idx_line" | cut -f3)
+        depends_on=$(echo "$idx_line" | cut -f4)
 
         local line="${num}. #${id}  ${title}  (P: ${priority})"
         if [[ -n "$depends_on" ]]; then
@@ -2989,10 +3120,12 @@ hash_source: manual"
     queue)
         if [ $# -lt 2 ]; then
             echo -e "${RED}Error: 'queue' requires a role name${NC}"
-            echo "Usage: git issue queue <role>"
+            echo "Usage: git issue queue <role> [--limit=<n>]"
             exit 1
         fi
-        list_ready_issues "--role=$2"
+        queue_role="$2"
+        shift 2
+        list_ready_issues "--role=$queue_role" "$@"
         ;;
     topo)
         topo_sort_issues

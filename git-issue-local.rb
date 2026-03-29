@@ -14,6 +14,10 @@ class GitIssueLocal < Formula
     bin.install "#{source_dir}/bin/git-issue-status"
     bin.install "#{source_dir}/bin/git-note-commit"
     
+    # Install hooks for setup-sync
+    (share/"git-issue/hooks").install "#{source_dir}/hooks/post-merge"
+    (share/"git-issue/hooks").install "#{source_dir}/hooks/pre-push"
+
     # Install documentation
     doc.install Dir["#{source_dir}/docs/*"]
     doc.install "#{source_dir}/README.md"

@@ -99,7 +99,7 @@ run_test "create without description" "git issue create 'No description issue'" 
 NO_DESC_OUTPUT=$(git issue create "No desc test" 2>&1)
 NO_DESC_ID=$(echo "$NO_DESC_OUTPUT" | grep -o '#[a-f0-9]\+' | head -1 | cut -c2-)
 SHOW_NO_DESC=$(git issue show "$NO_DESC_ID" 2>&1)
-if echo "$SHOW_NO_DESC" | grep -q "Title: No desc test"; then
+if echo "$SHOW_NO_DESC" | grep -q "title: No desc test"; then
     echo -e "Show without description... ${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
 else

@@ -45,9 +45,9 @@ test_full_issue_workflow() {
     local final_output
     final_output=$(git issue show "$issue_id")
 
-    assert_contains "Status: closed" "$final_output" "Issue should be marked as closed"
-    assert_contains "Priority: high" "$final_output" "Issue should have high priority"
-    assert_contains "Assignee: Test User" "$final_output" "Issue should be assigned"
+    assert_contains "status: closed" "$final_output" "Issue should be marked as closed"
+    assert_contains "priority: high" "$final_output" "Issue should have high priority"
+    assert_contains "assignee: Test User" "$final_output" "Issue should be assigned"
 
     # Verify comments in raw note data (show does not display comments)
     local notes_ref="refs/notes/issue-$issue_id"

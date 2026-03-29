@@ -36,10 +36,10 @@ test_dep_fields_in_show() {
     local output
     output=$(git issue show "$id" 2>&1)
 
-    assert_contains "Title: Issue without deps" "$output" "show displays title"
-    assert_contains "Status: open" "$output" "show displays status"
+    assert_contains "title: Issue without deps" "$output" "show displays title"
+    assert_contains "status: open" "$output" "show displays status"
     # Dep fields should NOT appear when empty
-    if [[ "$output" != *"Blocks:"* ]]; then
+    if [[ "$output" != *"blocks:"* ]]; then
         TESTS_RUN=$((TESTS_RUN + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "  ${GREEN}✓${NC} no Blocks line when field is empty"
@@ -60,7 +60,7 @@ test_dep_fields_survive_update() {
     local output
     output=$(git issue show "$id" 2>&1)
 
-    assert_contains "Blocks: aaaaaaa" "$output" "show displays blocks after update"
+    assert_contains "blocks: aaaaaaa" "$output" "show displays blocks after update"
 }
 
 # Test: multiple comma-separated dep values round-trip
@@ -73,7 +73,7 @@ test_multiple_dep_values() {
     local output
     output=$(git issue show "$id" 2>&1)
 
-    assert_contains "Blocks: aaaaaaa,bbbbbbb" "$output" "show displays comma-separated blocks"
+    assert_contains "blocks: aaaaaaa,bbbbbbb" "$output" "show displays comma-separated blocks"
 }
 
 # ==========================================
@@ -92,8 +92,8 @@ test_dep_add_blocks() {
     output_a=$(git issue show "$id_a" 2>&1)
     output_b=$(git issue show "$id_b" 2>&1)
 
-    assert_contains "Blocks: $id_b" "$output_a" "A shows B in Blocks"
-    assert_contains "Depends on: $id_a" "$output_b" "B shows A in Depends on"
+    assert_contains "blocks: $id_b" "$output_a" "A shows B in blocks"
+    assert_contains "depends_on: $id_a" "$output_b" "B shows A in depends_on"
 }
 
 # Test: dep add A relates_to B => A shows Relates to: B (unidirectional)
@@ -108,9 +108,9 @@ test_dep_add_relates_to() {
     output_a=$(git issue show "$id_a" 2>&1)
     output_b=$(git issue show "$id_b" 2>&1)
 
-    assert_contains "Relates to: $id_b" "$output_a" "A shows B in Relates to"
+    assert_contains "relates_to: $id_b" "$output_a" "A shows B in relates_to"
     # B should NOT show anything about A for relates_to (unidirectional)
-    if [[ "$output_b" != *"Relates to:"* ]]; then
+    if [[ "$output_b" != *"relates_to:"* ]]; then
         TESTS_RUN=$((TESTS_RUN + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "  ${GREEN}✓${NC} B does not show relates_to (unidirectional)"
@@ -132,7 +132,7 @@ test_dep_add_parent_of() {
     local output_epic
     output_epic=$(git issue show "$id_epic" 2>&1)
 
-    assert_contains "Parent of: $id_task" "$output_epic" "epic shows task in Parent of"
+    assert_contains "parent_of: $id_task" "$output_epic" "epic shows task in parent_of"
 }
 
 # Test: dep rm removes blocks dep from both sides
@@ -146,7 +146,7 @@ test_dep_rm() {
     # Verify it was added
     local output_a
     output_a=$(git issue show "$id_a" 2>&1)
-    assert_contains "Blocks: $id_b" "$output_a" "blocks was added before removal"
+    assert_contains "blocks: $id_b" "$output_a" "blocks was added before removal"
 
     # Now remove it
     git issue dep rm "$id_a" blocks "$id_b" >/dev/null 2>&1
@@ -156,7 +156,7 @@ test_dep_rm() {
     output_b=$(git issue show "$id_b" 2>&1)
 
     # Neither should have the dep anymore
-    if [[ "$output_a" != *"Blocks:"* ]]; then
+    if [[ "$output_a" != *"blocks:"* ]]; then
         TESTS_RUN=$((TESTS_RUN + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "  ${GREEN}✓${NC} A no longer shows Blocks after removal"
@@ -166,7 +166,7 @@ test_dep_rm() {
         echo -e "  ${RED}✗${NC} A still shows Blocks after removal"
     fi
 
-    if [[ "$output_b" != *"Depends on:"* ]]; then
+    if [[ "$output_b" != *"depends_on:"* ]]; then
         TESTS_RUN=$((TESTS_RUN + 1))
         TESTS_PASSED=$((TESTS_PASSED + 1))
         echo -e "  ${GREEN}✓${NC} B no longer shows Depends on after removal"
