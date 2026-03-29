@@ -1,0 +1,27 @@
+id: feda16d
+title: pre-push hook recurses: git push inside hook re-triggers the hook
+status: open
+priority: medium
+created: 2026-03-29T20:53:07Z
+updated: 2026-03-29T20:53:07Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+
+The pre-push hook (hooks/pre-push) calls `git push "$REMOTE" refs/notes/issue-*` at line 38 to sync issue notes. This git push itself triggers the pre-push hook again, causing recursive invocations. Each invocation prints 'Pushing N issue notes to origin...' and spawns another git push, resulting in hundreds of duplicate log lines and significant delay.
+
+Observed behavior: pushing to origin with 99 issue notes produces 300+ lines of 'Pushing 99 issue notes to origin...' before eventually completing. The push takes much longer than expected.
+
+The hook has no recursion guard. The recursion eventually terminates because the nested push succeeds (notes are already up-to-date on the second call), but the output and delay are problematic.
+
+Suggested fix: add a re-entrancy guard using an environment variable:
+
+```bash
+# Prevent recursive invocation
+if [[ -n "$GIT_ISSUE_PUSHING_NOTES" ]]; then
+    exit 0
+fi
+export GIT_ISSUE_PUSHING_NOTES=1
+```
+
+Add this near the top of the hook, before the sync logic.
