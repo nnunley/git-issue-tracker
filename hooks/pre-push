@@ -10,6 +10,12 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Prevent recursive invocation (git push inside hook re-triggers hook)
+if [[ -n "$GIT_ISSUE_PUSHING_NOTES" ]]; then
+    exit 0
+fi
+export GIT_ISSUE_PUSHING_NOTES=1
+
 # Hook receives remote name and URL as arguments
 REMOTE="$1"
 URL="$2"
