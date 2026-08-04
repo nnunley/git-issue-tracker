@@ -1764,16 +1764,45 @@ read_edge_index() {
     git cat-file -p "$blob_hash" 2>/dev/null || echo ""
 }
 
-# Write content to the edge index using git plumbing
+# Change cursor for the edge index.  for-each-ref sorts by refname, so two
+# snapshots taken at different times compare as plain strings.
+current_ref_snapshot() {
+    git for-each-ref --format='%(refname) %(objectname)' 'refs/notes/issue-*' 2>/dev/null
+}
+
+# Empty on indexes written before the snapshot existed, which reads as
+# "everything changed" and rebuilds them in full.
+read_ref_snapshot() {
+    git cat-file -p "refs/notes/dep-graph:refs" 2>/dev/null || echo ""
+}
+
+# Write content to the edge index using git plumbing.  The snapshot goes in a
+# sibling blob because consumers read the edges blob line by line and would
+# treat metadata as edges.  Omitting it carries the stored snapshot forward.
 write_edge_index() {
     local data="$1"
     local ref="refs/notes/dep-graph"
 
+    local snapshot
+    if [[ $# -ge 2 ]]; then
+        snapshot="$2"
+    else
+        snapshot=$(read_ref_snapshot)
+    fi
+
     local blob_hash
     blob_hash=$(echo "$data" | git hash-object -w --stdin)
 
+    local snap_hash=""
+    if [[ -n "$snapshot" ]]; then
+        snap_hash=$(echo "$snapshot" | git hash-object -w --stdin)
+    fi
+
     local tree_hash
-    tree_hash=$(printf "100644 blob %s\tedges\n" "$blob_hash" | git mktree)
+    tree_hash=$({
+        printf "100644 blob %s\tedges\n" "$blob_hash"
+        [[ -n "$snap_hash" ]] && printf "100644 blob %s\trefs\n" "$snap_hash"
+    } | git mktree)
 
     local commit_hash
     local parent
@@ -1888,7 +1917,7 @@ rebuild_edge_index() {
         fi
     done
 
-    write_edge_index "$edges"
+    write_edge_index "$edges" "$(current_ref_snapshot)"
     echo -e "${GREEN}Edge index rebuilt at $timestamp${NC}"
 }
 
@@ -1900,52 +1929,58 @@ ensure_edge_index_current() {
     local edge_data
     edge_data=$(read_edge_index)
 
-    # Get the last rebuild timestamp from the index
-    local last_rebuilt
-    last_rebuilt=$(echo "$edge_data" | grep "^last_rebuilt_from:" | cut -d' ' -f2-)
+    # Object IDs rather than commit dates: a note arriving by fetch or import
+    # keeps the date it was written with, which can predate any local
+    # watermark, so a date cursor skips it permanently.
+    local stored current
+    stored=$(read_ref_snapshot)
+    current=$(current_ref_snapshot)
 
-    # Find issue notes modified since last rebuild (single git call)
-    local needs_rebuild=false
+    [[ "$stored" == "$current" ]] && return 0
+
     local changed_ids=()
-
-    while IFS=$'\t' read -r ref ref_date; do
+    while read -r ref oid; do
         [[ -z "$ref" ]] && continue
-        if [[ -z "$last_rebuilt" ]] || [[ "$ref_date" > "$last_rebuilt" ]]; then
-            local id="${ref#refs/notes/issue-}"
-            changed_ids+=("$id")
-            needs_rebuild=true
+        if ! grep -qxF "$ref $oid" <<< "$stored"; then
+            changed_ids+=("${ref#refs/notes/issue-}")
         fi
-    done < <(git for-each-ref --format="%(refname)%09%(committerdate:iso-strict)" 'refs/notes/issue-*' 2>/dev/null)
+    done <<< "$current"
 
-    if [[ "$needs_rebuild" == "true" ]]; then
-        # Re-parse only changed issues and update edges
-        for id in "${changed_ids[@]}"; do
-            local data
-            data=$(read_issue_data "$id" 2>/dev/null) || continue
+    # Deleted refs keep no headers to re-parse, so drop their edges here
+    while read -r ref _oid; do
+        [[ -z "$ref" ]] && continue
+        if ! grep -q "^${ref} " <<< "$current"; then
+            local gone="${ref#refs/notes/issue-}"
+            edge_data=$(echo "$edge_data" | grep -v "^${gone} " || true)
+        fi
+    done <<< "$stored"
 
-            # Remove old edges where this issue is the source.
-            # Target-side edges belong to their source issue and are handled
-            # when that source is processed (avoids ordering issues).
-            edge_data=$(echo "$edge_data" | grep -v "^${id} " || true)
+    for id in "${changed_ids[@]}"; do
+        local data
+        data=$(read_issue_data "$id" 2>/dev/null) || continue
 
-            # Parse dep fields and add new edges
-            for field in blocks depends_on parent_of relates_to; do
-                local values
-                values=$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2- | xargs)
-                if [[ -n "$values" ]]; then
-                    for target in $(echo "$values" | tr ',' '\n'); do
-                        target=$(echo "$target" | xargs)
-                        [[ -n "$target" ]] && edge_data="${edge_data}"$'\n'"${id} ${field} ${target}"
-                    done
-                fi
-            done
+        # Remove old edges where this issue is the source.
+        # Target-side edges belong to their source issue and are handled
+        # when that source is processed (avoids ordering issues).
+        edge_data=$(echo "$edge_data" | grep -v "^${id} " || true)
+
+        # Parse dep fields and add new edges
+        for field in blocks depends_on parent_of relates_to; do
+            local values
+            values=$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2- | xargs)
+            if [[ -n "$values" ]]; then
+                for target in $(echo "$values" | tr ',' '\n'); do
+                    target=$(echo "$target" | xargs)
+                    [[ -n "$target" ]] && edge_data="${edge_data}"$'\n'"${id} ${field} ${target}"
+                done
+            fi
         done
+    done
 
-        # Update marker and write
-        edge_data=$(echo "$edge_data" | grep -v "^last_rebuilt_from:" | grep -v "^$" || true)
-        edge_data="last_rebuilt_from: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"$'\n'"${edge_data}"
-        write_edge_index "$edge_data"
-    fi
+    # Update marker and write
+    edge_data=$(echo "$edge_data" | grep -v "^last_rebuilt_from:" | grep -v "^$" || true)
+    edge_data="last_rebuilt_from: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"$'\n'"${edge_data}"
+    write_edge_index "$edge_data" "$current"
 }
 
 # ==========================================
