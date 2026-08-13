@@ -63,7 +63,13 @@ jobs:
 
     - name: Run content safety tests
       run: ./tests/test_content_safety.sh
-    
+
+    - name: Run dispatch tests
+      run: ./tests/test_dispatch.sh
+
+    - name: Run install layout smoke test
+      run: ./tests/test_install_layout.sh
+
     - name: Test in clean repository
       run: |
         mkdir -p /tmp/test-clean-repo
