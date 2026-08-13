@@ -20,6 +20,36 @@ read_edge_index_raw() {
     git cat-file -p "$blob_hash" 2>/dev/null || true
 }
 
+# Helper to add a header field to an issue note via plumbing, bypassing
+# git-issue so the edge index is not updated as a side effect
+manual_add_header() {
+    local id="$1" field="$2" value="$3"
+    local ref="refs/notes/issue-$id"
+    local tree_hash blob_hash data new_data new_blob new_tree new_commit parent
+
+    tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
+    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "issue" {print $3}')
+    [[ -z "$blob_hash" ]] && blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
+    data=$(git cat-file -p "$blob_hash" 2>/dev/null)
+
+    # Insert the field before the first blank line (or at end of headers)
+    new_data=$(echo "$data" | awk -v hdr="$field: $value" '
+        !done && /^$/ { print hdr; done=1; print; next }
+        { print }
+        END { if (!done) print hdr }
+    ')
+
+    new_blob=$(echo "$new_data" | git hash-object -w --stdin)
+    new_tree=$(printf "100644 blob %s\tissue\n" "$new_blob" | git mktree)
+    parent=$(git rev-parse --verify "$ref" 2>/dev/null) || true
+    if [[ -n "$parent" ]]; then
+        new_commit=$(git commit-tree "$new_tree" -p "$parent" -m "Manual edit" </dev/null)
+    else
+        new_commit=$(git commit-tree "$new_tree" -m "Manual edit" </dev/null)
+    fi
+    git update-ref "$ref" "$new_commit"
+}
+
 # Helper to create an issue and return its ID
 create_test_issue() {
     local title="$1"
@@ -407,33 +437,7 @@ test_manual_header_edit_picked_up() {
 
     # Now create a new issue and manually add depends_on to its header
     local c=$(create_test_issue "Manual C")
-    local data
-    data=$(git issue show "$c" --raw 2>/dev/null)
-    # Read via plumbing since show --raw may not exist
-    local ref="refs/notes/issue-$c"
-    local tree_hash blob_hash
-    tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
-    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "issue" {print $3}')
-    [[ -z "$blob_hash" ]] && blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
-    data=$(git cat-file -p "$blob_hash" 2>/dev/null)
-    # Insert depends_on before the first blank line (or at end of headers)
-    local new_data
-    new_data=$(echo "$data" | awk -v dep="$a" '
-        !done && /^$/ { print "depends_on: " dep; done=1; print; next }
-        { print }
-        END { if (!done) print "depends_on: " dep }
-    ')
-    # Write back via plumbing
-    local new_blob new_tree new_commit parent
-    new_blob=$(echo "$new_data" | git hash-object -w --stdin)
-    new_tree=$(printf "100644 blob %s\tissue\n" "$new_blob" | git mktree)
-    parent=$(git rev-parse --verify "$ref" 2>/dev/null) || true
-    if [[ -n "$parent" ]]; then
-        new_commit=$(git commit-tree "$new_tree" -p "$parent" -m "Manual edit" </dev/null)
-    else
-        new_commit=$(git commit-tree "$new_tree" -m "Manual edit" </dev/null)
-    fi
-    git update-ref "$ref" "$new_commit"
+    manual_add_header "$c" depends_on "$a"
 
     # dep list should pick it up after ensure_edge_index_current runs
     local output
@@ -444,6 +448,37 @@ test_manual_header_edit_picked_up() {
     local edges
     edges=$(read_edge_index_raw)
     assert_contains "$c depends_on $a" "$edges" "Edge index should contain the manually-added depends_on edge"
+}
+
+# Test: manual header edit is picked up even when a last_rebuilt_from marker
+# exists. The marker is written as UTC ("...Z") while ref dates come from
+# git; if the two are not normalized to the same timezone, a note committed
+# after the rebuild compares as older and the edit is silently missed
+# (reproduces in any zone with a non-zero UTC offset, e.g. TZ=America/New_York).
+test_manual_header_edit_after_rebuild() {
+    local a=$(create_test_issue "Rebuilt A")
+    local b=$(create_test_issue "Rebuilt B")
+
+    git issue dep add "$a" blocks "$b" 2>/dev/null
+
+    # Full rebuild writes a last_rebuilt_from: <UTC> marker into the index
+    git issue dep rebuild 2>/dev/null
+    assert_contains "last_rebuilt_from:" "$(read_edge_index_raw)" \
+        "dep rebuild should write a last_rebuilt_from marker"
+
+    # Edit a header out-of-band, after the marker was written
+    local c=$(create_test_issue "Rebuilt C")
+    manual_add_header "$c" depends_on "$a"
+
+    local output
+    output=$(git issue dep list "$c" 2>&1)
+    assert_contains "$a" "$output" \
+        "Header edit after a rebuild should be detected regardless of local timezone"
+
+    local edges
+    edges=$(read_edge_index_raw)
+    assert_contains "$c depends_on $a" "$edges" \
+        "Edge index should contain the edge added after the rebuild marker"
 }
 
 # ==========================================
@@ -707,6 +742,7 @@ main() {
     echo ""
 
     run_test "manual header edit picked up by dep list" test_manual_header_edit_picked_up
+    run_test "manual header edit picked up after full rebuild" test_manual_header_edit_after_rebuild
 
     echo ""
     echo -e "${BLUE}Testing Ready Command (Task 7)${NC}"

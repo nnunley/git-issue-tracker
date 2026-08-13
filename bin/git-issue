@@ -1908,14 +1908,20 @@ ensure_edge_index_current() {
     local needs_rebuild=false
     local changed_ids=()
 
+    # Ref dates are rendered as UTC in the same format as the last_rebuilt_from
+    # marker (written by date -u below), so the two are directly comparable as
+    # strings.  Comparing a local-offset date (iso-strict) against a UTC marker
+    # silently misses edits by up to the local UTC offset.
+    # Note the >= comparison: a note committed in the same second as the marker
+    # must be treated as changed, since second granularity cannot order them.
     while IFS=$'\t' read -r ref ref_date; do
         [[ -z "$ref" ]] && continue
-        if [[ -z "$last_rebuilt" ]] || [[ "$ref_date" > "$last_rebuilt" ]]; then
+        if [[ -z "$last_rebuilt" ]] || [[ ! "$ref_date" < "$last_rebuilt" ]]; then
             local id="${ref#refs/notes/issue-}"
             changed_ids+=("$id")
             needs_rebuild=true
         fi
-    done < <(git for-each-ref --format="%(refname)%09%(committerdate:iso-strict)" 'refs/notes/issue-*' 2>/dev/null)
+    done < <(TZ=UTC git for-each-ref --format="%(refname)%09%(committerdate:format-local:%Y-%m-%dT%H:%M:%SZ)" 'refs/notes/issue-*' 2>/dev/null)
 
     if [[ "$needs_rebuild" == "true" ]]; then
         # Re-parse only changed issues and update edges
