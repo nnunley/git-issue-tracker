@@ -285,12 +285,14 @@ read_issue_data() {
 _batch_issue_stream() {
     # Step 1: resolve ref:issue -> blob hash (batch-check)
     # Step 2: read all blobs at once (batch)
+    # Delimiter includes the 40-hex object name so a body line that merely
+    # says "__ISSUE__" cannot forge a record boundary in consumers.
     git for-each-ref --format='%(refname):issue' 'refs/notes/issue-*' 2>/dev/null \
         | git cat-file --batch-check 2>/dev/null \
         | grep -v missing \
         | awk '{print $1}' \
-        | git cat-file --batch='__ISSUE__' 2>/dev/null
-    echo "__ISSUE__"
+        | git cat-file --batch='__ISSUE__ %(objectname)' 2>/dev/null
+    echo "__ISSUE__ $BATCH_FLUSH_HASH"
 
     # Legacy fallback: any refs whose tree lacks an "issue" blob
     local all_refs legacy_ids
@@ -301,11 +303,82 @@ _batch_issue_stream() {
     if [[ -n "$legacy_ids" ]]; then
         while IFS= read -r id; do
             [[ -z "$id" ]] && continue
-            echo "__ISSUE__"
+            echo "__ISSUE__ $BATCH_FLUSH_HASH"
             read_issue_data "$id" 2>/dev/null || true
         done <<< "$legacy_ids"
-        echo "__ISSUE__"
+        echo "__ISSUE__ $BATCH_FLUSH_HASH"
     fi
+}
+
+# Known header fields. Used to tell real headers (including trailing ones from
+# split front matter) apart from body prose like "note: remember this".
+KNOWN_HEADER_FIELDS='id|title|status|state|priority|created|updated|author|assignee|role|labels|hash_source|github_id|github_url|jira_id|jira_url|gitlab_id|gitlab_url|blocks|depends_on|parent_of|relates_to|issue_type|external_ref|waits_for'
+# Dummy objectname used for the flush/legacy delimiters emitted by hand
+BATCH_FLUSH_HASH='0000000000000000000000000000000000000000'
+
+# Extract one record per issue from _batch_issue_stream.
+# Output: one US (\037)-separated line per issue:
+#   id US status US title US priority US assignee US role US depends_on
+# US is used instead of tab because tab is IFS whitespace, so `read` collapses
+# consecutive tabs and empty fields (e.g. an empty title) shift every column.
+# Hardening, in order of the rules below:
+# - Control characters are stripped so stored content can neither inject
+#   terminal escapes into listings nor break the US-separated output.
+# - Record boundaries require the full "__ISSUE__ <40-hex>" delimiter.
+# - Header fields are honored in the top block (before the first blank line)
+#   and in a trailing block of contiguous known headers before the record end
+#   (split front matter, mirroring parse_front_matter). Header-lookalike lines
+#   mid-body (e.g. "id: whatever" inside a description) are ignored.
+_issue_tsv_stream() {
+    _batch_issue_stream | awk -v FIELDS="$KNOWN_HEADER_FIELDS" '
+        function reset(   i) {
+            split("", top); split("", trail_k); split("", trail_v)
+            ntrail = 0; in_body = 0; pending_blank = 0; in_comments = 0
+        }
+        function emit(   i, status) {
+            # Trailing headers override top headers (split front matter).
+            # id never legitimately appears below the body — every write path
+            # emits it first — so an "id:" line down there is body content and
+            # must not let one issue masquerade as (or hide) another.
+            for (i = 1; i <= ntrail; i++)
+                if (trail_k[i] != "id") top[trail_k[i]] = trail_v[i]
+            if (top["id"] != "") {
+                status = (top["status"] != "") ? top["status"] : top["state"]
+                print top["id"] OFS status OFS top["title"] OFS top["priority"] OFS top["assignee"] OFS top["role"] OFS top["depends_on"]
+            }
+            reset()
+        }
+        BEGIN { OFS = "\037"; header_re = "^(" FIELDS "): ?"; reset() }
+        { gsub(/[[:cntrl:]]/, "") }
+        substr($0, 1, 10) == "__ISSUE__ " && length($0) == 50 && substr($0, 11) ~ /^[0-9a-f]+$/ {
+            emit(); next
+        }
+        $0 == "## Comments" { in_comments = 1 }
+        in_comments == 1 { next }
+        in_body == 0 {
+            if ($0 == "") { in_body = 1; next }
+            if ($0 ~ header_re) {
+                key = $0; sub(/:.*/, "", key)
+                val = $0; sub(/^[a-z_]+: ?/, "", val)
+                top[key] = val
+            }
+            next
+        }
+        {
+            if ($0 == "") { pending_blank = 1; next }
+            if ($0 ~ header_re) {
+                # A blank line breaks trailing-block contiguity: restart
+                if (pending_blank) { ntrail = 0; pending_blank = 0 }
+                ntrail++
+                key = $0; sub(/:.*/, "", key)
+                val = $0; sub(/^[a-z_]+: ?/, "", val)
+                trail_k[ntrail] = key; trail_v[ntrail] = val
+            } else {
+                # Prose line: whatever came before it was body, not headers
+                ntrail = 0; pending_blank = 0
+            }
+        }
+    '
 }
 
 # Write issue data using git plumbing (hash-object + mktree + commit-tree + update-ref)
@@ -381,7 +454,8 @@ issue_exists() {
 # contiguous key: value lines. This handles data where headers are split around the body.
 parse_front_matter() {
     local data="$1"
-    echo "$data" | awk '
+    echo "$data" | awk -v FIELDS="$KNOWN_HEADER_FIELDS" '
+        BEGIN { known_re = "^(" FIELDS "):" }
         { lines[++n] = $0 }
         END {
             # Find where comments start (if any)
@@ -402,14 +476,16 @@ parse_front_matter() {
                 }
             }
             # Find trailing header block: scan backwards from end/comments,
-            # skip any non-header lines (stray text), then collect contiguous headers
+            # skip any non-header lines (stray text), then collect contiguous headers.
+            # Only KNOWN fields count as trailing headers, so body prose like
+            # "note: remember this" is not swallowed out of the body.
             scan = comments_at - 1
             while (scan > 0 && lines[scan] == "") scan--
-            while (scan > 0 && lines[scan] !~ /^[a-z_]+:/) scan--
+            while (scan > 0 && lines[scan] !~ known_re) scan--
             trail_end = scan
             trail_start = trail_end + 1
             for (i = trail_end; i > 0; i--) {
-                if (lines[i] ~ /^[a-z_]+:/) {
+                if (lines[i] ~ known_re) {
                     trail_start = i
                 } else {
                     break
@@ -421,10 +497,12 @@ parse_front_matter() {
                 if (lines[i] == "") { first_blank = i; break }
             }
             # Only treat as trailing headers if they come after the top block
+            # id never legitimately appears below the body (every write path
+            # emits it first), so trailing "id:" lines are body content, not headers
             trail_count = 0
             if (trail_start > first_blank && trail_start <= trail_end) {
                 for (i = trail_start; i <= trail_end; i++) {
-                    if (lines[i] ~ /^[a-z_]+:/) {
+                    if (lines[i] ~ known_re && lines[i] !~ /^id:/) {
                         trail_count++
                         trail_headers[trail_count] = lines[i]
                         split(lines[i], kv, ": *")
@@ -450,7 +528,8 @@ parse_front_matter() {
 # Excludes both the trailing header block and any stray lines after it.
 parse_body() {
     local data="$1"
-    echo "$data" | awk '
+    echo "$data" | awk -v FIELDS="$KNOWN_HEADER_FIELDS" '
+        BEGIN { known_re = "^(" FIELDS "):" }
         { lines[++n] = $0 }
         END {
             # Find where comments start
@@ -458,14 +537,15 @@ parse_body() {
             for (i = 1; i <= n; i++) {
                 if (lines[i] == "## Comments") { comments_at = i; break }
             }
-            # Find trailing header block (same logic as parse_front_matter)
+            # Find trailing header block (same logic as parse_front_matter:
+            # only KNOWN fields count, so body prose is not swallowed)
             scan = comments_at - 1
             while (scan > 0 && lines[scan] == "") scan--
-            while (scan > 0 && lines[scan] !~ /^[a-z_]+:/) scan--
+            while (scan > 0 && lines[scan] !~ known_re) scan--
             trail_end = scan
             trail_start = trail_end + 1
             for (i = trail_end; i > 0; i--) {
-                if (lines[i] ~ /^[a-z_]+:/) {
+                if (lines[i] ~ known_re) {
                     trail_start = i
                 } else {
                     break
@@ -499,11 +579,23 @@ parse_comments() {
     echo "$data" | awk '/^## Comments$/{p=1; next} p{print}'
 }
 
+# Trim leading/trailing whitespace. Quote-safe replacement for `| xargs`,
+# which dies on unbalanced quotes ("don't") and, under set -e, takes the
+# whole script with it.
+trim_ws() {
+    local s="$*"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s"
+}
+
 # Get field value from front matter
 get_field_value() {
     local front_matter="$1"
     local field="$2"
-    echo "$front_matter" | grep "^$field:" | cut -d' ' -f2- | xargs
+    local value
+    value=$(echo "$front_matter" | grep "^$field:" | cut -d' ' -f2- | tr '\n' ' ')
+    trim_ws "$value"
 }
 
 # Create new issue with auto-generated hash ID
@@ -562,21 +654,7 @@ list_issues() {
     echo ""
 
     # Batch-read all issues, extract fields via awk (3 git processes total)
-    _batch_issue_stream | awk '
-        /^__ISSUE__/ {
-            if (length(id) > 0)
-                printf "%s\t%s\t%s\t%s\t%s\t%s\n", id, status, title, priority, assignee, role
-            id = ""; status = ""; title = ""; priority = ""; assignee = ""; role = ""
-            next
-        }
-        /^id: /       { id = substr($0, 5) }
-        /^title: /    { title = substr($0, 8) }
-        /^status: /   { status = $2 }
-        /^state: /    { if (length(status) == 0) status = $2 }
-        /^priority: / { priority = $2 }
-        /^assignee: / { assignee = substr($0, 11) }
-        /^role: /     { role = substr($0, 7) }
-    ' | while IFS=$'\t' read -r id status_val title priority assignee role; do
+    _issue_tsv_stream | while IFS=$'\037' read -r id status_val title priority assignee role _; do
         # Color based on status
         local color_name
         color_name=$(status_color "$status_val" 2>/dev/null || echo "")
@@ -589,11 +667,12 @@ list_issues() {
             *) color=$NC ;;
         esac
 
-        # Format output
-        echo -ne "${color}#${id} [${status_val}] ${title} (P: ${priority})"
-        [ -n "$role" ] && echo -n " [$role]"
-        [ -n "$assignee" ] && echo -n " → $assignee"
-        echo -e "${NC}"
+        # Format output. %b interprets the color escapes; content fields go
+        # through %s so stored backslash sequences are NOT interpreted.
+        printf '%b#%s [%s] %s (P: %s)' "$color" "$id" "$status_val" "$title" "$priority"
+        [ -n "$role" ] && printf ' [%s]' "$role"
+        [ -n "$assignee" ] && printf ' → %s' "$assignee"
+        printf '%b\n' "$NC"
     done
 }
 
@@ -626,7 +705,7 @@ show_issue() {
     local gitlab_id=$(get_field_value "$front_matter" "gitlab_id")
     local gitlab_url=$(get_field_value "$front_matter" "gitlab_url")
     local status_val
-    status_val=$(echo "$front_matter" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2- | xargs)
+    status_val=$(trim_ws "$(echo "$front_matter" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2-)")
     local priority=$(get_field_value "$front_matter" "priority")
     local created=$(get_field_value "$front_matter" "created")
     local updated=$(get_field_value "$front_matter" "updated")
@@ -1267,21 +1346,41 @@ import_from_stdin() {
     
     echo -e "${BLUE}📥 Importing issues from stdin...${NC}" >&2
     
-    # Read issue data blocks separated by --- lines
+    # Read issue data blocks separated by --- lines.
+    # A --- only separates issues when the next non-blank line starts a new
+    # issue block (id: ...); otherwise it is body content (markdown rule).
     local issue_data=""
+    local pending_sep=false
+    local pending_blanks=""
     while IFS= read -r line; do
-        if [[ "$line" == "---" && -n "$issue_data" ]]; then
-            # Process complete issue
-            if import_single_issue "$issue_data"; then
-                count=$((count + 1))
+        if [[ "$pending_sep" == true ]]; then
+            if [[ -z "$line" ]]; then
+                pending_blanks="$pending_blanks"$'\n'
+                continue
             fi
-            issue_data=""
+            if [[ "$line" == "id: "* ]]; then
+                # Real separator: process the completed issue
+                if import_single_issue "$issue_data"; then
+                    count=$((count + 1))
+                fi
+                issue_data="$line"$'\n'
+            else
+                # The --- (and following blanks) were body content
+                issue_data="$issue_data---"$'\n'"$pending_blanks$line"$'\n'
+            fi
+            pending_sep=false
+            pending_blanks=""
+            continue
+        fi
+        if [[ "$line" == "---" && -n "$issue_data" ]]; then
+            pending_sep=true
+            pending_blanks=""
         else
             issue_data="$issue_data$line"$'\n'
         fi
     done
-    
-    # Process final issue if exists
+
+    # Process final issue if exists (a trailing --- separator is dropped)
     if [[ -n "$issue_data" ]]; then
         if import_single_issue "$issue_data"; then
             count=$((count + 1))
@@ -1332,7 +1431,7 @@ import_single_issue() {
     local data="$1"
     
     # Extract ID and validate format
-    local id=$(echo "$data" | grep "^id:" | head -1 | cut -d' ' -f2- | xargs)
+    local id=$(trim_ws "$(echo "$data" | grep "^id:" | head -1 | cut -d' ' -f2-)")
     if [[ -z "$id" ]]; then
         echo -e "${RED}Warning: Issue data missing ID, skipping${NC}" >&2
         return 1
@@ -1346,7 +1445,7 @@ import_single_issue() {
 
     # Write issue data
     if write_issue_data "$id" "$data"; then
-        local title=$(echo "$data" | grep "^title:" | head -1 | cut -d' ' -f2- | xargs)
+        local title=$(trim_ws "$(echo "$data" | grep "^title:" | head -1 | cut -d' ' -f2-)")
         echo -e "${GREEN}✓ Imported issue #$id: $title${NC}" >&2
         return 0
     else
@@ -1422,7 +1521,7 @@ export_to_github_format() {
     local title=$(get_field_value "$front_matter" "title")
     local description=$(parse_body "$data")
     local status_val
-    status_val=$(echo "$front_matter" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2- | xargs)
+    status_val=$(trim_ws "$(echo "$front_matter" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2-)")
     local labels=$(get_field_value "$front_matter" "labels")
 
     # Map git-issue status to GitHub state
@@ -1857,7 +1956,7 @@ rebuild_edge_index() {
         if [[ -n "$blocks" ]]; then
             local IFS=','
             for target in $blocks; do
-                target=$(echo "$target" | xargs)
+                target=$(trim_ws "$target")
                 edges="${edges}"$'\n'"${id} blocks ${target}"
             done
             unset IFS
@@ -1865,7 +1964,7 @@ rebuild_edge_index() {
         if [[ -n "$depends_on" ]]; then
             local IFS=','
             for target in $depends_on; do
-                target=$(echo "$target" | xargs)
+                target=$(trim_ws "$target")
                 edges="${edges}"$'\n'"${id} depends_on ${target}"
             done
             unset IFS
@@ -1873,7 +1972,7 @@ rebuild_edge_index() {
         if [[ -n "$parent_of" ]]; then
             local IFS=','
             for target in $parent_of; do
-                target=$(echo "$target" | xargs)
+                target=$(trim_ws "$target")
                 edges="${edges}"$'\n'"${id} parent_of ${target}"
             done
             unset IFS
@@ -1881,7 +1980,7 @@ rebuild_edge_index() {
         if [[ -n "$relates_to" ]]; then
             local IFS=','
             for target in $relates_to; do
-                target=$(echo "$target" | xargs)
+                target=$(trim_ws "$target")
                 edges="${edges}"$'\n'"${id} relates_to ${target}"
             done
             unset IFS
@@ -1937,10 +2036,10 @@ ensure_edge_index_current() {
             # Parse dep fields and add new edges
             for field in blocks depends_on parent_of relates_to; do
                 local values
-                values=$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2- | xargs)
+                values=$(trim_ws "$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2-)")
                 if [[ -n "$values" ]]; then
                     for target in $(echo "$values" | tr ',' '\n'); do
-                        target=$(echo "$target" | xargs)
+                        target=$(trim_ws "$target")
                         [[ -n "$target" ]] && edge_data="${edge_data}"$'\n'"${id} ${field} ${target}"
                     done
                 fi
@@ -1994,14 +2093,14 @@ append_to_field() {
 
     # Get current field value
     local current
-    current=$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2- | xargs)
+    current=$(trim_ws "$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2-)")
 
     # Check for duplicate
     if [[ -n "$current" ]]; then
         # Split on comma and check each entry
         local IFS=','
         for existing in $current; do
-            existing=$(echo "$existing" | xargs)
+            existing=$(trim_ws "$existing")
             if [[ "$existing" == "$value" ]]; then
                 echo -e "${YELLOW}Value '$value' already exists in $field for issue #$id${NC}" >&2
                 return 0
@@ -2045,7 +2144,7 @@ remove_from_field() {
 
     # Get current field value
     local current
-    current=$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2- | xargs)
+    current=$(trim_ws "$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2-)")
 
     if [[ -z "$current" ]]; then
         return 0  # Nothing to remove
@@ -2055,7 +2154,7 @@ remove_from_field() {
     local new_value=""
     local IFS=','
     for existing in $current; do
-        existing=$(echo "$existing" | xargs)
+        existing=$(trim_ws "$existing")
         if [[ "$existing" != "$value" ]]; then
             if [[ -n "$new_value" ]]; then
                 new_value="${new_value},${existing}"
@@ -2108,13 +2207,13 @@ cascade_unblock() {
             local dep_data
             dep_data=$(read_issue_data "$dep_id" 2>/dev/null) || continue
             local all_blockers
-            all_blockers=$(echo "$dep_data" | grep "^depends_on:" | head -1 | cut -d' ' -f2- | xargs)
+            all_blockers=$(trim_ws "$(echo "$dep_data" | grep "^depends_on:" | head -1 | cut -d' ' -f2-)")
 
             local all_resolved=true
             local IFS=','
             for blocker in $all_blockers; do
                 [[ -z "$blocker" ]] && continue
-                blocker=$(echo "$blocker" | xargs)
+                blocker=$(trim_ws "$blocker")
                 local blocker_state
                 blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
                 if [[ "$blocker_state" != "closed" ]]; then
@@ -2308,7 +2407,7 @@ dep_rm() {
 
     if [[ -n "$unblock_target" ]]; then
         local remaining_blockers
-        remaining_blockers=$(read_issue_data "$unblock_target" 2>/dev/null | grep "^depends_on:" | head -1 | cut -d' ' -f2- | xargs)
+        remaining_blockers=$(trim_ws "$(read_issue_data "$unblock_target" 2>/dev/null | grep "^depends_on:" | head -1 | cut -d' ' -f2-)")
         if [[ -z "$remaining_blockers" ]]; then
             local current_state
             current_state=$(read_issue_data "$unblock_target" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
@@ -2322,7 +2421,7 @@ dep_rm() {
             local IFS=','
             for blocker in $remaining_blockers; do
                 [[ -z "$blocker" ]] && continue
-                blocker=$(echo "$blocker" | xargs)
+                blocker=$(trim_ws "$blocker")
                 local blocker_state
                 blocker_state=$(read_issue_data "$blocker" 2>/dev/null | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
                 if [[ "$blocker_state" != "closed" ]]; then
@@ -2399,7 +2498,7 @@ dep_list() {
             if [[ -n "$blocks" ]]; then
                 local IFS=','
                 for target in $blocks; do
-                    target=$(echo "$target" | xargs)
+                    target=$(trim_ws "$target")
                     echo "  #$id blocks #$target"
                     found=true
                 done
@@ -2408,7 +2507,7 @@ dep_list() {
             if [[ -n "$depends_on" ]]; then
                 local IFS=','
                 for target in $depends_on; do
-                    target=$(echo "$target" | xargs)
+                    target=$(trim_ws "$target")
                     echo "  #$id depends_on #$target"
                     found=true
                 done
@@ -2417,7 +2516,7 @@ dep_list() {
             if [[ -n "$parent_of" ]]; then
                 local IFS=','
                 for target in $parent_of; do
-                    target=$(echo "$target" | xargs)
+                    target=$(trim_ws "$target")
                     echo "  #$id parent_of #$target"
                     found=true
                 done
@@ -2426,7 +2525,7 @@ dep_list() {
             if [[ -n "$relates_to" ]]; then
                 local IFS=','
                 for target in $relates_to; do
-                    target=$(echo "$target" | xargs)
+                    target=$(trim_ws "$target")
                     echo "  #$id relates_to #$target"
                     found=true
                 done
@@ -2513,35 +2612,20 @@ list_ready_issues() {
 
     ensure_edge_index_current
 
-    # Batch-read all issues into TSV: id, status, title, priority, assignee, role, depends_on
+    # Batch-read all issues: id, status, title, priority, assignee, role, depends_on
     local all_tsv
-    all_tsv=$(_batch_issue_stream | awk '
-        /^__ISSUE__/ {
-            if (length(id) > 0)
-                printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", id, status, title, priority, assignee, role, depends_on
-            id = ""; status = ""; title = ""; priority = ""; assignee = ""; role = ""; depends_on = ""
-            next
-        }
-        /^id: /         { id = substr($0, 5) }
-        /^title: /      { title = substr($0, 8) }
-        /^status: /     { status = $2 }
-        /^state: /      { if (length(status) == 0) status = $2 }
-        /^priority: /   { priority = $2 }
-        /^assignee: /   { assignee = substr($0, 11) }
-        /^role: /       { role = substr($0, 7) }
-        /^depends_on: / { depends_on = substr($0, 13) }
-    ')
+    all_tsv=$(_issue_tsv_stream)
 
     # Build status lookup (id:status per line, for grep-based lookup)
     local status_index=""
-    while IFS=$'\t' read -r id status_val _ _ _ _ _; do
+    while IFS=$'\037' read -r id status_val _ _ _ _ _; do
         [[ -z "$id" ]] && continue
         status_index="${status_index}${id}:${status_val}"$'\n'
     done <<< "$all_tsv"
 
     # Filter and collect results
     local results=""
-    while IFS=$'\t' read -r id status_val title priority assignee role depends_on; do
+    while IFS=$'\037' read -r id status_val title priority assignee role depends_on; do
         [[ -z "$id" ]] && continue
 
         # Skip closed and blocked issues
@@ -2552,7 +2636,7 @@ list_ready_issues() {
             local all_done=true
             local IFS=','
             for blocker in $depends_on; do
-                blocker=$(echo "$blocker" | xargs)
+                blocker=$(trim_ws "$blocker")
                 [[ -z "$blocker" ]] && continue
                 local blocker_status
                 blocker_status=$(echo "$status_index" | grep "^${blocker}:" | head -1 | cut -d: -f2)
@@ -2609,26 +2693,13 @@ topo_sort_issues() {
 
     # Batch-read all issues to get status, title, priority, depends_on
     local all_tsv
-    all_tsv=$(_batch_issue_stream | awk '
-        /^__ISSUE__/ {
-            if (length(id) > 0)
-                printf "%s\t%s\t%s\t%s\t%s\n", id, status, title, priority, depends_on
-            id = ""; status = ""; title = ""; priority = ""; depends_on = ""
-            next
-        }
-        /^id: /         { id = substr($0, 5) }
-        /^title: /      { title = substr($0, 8) }
-        /^status: /     { status = $2 }
-        /^state: /      { if (length(status) == 0) status = $2 }
-        /^priority: /   { priority = $2 }
-        /^depends_on: / { depends_on = substr($0, 13) }
-    ')
+    all_tsv=$(_issue_tsv_stream)
 
     # Collect non-closed issue IDs and build lookup index (bash 3.2 compatible)
     local non_done_ids=()
     local issue_index=""  # id\ttitle\tpriority\tdepends_on per line
     local non_done_list=""
-    while IFS=$'\t' read -r id status_val title priority depends_on; do
+    while IFS=$'\037' read -r id status_val title priority _ _ depends_on; do
         [[ -z "$id" ]] && continue
         [[ "$status_val" == "closed" ]] && continue
         non_done_ids+=("$id")
@@ -2684,7 +2755,7 @@ topo_sort_issues() {
             local blockers=""
             local IFS=','
             for b in $depends_on; do
-                b=$(echo "$b" | xargs)
+                b=$(trim_ws "$b")
                 [[ -n "$b" ]] && blockers="${blockers} #${b}"
             done
             unset IFS

@@ -57,6 +57,12 @@ jobs:
     
     - name: Run comprehensive test suite
       run: ./tests/test_runner.sh
+
+    - name: Run dependency graph tests
+      run: ./tests/test_deps.sh
+
+    - name: Run content safety tests
+      run: ./tests/test_content_safety.sh
     
     - name: Test in clean repository
       run: |
