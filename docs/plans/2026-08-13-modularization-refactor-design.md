@@ -1,105 +1,86 @@
-# Modularization Refactor — Design
+# Single-File Refactor: Dual-Mode Dispatch + External Awk — Design
 
-**Date:** 2026-08-13
+**Date:** 2026-08-13 (revised same day; supersedes the libexec module split)
 **Status:** Approved pending review
 **Sequence:** Sub-project 1 of 2. Sub-project 2 (multi-project registry, summarized at the end) builds on this and is blocked by it.
 
 ## Goal
 
-Behavior-preserving split of `bin/git-issue` (~3,250 lines) into sourced shell modules and external awk programs. No feature changes, no output changes. The full test suite passes after every commit.
+Remove the measured maintenance costs of `bin/git-issue` (3,240 lines) **without splitting it into module files**. The 2026-08-13 hardening showed the real costs were duplication (three copy-pasted awk extractors, 21 `xargs` sites, a duplicated `read_issue_data` in `git-issue-status`, sed-based function extraction in unit tests) — all addressable in one file. No behavior changes; the test suite is the oracle.
 
-Motivation: this script's size is now a measured maintenance cost — the 2026-08-13 hardening work required fixing three copy-pasted awk extractors, 21 replicated `xargs` call sites, and format parsing spread across four places that must agree.
+### Why not the module split (decision record)
 
-## Layout
+An earlier revision of this spec proposed `libexec/git-issue/{storage,format,deps,...}.sh`. Review concluded the split's unique benefits ("file-sized review units", "boundaries for future work") were self-justifying — bash modules are process-global anyway, and every concrete pain point is fixable in-file. The split remains available later if file size becomes a demonstrated problem.
 
-Repo layout equals installed layout, so dev and installed resolution are identical.
+## Design
 
-```
-bin/git-issue              # dispatcher: env setup, arg parsing, command table (~200 lines)
-libexec/git-issue/
-  common.sh                # colors, trim_ws, get_git_user, error helpers
-  storage.sh               # backend detection (git/XDG), plumbing read/write, refs, batch stream
-  format.sh                # parse_front_matter/body/comments, KNOWN_HEADER_FIELDS, serialization
-  statuses.sh              # status machine load/compile/transitions
-  deps.sh                  # edge index, dep add/rm/list, cycles, ready/topo queries
-  display.sh               # list/show/deps rendering
-  sync.sh                  # import/export, gh conversion glue, trailers, setup-sync
-  awk/
-    extract_issues.awk     # batch-stream record state machine (US-separated output)
-    front_matter.awk
-    body.awk
+### 1. Dual-mode script
+
+`bin/git-issue` becomes sourceable: all top-level execution (currently `detect_storage_backend; load_statuses;` + the dispatch `case` at the file tail) moves into `main()`, and the file ends with:
+
+```bash
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    set -e
+    _gi_entry "$@"
+fi
 ```
 
-Issue #606e606 (strict commit-object field format) is out of scope here but lands in `format.sh` afterward.
+`set -e` moves from the top of the file into this executed-only branch — sourcing must not mutate the caller's shell options. Consumers (`tests/unit_tests.sh`, future tooling) `source bin/git-issue` to get every function with zero extraction machinery. Top-level code outside functions is limited to variable defaults; no `readonly` (re-sourcing must be safe).
 
-### Install paths (pinned)
+### 2. Multi-call dispatch (busybox-style)
 
-| Installer | bin | modules |
-|---|---|---|
-| Makefile | `$(BINDIR)` | `$(PREFIX)/libexec/git-issue/` (awk under `.../awk/`) |
-| Formula/git-issue.rb, git-issue-local.rb | `bin.install` | `libexec.install` |
-| install-git-issue.sh | `$INSTALL_DIR` | `$INSTALL_DIR/../libexec/git-issue/` (e.g. `~/.local/libexec/git-issue`) |
+```bash
+_gi_entry() {
+    case "$(basename "$0")" in
+        git-issue-status) status_report "$@" ;;
+        *)                main "$@" ;;
+    esac
+}
+```
 
-### Lib resolution
+`bin/git-issue-status` becomes a **symlink** to `git-issue`. Its report logic moves into `bin/git-issue` as `status_report()`, deleting its duplicated `read_issue_data_by_ref` (uses the canonical `read_issue_data`/`extract_issue_id`). All installers install the symlink: Makefile (`ln -sf git-issue $(BINDIR)/git-issue-status`), both formulas (`bin.install_symlink`), `install-git-issue.sh` (`ln -sf`).
 
-In order: `$GIT_ISSUE_LIB` (override for tests/tooling) → `<physical path of bin, symlinks resolved>/../libexec/git-issue` → hard error naming both options ("reinstall, or set GIT_ISSUE_LIB"). `GIT_ISSUE_AWK_DIR` is derived from the resolved lib dir. A missing lib dir is a loud fatal error, never a silent partial load. Symlink resolution is a required behavior (Homebrew invokes through `/opt/homebrew/bin` symlinks); the current `GIT_ISSUE_BIN_DIR` line does not resolve symlinks, so this is a deliberate change guarded by the smoke test.
+### 3. External awk programs
 
-## Module policy
+The three substantial awk programs move to files under the **existing** `share/git-issue/` install surface (already shipped by Makefile, both formulas, and resolvable via the script's existing `../share/git-issue` lookup at `bin/git-issue:108`):
 
-- **Include guards:** every module starts with `[[ -n "${_GI_<NAME>_SH:-}" ]] && return; _GI_<NAME>_SH=1`.
-- **Dependencies:** each module sources its own dependencies via `$GIT_ISSUE_LIB` (guards make this idempotent, so there is no load order to maintain). Any consumer — dispatcher, `git-issue-status`, unit tests — sources only what it needs.
-- **No top-level `readonly`:** module-level constants are plain assignments (re-sourcing must be safe; the `KNOWN_HEADER_FIELDS` readonly collision in unit tests is the precedent).
-- **`set -e` in entrypoints only:** `bin/git-issue` and `bin/git-issue-status` declare it; modules must be correct under both settings.
+```
+share/git-issue/awk/
+  extract_issues.awk   # batch-stream record state machine (US-separated output)
+  front_matter.awk
+  body.awk
+```
 
-## Awk contract
+Resolution: `$GIT_ISSUE_AWK_DIR` env override → `<share_dir>/awk` via the existing share lookup. Missing awk file is a **hard error** (unlike statuses, which has an in-script fallback) — never a silent degraded mode. Contract: each `.awk` documents its `-v` variables in a header comment; data on stdin, parameters via `-v`, no environment access; must run under BSD awk, gawk, and mawk. Each is independently testable: `awk -f extract_issues.awk -v FIELDS=... < fixture`.
 
-Each `.awk` file documents its required `-v` variables in a header comment. Data arrives on stdin, parameters via `-v`; awk programs never read the environment. Each is independently testable: `awk -f extract_issues.awk -v FIELDS=... < fixture`. Must run under BSD awk, gawk, and mawk (CI covers ubuntu + macos).
-
-## Companion scripts
-
-`git-issue-status` drops its duplicated `read_issue_data` and sources `storage.sh`. `gh-to-git-issue` and `git-issue-to-gh` stay standalone (small, jq-centric).
+`install-git-issue.sh` currently ships no share files (statuses fall back in-script); it now must install `share/git-issue/awk/`.
 
 ## Process
 
-- All work on branch `refactor/modularize`; merge to main when complete (abandonable work never lands on main).
-- One module per commit, mechanical, nothing moves twice. Full test suite + shellcheck green at every commit on the branch.
-- Precondition (satisfied 2026-08-13): clean working tree — pre-push hook work committed as `6ff704b`, mode fix `a209701`.
-- Tracker: refactor epic issue with one child issue per migration step; registry issue blocked by the epic.
-
-## Migration order
-
-1. **Install surface** — create `libexec/git-issue/` (with `common.sh` as the first occupant), lib resolution in `bin/git-issue`, update Makefile + both formulas + `install-git-issue.sh`, add the layout smoke test. Everything after lands on prepared ground; CI's compatibility job (which runs `install-git-issue.sh`) proves installers continuously.
-2. `statuses.sh`
-3. `format.sh` + `awk/` files
-4. `storage.sh` (+ `git-issue-status` dedupe)
-5. `deps.sh`
-6. `display.sh`
-7. `sync.sh`
-8. Slim the dispatcher; update `tests/unit_tests.sh` to source modules directly instead of sed-extracting functions from `bin/git-issue`.
+- All work on branch `refactor/dispatch-and-awk`; merge to main when complete (abandonable work never lands on main).
+- Small mechanical commits; full test suite + `shellcheck -S error` green at every commit.
+- Moves are verbatim; any non-move edit is flagged in the commit message.
+- Tracker: one epic with a child per task; registry issue blocked by the epic.
 
 ## Testing
 
-- Existing suites run unchanged (they exercise the CLI) — they are the behavior-preservation oracle.
-- **Layout smoke test** (new, in CI): `make install DESTDIR=$tmp`, then invoke through a symlinked bin dir imitating Homebrew's shape (`ln -s $tmp/usr/bin/git-issue $tmp/fakebrew/git-issue`) and assert a real command works. Runs on ubuntu + macos.
-- **Release checklist addition:** run `brew test git-issue` after each tap bump — Homebrew's native formula test, exercising the linked install through the real symlink.
-- `tests/unit_tests.sh` switches from sed-extraction to sourcing modules (step 8).
-
-## Error handling
-
-Missing/unresolvable lib dir: fatal, message names the resolved path it tried, suggests reinstall or `GIT_ISSUE_LIB`. Individually missing module or awk file: same treatment (fail fast at source/use time, no feature-degraded mode).
+- Existing suites unchanged except `tests/unit_tests.sh`, which switches from sed-extraction to `source bin/git-issue` (fixes the extraction fragility that caused the earlier `readonly` collision).
+- New assertions: (a) sourcing `bin/git-issue` executes nothing and leaves `set -e` untouched; (b) the `git-issue-status` symlink dispatches to the status report; (c) awk-direct fixture test for `front_matter.awk`.
+- **Layout smoke test** (new, in CI): `make install DESTDIR=$tmp`, invoke directly AND through a brew-style symlinked bin dir, including the `git-issue-status` symlink chain (symlink → symlink → script must still dispatch as status).
+- **Release checklist addition:** run `brew test git-issue` after each tap bump.
 
 ## Out of scope
 
-Language change; behavior changes; strict-format enforcement (#606e606); registry (below); parallelizing anything.
+Module file split; language change; behavior changes; strict-format enforcement (#606e606); registry (below).
 
 ---
 
 ## Sub-project 2: Multi-project registry (summary — detailed spec when reached)
 
-Blocked by the refactor. Decisions already made:
+Blocked by this refactor. Decisions already made:
 
 - **Store:** global git config — `issue.repo.<name>.path`; readable by agents with stock `git config --get-regexp '^issue\.repo\.'`.
 - **Commands:** `git issue repo add <name> <path>`, `repo list` (annotates missing paths), `repo rm <name>`.
 - **Targeting:** `--repo <name>` on existing commands; **aggregation:** `list --all` / `ready --all` with `[name]`-prefixed lines.
-- **Mechanism:** one subprocess per repo (`cd <path> && exec git-issue ...`) — remains the correct isolation seam post-refactor because sourced bash modules still share process-global state (GIT_DIR, caches, status machine). Works for both git and XDG backends since backend detection is per-directory.
+- **Mechanism:** one subprocess per repo (`cd <path> && exec git-issue ...`) — the correct isolation seam since the script's state (GIT_DIR, caches, status machine) is process-global. Works for both git and XDG backends since backend detection is per-directory.
 - **Origin:** explicit `repo add` registration (per design conversation, 2026-08-13); no auto-registration, at most a hint.
