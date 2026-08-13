@@ -1,0 +1,9 @@
+id: 757f0ca
+title: refactor: externalize awk programs to share/git-issue/awk
+status: open
+priority: medium
+created: 2026-08-13T20:53:20Z
+updated: 2026-08-13T20:53:20Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
