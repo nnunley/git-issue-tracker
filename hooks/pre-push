@@ -37,12 +37,38 @@ if [[ -z "$NOTE_REFS" ]]; then
     exit 0
 fi
 
-NOTE_COUNT=$(echo "$NOTE_REFS" | wc -l)
-echo -e "${BLUE}🔄 Pushing $NOTE_COUNT issue notes to $REMOTE...${NC}"
+# Find notes that changed since last push by comparing local vs remote refs.
+# This avoids pushing all N notes every time.
+CHANGED_REFS=""
+while IFS= read -r ref; do
+    local_sha=$(git rev-parse "$ref" 2>/dev/null)
+    remote_sha=$(git rev-parse "refs/remotes/$REMOTE/${ref#refs/}" 2>/dev/null || \
+                 git ls-remote --refs "$REMOTE" "$ref" 2>/dev/null | awk '{print $1}')
+    if [[ "$local_sha" != "$remote_sha" ]]; then
+        CHANGED_REFS="${CHANGED_REFS}${ref}"$'\n'
+    fi
+done <<< "$NOTE_REFS"
 
-# Push issue notes to remote
-if git push "$REMOTE" refs/notes/issue-*; then
-    echo -e "${GREEN}✓ Successfully pushed issue notes${NC}"
+# Strip trailing newline and check if anything changed
+CHANGED_REFS=$(echo "$CHANGED_REFS" | grep -v '^$')
+if [[ -z "$CHANGED_REFS" ]]; then
+    exit 0
+fi
+
+CHANGED_COUNT=$(echo "$CHANGED_REFS" | wc -l | tr -d ' ')
+NOTE_COUNT=$(echo "$NOTE_REFS" | wc -l | tr -d ' ')
+echo -e "${BLUE}🔄 Pushing $CHANGED_COUNT/$NOTE_COUNT changed issue notes to $REMOTE...${NC}"
+
+# Build refspec list for only changed refs
+REFSPECS=()
+while IFS= read -r ref; do
+    [[ -z "$ref" ]] && continue
+    REFSPECS+=("$ref")
+done <<< "$CHANGED_REFS"
+
+# Push with --atomic so all ref updates succeed or fail together
+if git push --atomic "$REMOTE" "${REFSPECS[@]}"; then
+    echo -e "${GREEN}✓ Successfully pushed $CHANGED_COUNT issue notes${NC}"
 else
     echo -e "${YELLOW}⚠️  Failed to push some issue notes (this may be normal for new remotes)${NC}"
     # Don't fail the push - notes sync failure shouldn't block code push
