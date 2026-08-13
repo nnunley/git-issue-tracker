@@ -3,8 +3,8 @@ title: refactor: dual-mode dispatch + external awk (epic)
 status: open
 priority: medium
 created: 2026-08-13T20:53:20Z
-updated: 2026-08-13T20:53:20Z
+updated: 2026-08-13T20:53:21Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
-parent_of: 1900f6d,757f0ca
+parent_of: 1900f6d,757f0ca,7262d1d
