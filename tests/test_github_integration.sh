@@ -2,9 +2,10 @@
 # Test GitHub integration with provider-specific fields
 
 # Setup test environment
-TEST_DIR="./test-github-integration-$$"
+TEST_DIR="$(pwd)/test-github-integration-$$"
 mkdir -p "$TEST_DIR"
 cd "$TEST_DIR"
+trap 'cd / && rm -rf "$TEST_DIR"' EXIT
 
 # Add the git-issue script to PATH for testing
 SCRIPT_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
@@ -98,7 +99,8 @@ EOF
 
 # Test 2: Import GitHub issues
 echo -n "Testing GitHub import... "
-IMPORT_RESULT=$(cat github_issues.json | gh-to-git-issue | git issue import)
+# Import reports progress on stderr, so capture both streams
+IMPORT_RESULT=$(cat github_issues.json | gh-to-git-issue | git issue import 2>&1)
 if echo "$IMPORT_RESULT" | grep -q "Imported 2 issues"; then
     echo -e "${GREEN}PASS${NC}"
     TESTS_PASSED=$((TESTS_PASSED + 1))
@@ -122,7 +124,8 @@ fi
 TESTS_RUN=$((TESTS_RUN + 1))
 
 # Test 4: Verify provider-specific fields in issue details
-FIRST_ISSUE_ID=$(git issue list | head -1 | grep -o '#[a-f0-9]\+' | head -1 | cut -c2-)
+# The first line of list output is a banner, not an issue: grep across all lines
+FIRST_ISSUE_ID=$(git issue list | grep -o '#[a-f0-9]\{7\}' | head -1 | cut -c2-)
 echo -n "Testing provider-specific field storage... "
 if [[ -n "$FIRST_ISSUE_ID" ]]; then
     ISSUE_DETAILS=$(git issue show "$FIRST_ISSUE_ID")
@@ -212,7 +215,3 @@ else
     echo -e "${RED}Some GitHub integration tests failed.${NC}"
     exit 1
 fi
-
-# Cleanup
-cd ..
-rm -rf "$TEST_DIR"
