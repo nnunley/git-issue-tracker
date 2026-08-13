@@ -7,3 +7,5 @@ updated: 2026-08-13T21:15:40Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
+
+Design settled in docs/plans/2026-08-13-modularization-refactor-design.md (sub-project 2): global git config store issue.repo.<name>.path; repo add/list/rm; --repo <name> targeting; list/ready --all aggregation with [name] prefixes; one subprocess per repo. Was blocked by the dispatch-and-awk epic (9c2d3e9, closed) — now ready.
