@@ -44,13 +44,16 @@ fi
 
 # Install main commands
 cp "$(dirname "$0")/bin/git-issue" "$INSTALL_DIR/git-issue"
-cp "$(dirname "$0")/bin/git-issue-status" "$INSTALL_DIR/git-issue-status"
+ln -sf git-issue "$INSTALL_DIR/git-issue-status"
 cp "$(dirname "$0")/bin/gh-to-git-issue" "$INSTALL_DIR/gh-to-git-issue"
 
 # Make executable
 chmod +x "$INSTALL_DIR/git-issue"
-chmod +x "$INSTALL_DIR/git-issue-status"
 chmod +x "$INSTALL_DIR/gh-to-git-issue"
+
+# Install awk programs
+mkdir -p "$INSTALL_DIR/../share/git-issue/awk"
+cp "$(dirname "$0")/share/git-issue/awk/*.awk" "$INSTALL_DIR/../share/git-issue/awk/"
 
 echo -e "${GREEN}✅ Installation complete!${NC}"
 echo ""

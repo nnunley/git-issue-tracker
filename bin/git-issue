@@ -2,8 +2,6 @@
 # git-issue: Issue tracking using git notes (or XDG directories) and hash-based IDs
 # Supports both git repositories and standalone XDG directory storage
 
-set -e
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -13,7 +11,35 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # Script directory (for finding companion scripts and share files)
-GIT_ISSUE_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Physical location of this script, symlinks resolved (Homebrew invokes
+# through /opt/homebrew/bin symlinks into the Cellar). BSD-safe: no
+# readlink -f / realpath -m, which are missing on stock macOS < 12.3.
+_gi_resolve_self_dir() {
+    local src="${BASH_SOURCE[0]}" dir
+    while [[ -h "$src" ]]; do
+        dir="$(cd "$(dirname "$src")" && pwd -P)"
+        src="$(readlink "$src")"
+        [[ "$src" != /* ]] && src="$dir/$src"
+    done
+    cd "$(dirname "$src")" && pwd -P
+}
+GIT_ISSUE_BIN_DIR="$(_gi_resolve_self_dir)"
+
+# Awk program directory: env override, else the share dir next to the binary.
+# Unlike statuses (which have an in-script fallback), a missing awk file is fatal.
+if [[ -z "${GIT_ISSUE_AWK_DIR:-}" ]]; then
+    if [[ -d "$GIT_ISSUE_BIN_DIR/../share/git-issue/awk" ]]; then
+        GIT_ISSUE_AWK_DIR="$GIT_ISSUE_BIN_DIR/../share/git-issue/awk"
+    elif [[ -d "/usr/local/share/git-issue/awk" ]]; then
+        GIT_ISSUE_AWK_DIR="/usr/local/share/git-issue/awk"
+    fi
+fi
+
+require_awk_file() {
+    local f="$GIT_ISSUE_AWK_DIR/$1"
+    [[ -f "$f" ]] || { echo -e "${RED}Error: awk program not found: $f — reinstall git-issue or set GIT_ISSUE_AWK_DIR${NC}" >&2; exit 1; }
+    printf '%s' "$f"
+}
 
 # Status machine — loaded from .git-issue/statuses.bash
 STATUSES=()
@@ -330,55 +356,7 @@ BATCH_FLUSH_HASH='0000000000000000000000000000000000000000'
 #   (split front matter, mirroring parse_front_matter). Header-lookalike lines
 #   mid-body (e.g. "id: whatever" inside a description) are ignored.
 _issue_tsv_stream() {
-    _batch_issue_stream | awk -v FIELDS="$KNOWN_HEADER_FIELDS" '
-        function reset(   i) {
-            split("", top); split("", trail_k); split("", trail_v)
-            ntrail = 0; in_body = 0; pending_blank = 0; in_comments = 0
-        }
-        function emit(   i, status) {
-            # Trailing headers override top headers (split front matter).
-            # id never legitimately appears below the body — every write path
-            # emits it first — so an "id:" line down there is body content and
-            # must not let one issue masquerade as (or hide) another.
-            for (i = 1; i <= ntrail; i++)
-                if (trail_k[i] != "id") top[trail_k[i]] = trail_v[i]
-            if (top["id"] != "") {
-                status = (top["status"] != "") ? top["status"] : top["state"]
-                print top["id"] OFS status OFS top["title"] OFS top["priority"] OFS top["assignee"] OFS top["role"] OFS top["depends_on"]
-            }
-            reset()
-        }
-        BEGIN { OFS = "\037"; header_re = "^(" FIELDS "): ?"; reset() }
-        { gsub(/[[:cntrl:]]/, "") }
-        substr($0, 1, 10) == "__ISSUE__ " && length($0) == 50 && substr($0, 11) ~ /^[0-9a-f]+$/ {
-            emit(); next
-        }
-        $0 == "## Comments" { in_comments = 1 }
-        in_comments == 1 { next }
-        in_body == 0 {
-            if ($0 == "") { in_body = 1; next }
-            if ($0 ~ header_re) {
-                key = $0; sub(/:.*/, "", key)
-                val = $0; sub(/^[a-z_]+: ?/, "", val)
-                top[key] = val
-            }
-            next
-        }
-        {
-            if ($0 == "") { pending_blank = 1; next }
-            if ($0 ~ header_re) {
-                # A blank line breaks trailing-block contiguity: restart
-                if (pending_blank) { ntrail = 0; pending_blank = 0 }
-                ntrail++
-                key = $0; sub(/:.*/, "", key)
-                val = $0; sub(/^[a-z_]+: ?/, "", val)
-                trail_k[ntrail] = key; trail_v[ntrail] = val
-            } else {
-                # Prose line: whatever came before it was body, not headers
-                ntrail = 0; pending_blank = 0
-            }
-        }
-    '
+    _batch_issue_stream | awk -f "$(require_awk_file extract_issues.awk)" -v FIELDS="$KNOWN_HEADER_FIELDS"
 }
 
 # Write issue data using git plumbing (hash-object + mktree + commit-tree + update-ref)
@@ -454,123 +432,14 @@ issue_exists() {
 # contiguous key: value lines. This handles data where headers are split around the body.
 parse_front_matter() {
     local data="$1"
-    echo "$data" | awk -v FIELDS="$KNOWN_HEADER_FIELDS" '
-        BEGIN { known_re = "^(" FIELDS "):" }
-        { lines[++n] = $0 }
-        END {
-            # Find where comments start (if any)
-            comments_at = n + 1
-            for (i = 1; i <= n; i++) {
-                if (lines[i] == "## Comments") { comments_at = i; break }
-            }
-            # Collect top headers (before first blank line)
-            top_count = 0
-            for (i = 1; i <= n; i++) {
-                if (lines[i] == "") break
-                if (lines[i] ~ /^[a-z_]+:/) {
-                    top_count++
-                    top_headers[top_count] = lines[i]
-                    # Extract key for dedup
-                    split(lines[i], kv, ": *")
-                    top_keys[top_count] = kv[1]
-                }
-            }
-            # Find trailing header block: scan backwards from end/comments,
-            # skip any non-header lines (stray text), then collect contiguous headers.
-            # Only KNOWN fields count as trailing headers, so body prose like
-            # "note: remember this" is not swallowed out of the body.
-            scan = comments_at - 1
-            while (scan > 0 && lines[scan] == "") scan--
-            while (scan > 0 && lines[scan] !~ known_re) scan--
-            trail_end = scan
-            trail_start = trail_end + 1
-            for (i = trail_end; i > 0; i--) {
-                if (lines[i] ~ known_re) {
-                    trail_start = i
-                } else {
-                    break
-                }
-            }
-            # Find first blank line to know where top headers end
-            first_blank = n + 1
-            for (i = 1; i <= n; i++) {
-                if (lines[i] == "") { first_blank = i; break }
-            }
-            # Only treat as trailing headers if they come after the top block
-            # id never legitimately appears below the body (every write path
-            # emits it first), so trailing "id:" lines are body content, not headers
-            trail_count = 0
-            if (trail_start > first_blank && trail_start <= trail_end) {
-                for (i = trail_start; i <= trail_end; i++) {
-                    if (lines[i] ~ known_re && lines[i] !~ /^id:/) {
-                        trail_count++
-                        trail_headers[trail_count] = lines[i]
-                        split(lines[i], kv, ": *")
-                        trail_key_set[kv[1]] = 1
-                    }
-                }
-            }
-            # Print top headers, skipping any overridden by trailing
-            for (i = 1; i <= top_count; i++) {
-                if (!(top_keys[i] in trail_key_set)) {
-                    print top_headers[i]
-                }
-            }
-            # Print trailing headers
-            for (i = 1; i <= trail_count; i++) {
-                print trail_headers[i]
-            }
-        }
-    '
+    echo "$data" | awk -f "$(require_awk_file front_matter.awk)" -v FIELDS="$KNOWN_HEADER_FIELDS"
 }
 
 # Parse body from issue data (between first blank line and trailing headers / ## Comments)
 # Excludes both the trailing header block and any stray lines after it.
 parse_body() {
     local data="$1"
-    echo "$data" | awk -v FIELDS="$KNOWN_HEADER_FIELDS" '
-        BEGIN { known_re = "^(" FIELDS "):" }
-        { lines[++n] = $0 }
-        END {
-            # Find where comments start
-            comments_at = n + 1
-            for (i = 1; i <= n; i++) {
-                if (lines[i] == "## Comments") { comments_at = i; break }
-            }
-            # Find trailing header block (same logic as parse_front_matter:
-            # only KNOWN fields count, so body prose is not swallowed)
-            scan = comments_at - 1
-            while (scan > 0 && lines[scan] == "") scan--
-            while (scan > 0 && lines[scan] !~ known_re) scan--
-            trail_end = scan
-            trail_start = trail_end + 1
-            for (i = trail_end; i > 0; i--) {
-                if (lines[i] ~ known_re) {
-                    trail_start = i
-                } else {
-                    break
-                }
-            }
-            # Body starts after first blank line, ends before trailing headers
-            body_start = 0
-            for (i = 1; i <= n; i++) {
-                if (lines[i] == "") { body_start = i + 1; break }
-            }
-            if (body_start == 0) body_start = n + 1
-            # Only treat as trailing headers if they come after the body start
-            if (trail_start > body_start) {
-                body_end = trail_start - 1
-            } else {
-                body_end = comments_at - 1
-            }
-            if (body_end >= comments_at) body_end = comments_at - 1
-            # Trim trailing blank lines from body
-            while (body_end >= body_start && lines[body_end] == "") body_end--
-            for (i = body_start; i <= body_end; i++) {
-                print lines[i]
-            }
-        }
-    '
+    echo "$data" | awk -f "$(require_awk_file body.awk)" -v FIELDS="$KNOWN_HEADER_FIELDS"
 }
 
 # Parse comments from issue data (after ## Comments marker)
@@ -3039,12 +2908,13 @@ $comments"
     echo -e "${GREEN}Format migration complete: $migrated migrated, $skipped already up to date${NC}"
 }
 
-# Initialize storage backend before any operations
-detect_storage_backend
-load_statuses
+main() {
+    # Initialize storage backend before any operations
+    detect_storage_backend
+    load_statuses
 
-# Main script logic
-case "$1" in
+    # Main script logic
+    case "$1" in
     create)
         if [ $# -lt 2 ]; then
             echo -e "${RED}Error: 'create' requires title${NC}"
@@ -3234,7 +3104,84 @@ hash_source: manual"
         usage
         exit 1
         ;;
-esac
+    esac
 
-# Clean up XDG environment if needed
-cleanup_xdg_environment
+    # Clean up XDG environment if needed
+    cleanup_xdg_environment
+}
+
+status_report() {
+    # Quick issue status report
+    echo -e "${BLUE}Issue Status Report${NC}"
+    echo -e "Generated: $(date)"
+    echo ""
+
+    # Count issues by status
+    open_count=0
+    in_progress_count=0
+    closed_count=0
+    blocked_count=0
+
+    # Count by priority
+    high_count=0
+    medium_count=0
+    low_count=0
+
+    # Process each issue
+    for ref in $(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | sort); do
+        if data=$(read_issue_data "$(extract_issue_id "$ref")" 2>/dev/null); then
+            status_val=$(echo "$data" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2)
+            priority=$(echo "$data" | grep "^priority:" | cut -d' ' -f2)
+
+            case "$status_val" in
+                open) open_count=$((open_count + 1)) ;;
+                in_progress|in-progress) in_progress_count=$((in_progress_count + 1)) ;;
+                closed|done) closed_count=$((closed_count + 1)) ;;
+                blocked) blocked_count=$((blocked_count + 1)) ;;
+            esac
+
+            case "$priority" in
+                high|critical) high_count=$((high_count + 1)) ;;
+                medium) medium_count=$((medium_count + 1)) ;;
+                low) low_count=$((low_count + 1)) ;;
+            esac
+        fi
+    done
+
+    total=$((open_count + in_progress_count + closed_count + blocked_count))
+
+    echo -e "${YELLOW}Summary:${NC}"
+    echo "Total Issues: $total"
+    echo ""
+
+    echo -e "${YELLOW}By Status:${NC}"
+    echo "  Open: $open_count"
+    echo "  In Progress: $in_progress_count"
+    echo "  Closed: $closed_count"
+    echo "  Blocked: $blocked_count"
+    echo ""
+
+    echo -e "${YELLOW}By Priority:${NC}"
+    echo "  High/Critical: $high_count"
+    echo "  Medium: $medium_count"
+    echo "  Low: $low_count"
+    echo ""
+
+    echo -e "${YELLOW}Open Issues by Priority:${NC}"
+    detect_storage_backend
+    load_statuses
+    list_issues | grep -E "\[open\]" | sort -t: -k2 -r || true
+}
+
+_gi_entry() {
+    case "$(basename "$0")" in
+        git-issue-status) status_report "$@" ;;
+        *)                main "$@" ;;
+    esac
+}
+
+# Execute only when run, not when sourced — consumers may `source bin/git-issue`
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    set -e
+    _gi_entry "$@"
+fi

@@ -1,23 +1,26 @@
 PREFIX ?= /usr/local
-BINDIR = $(PREFIX)/bin
-DOCDIR = $(PREFIX)/share/doc/git-issue
-SHAREDIR = $(PREFIX)/share/git-issue
-MAN1DIR = $(PREFIX)/share/man/man1
-MAN8DIR = $(PREFIX)/share/man/man8
+DESTDIR ?=
+BINDIR = $(DESTDIR)$(PREFIX)/bin
+DOCDIR = $(DESTDIR)$(PREFIX)/share/doc/git-issue
+SHAREDIR = $(DESTDIR)$(PREFIX)/share/git-issue
+MAN1DIR = $(DESTDIR)$(PREFIX)/share/man/man1
+MAN8DIR = $(DESTDIR)$(PREFIX)/share/man/man8
 
-.PHONY: install uninstall test test-deps test-content-safety bench-deps clean install-mcp uninstall-mcp test-mcp build-mcp clean-mcp
+.PHONY: install uninstall test test-deps test-content-safety test-dispatch test-layout bench-deps clean install-mcp uninstall-mcp test-mcp build-mcp clean-mcp
 
 install:
 	@echo "Installing git-issue..."
 	install -d $(BINDIR)
 	install -d $(DOCDIR)
 	install -m 755 bin/git-issue $(BINDIR)/
-	install -m 755 bin/git-issue-status $(BINDIR)/
+	ln -sf git-issue $(BINDIR)/git-issue-status
 	install -m 755 bin/git-note-commit $(BINDIR)/
 	install -m 755 bin/git-issue-compile-statuses $(BINDIR)/
 	install -d $(SHAREDIR)
 	install -m 644 share/git-issue/statuses.default $(SHAREDIR)/
 	install -m 644 share/git-issue/statuses.beads $(SHAREDIR)/
+	install -d $(SHAREDIR)/awk
+	install -m 644 share/git-issue/awk/*.awk $(SHAREDIR)/awk/
 	install -d $(SHAREDIR)/hooks
 	install -m 755 hooks/post-merge $(SHAREDIR)/hooks/
 	install -m 755 hooks/pre-push $(SHAREDIR)/hooks/
@@ -79,12 +82,22 @@ test-content-safety:
 	chmod +x tests/test_content_safety.sh
 	./tests/test_content_safety.sh
 
+test-dispatch:
+	@echo "Running dispatch tests..."
+	chmod +x tests/test_dispatch.sh
+	./tests/test_dispatch.sh
+
+test-layout:
+	@echo "Running install layout smoke test..."
+	chmod +x tests/test_install_layout.sh
+	./tests/test_install_layout.sh
+
 bench-deps:
 	@echo "Running dependency benchmark..."
 	chmod +x tests/bench_deps.sh
 	./tests/bench_deps.sh $(COUNT)
 
-test-all: test-unit test-integration test test-deps test-content-safety
+test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout
 
 clean:
 	@echo "Cleaning up..."

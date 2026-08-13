@@ -12,7 +12,7 @@ class GitIssue < Formula
 
   def install
     bin.install "bin/git-issue"
-    bin.install "bin/git-issue-status"
+    bin.install_symlink bin/"git-issue" => "git-issue-status"
     bin.install "bin/git-issue-compile-statuses"
     bin.install "bin/git-note-commit"
     bin.install "bin/gh-to-git-issue"
@@ -20,6 +20,7 @@ class GitIssue < Formula
 
     (share/"git-issue").install "share/git-issue/statuses.default"
     (share/"git-issue").install "share/git-issue/statuses.beads"
+    (share/"git-issue/awk").install Dir["share/git-issue/awk/*.awk"]
     (share/"git-issue/hooks").install "hooks/post-merge"
     (share/"git-issue/hooks").install "hooks/pre-push"
 

@@ -172,6 +172,25 @@ test_control_bytes_stripped_and_columns_stable() {
         "Empty title must not shift priority into the title column"
 }
 
+# --- Direct awk program testing ---
+
+test_front_matter_awk_direct() {
+    local awk_dir="$SCRIPT_DIR/../share/git-issue/awk"
+    local fields='id|title|status|state|priority|created|updated|author|assignee|role|labels|hash_source|github_id|github_url|jira_id|jira_url|gitlab_id|gitlab_url|blocks|depends_on|parent_of|relates_to|issue_type|external_ref|waits_for'
+    local out
+    out=$(printf 'id: abc1234\ntitle: T\n\nbody line\nnote: prose stays\nstatus: closed\n' \
+        | awk -f "$awk_dir/front_matter.awk" -v FIELDS="$fields")
+    assert_contains "status: closed" "$out" "awk-direct: trailing known header honored"
+    assert_contains "id: abc1234" "$out" "awk-direct: top id preserved"
+    if echo "$out" | grep -q "note: prose"; then
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} awk-direct: prose must not be emitted as a header"
+    else
+        TESTS_RUN=$((TESTS_RUN + 1)); TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} awk-direct: prose must not be emitted as a header"
+    fi
+}
+
 # --- Body-content parsing ---
 
 test_trailing_prose_stays_in_body() {
@@ -209,6 +228,7 @@ main() {
     echo "================================="
     echo ""
 
+    run_test "front_matter.awk parses split front matter directly" test_front_matter_awk_direct
     run_test "apostrophe title displays in show" test_apostrophe_title_in_show
     run_test "quote in dep field cannot abort listings" test_quote_in_dep_field_does_not_abort_listings
     run_test "body __ISSUE__ line cannot forge rows" test_body_delimiter_line_cannot_forge_rows
