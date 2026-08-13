@@ -1,9 +1,9 @@
 id: 1900f6d
 title: refactor: dual-mode + $0 dispatch, absorb git-issue-status
-status: open
+status: closed
 priority: medium
 created: 2026-08-13T20:53:20Z
-updated: 2026-08-13T20:53:20Z
+updated: 2026-08-13T20:53:21Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
