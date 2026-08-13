@@ -2068,10 +2068,11 @@ check_for_cycles() {
     edges=$(read_edge_index | grep ' blocks ' | awk '{print $1, $3}')
     edges="${edges}"$'\n'"${from} ${to}"
 
-    # tsort on macOS exits 0 even on cycles, so check stderr
+    # tsort on macOS exits 0 even on cycles, so check stderr.
+    # BSD tsort says "cycle in data"; GNU coreutils says "input contains a loop"
     local tsort_stderr
     tsort_stderr=$(echo "$edges" | tsort 2>&1 >/dev/null)
-    if echo "$tsort_stderr" | grep -q "cycle"; then
+    if echo "$tsort_stderr" | grep -qiE "cycle|loop"; then
         return 1  # cycle detected
     fi
     return 0
