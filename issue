@@ -3,7 +3,9 @@ title: Enforce strict commit-object field format for issue blobs
 status: open
 priority: medium
 created: 2026-08-13T14:58:05Z
-updated: 2026-08-13T14:58:05Z
+updated: 2026-08-13T14:58:06Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
+
+Design says issue blobs are commit-object style: known lowercase headers, blank line, body (AGENTS.md; git-trailer conventions reserved for commit linking per PRD_GIT_TRAILERS_INTEGRATION.md). d8185f2 loosened parsing to tolerate split front matter, which leaves an ambiguity: a body ending in header-lookalike lines (status:/title:) can override displayed fields. Decide: repair split blobs via migrate-format and drop trailing-header tolerance, so parsers enforce strict headers-then-body.
