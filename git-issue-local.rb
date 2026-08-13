@@ -11,7 +11,7 @@ class GitIssueLocal < Formula
     source_dir = "/Users/ndn/development/git-issue-tracker"
     
     bin.install "#{source_dir}/bin/git-issue"
-    bin.install "#{source_dir}/bin/git-issue-status"
+    bin.install_symlink bin/"git-issue" => "git-issue-status"
     bin.install "#{source_dir}/bin/git-note-commit"
     
     # Install hooks for setup-sync

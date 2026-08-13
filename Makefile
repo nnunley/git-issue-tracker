@@ -12,7 +12,7 @@ install:
 	install -d $(BINDIR)
 	install -d $(DOCDIR)
 	install -m 755 bin/git-issue $(BINDIR)/
-	install -m 755 bin/git-issue-status $(BINDIR)/
+	ln -sf git-issue $(BINDIR)/git-issue-status
 	install -m 755 bin/git-note-commit $(BINDIR)/
 	install -m 755 bin/git-issue-compile-statuses $(BINDIR)/
 	install -d $(SHAREDIR)

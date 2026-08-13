@@ -12,7 +12,7 @@ class GitIssue < Formula
 
   def install
     bin.install "bin/git-issue"
-    bin.install "bin/git-issue-status"
+    bin.install_symlink bin/"git-issue" => "git-issue-status"
     bin.install "bin/git-issue-compile-statuses"
     bin.install "bin/git-note-commit"
     bin.install "bin/gh-to-git-issue"
