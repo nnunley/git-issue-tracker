@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # git-issue-to-gh: Export git-issue format to GitHub JSON format
 # Usage: git issue export | git-issue-to-gh
 

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Git hook: pre-push  
 # Auto-sync git notes before push operations
 # Installed by: git issue setup-sync

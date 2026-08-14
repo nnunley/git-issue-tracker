@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # git-issue: Issue tracking using git notes (or XDG directories) and hash-based IDs
 # Supports both git repositories and standalone XDG directory storage
 
@@ -997,16 +997,17 @@ setup_sync() {
 setup_sync_enable() {
     local git_dir=$(git rev-parse --git-dir)
     local hooks_dir="$git_dir/hooks"
-    local script_dir="$(dirname "$(realpath "$0")")"
 
     # Look for hooks in multiple locations:
-    # 1. Relative to script (source tree / make install)
+    # 1. Relative to the resolved script dir (source tree / make install).
+    #    GIT_ISSUE_BIN_DIR (not $0) — git may exec us with a bare argv[0],
+    #    and it already handles symlinked installs BSD-safely.
     # 2. Homebrew share directory
     # 3. Standard share directory
     local hooks_source=""
     for candidate in \
-        "$script_dir/../hooks" \
-        "$script_dir/../share/git-issue/hooks" \
+        "$GIT_ISSUE_BIN_DIR/../hooks" \
+        "$GIT_ISSUE_BIN_DIR/../share/git-issue/hooks" \
         "/opt/homebrew/share/git-issue/hooks" \
         "/usr/local/share/git-issue/hooks"; do
         if [[ -d "$candidate" ]]; then
@@ -3181,7 +3182,22 @@ _gi_entry() {
 }
 
 # Execute only when run, not when sourced — consumers may `source bin/git-issue`
+# Pre-flight: verify the awk programs exist before dispatching. This is the
+# real hard-fail for broken installs — require_awk_file's exit only kills its
+# command-substitution subshell, so without this check a missing awk dir
+# would print an error yet let the command "succeed" with exit 0.
+_gi_check_awk_files() {
+    local f
+    for f in extract_issues.awk front_matter.awk body.awk; do
+        if [[ ! -f "$GIT_ISSUE_AWK_DIR/$f" ]]; then
+            echo -e "${RED}Error: awk program not found: $GIT_ISSUE_AWK_DIR/$f — reinstall git-issue or set GIT_ISSUE_AWK_DIR${NC}" >&2
+            exit 1
+        fi
+    done
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     set -e
+    _gi_check_awk_files
     _gi_entry "$@"
 fi

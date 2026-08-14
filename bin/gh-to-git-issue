@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # gh-to-git-issue: Convert GitHub issues JSON to git-issue format
 # Usage: gh issue list --json ... | gh-to-git-issue
 

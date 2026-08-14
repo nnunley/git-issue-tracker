@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Integration tests for git-issue with real git operations
 # Tests full workflows and git notes integration
 

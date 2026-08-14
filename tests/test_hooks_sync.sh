@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Test git hooks automatic sync functionality
 
 # Setup test environment

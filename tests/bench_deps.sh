@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Benchmark harness for dependency graph performance
 #
 # Usage: ./tests/bench_deps.sh [COUNT]

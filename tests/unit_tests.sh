@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Unit tests for git-issue core functions
 # Tests individual functions in isolation
 

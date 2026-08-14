@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Test dependency header fields in git-issue data model
 
 # Source the test runner for assertion framework

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Git hook: post-merge
 # Auto-sync git notes after merge/pull operations
 # Installed by: git issue setup-sync
