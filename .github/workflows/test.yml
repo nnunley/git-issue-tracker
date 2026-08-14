@@ -263,13 +263,10 @@ jobs:
           echo "No published RFCs yet (expected at this stage)"
         fi
 
-    - name: Run conformance tests (draft RFCs) - informational only
-      continue-on-error: true
+    - name: Verify draft corpus declarations (blocking — red only by declaration)
       run: |
-        # Optional: run drafts as non-failing step for visibility
         if [ "$(find docs/rfc -maxdepth 1 -type f -name 'draft-*.md' | wc -l)" -gt 0 ]; then
-          echo "Running draft RFC conformance tests (non-blocking)..."
-          /tmp/llm-rfc-skill/skill/rfc-run docs/rfc/draft-*.md
+          /tmp/llm-rfc-skill/skill/rfc-run --expect docs/rfc/draft-*.md
         else
           echo "No draft RFCs found"
         fi

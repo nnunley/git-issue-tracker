@@ -1,6 +1,7 @@
 # draft-ndn-multi-project-registry-02: Multi-Project Registry for git-issue
 
 **Status:** DRAFT
+**Corpus:** red (spec-first — transcripts are the acceptance criteria for the unimplemented registry)
 **Category:** Standards-Track
 **Authors:** Norman Nunley, Jr <nnunley@gmail.com>, Claude (drafting agent)
 **Date:** 2026-08-14
