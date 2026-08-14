@@ -282,3 +282,6 @@ alike.
   old->new reporting) and `repo prune` [R-prune] (explicit bulk cleanup of
   missing entries, keeping list/--repo semantics as drafted). `--all`
   failure behavior confirmed as drafted (continue + summarize + nonzero).
+- 2026-08-14 (rev -01): worktree refinement — registering a linked working
+  copy resolves to the primary [R-worktree-root]; issue refs are
+  per-repository and worktree paths are transient.
