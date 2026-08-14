@@ -7,3 +7,5 @@ updated: 2026-08-14T02:06:19Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
+
+git-issue --version is an unknown command (exit 1 + usage). Discovered in rc5 clean-install testing; the version string seen earlier came from brew list, not the tool. Needs a version source that works across brew/make/tarball installs (e.g. bake at release time or read VERSION from share).
