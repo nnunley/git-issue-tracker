@@ -1,4 +1,4 @@
-# draft-ndn-multi-project-registry-01: Multi-Project Registry for git-issue
+# draft-ndn-multi-project-registry-02: Multi-Project Registry for git-issue
 
 **Status:** DRAFT
 **Category:** Standards-Track
@@ -9,10 +9,10 @@
 
 git-issue operates on one repository at a time, discovered from the working
 directory. This RFC adds a global registry of named, git-issue-managed
-repositories stored in global git config, three management commands
-(`git issue repo add|list|rm`), a `--repo <name>` flag that targets any
-registered repository from anywhere, and `--all` aggregation for `list` and
-`ready` across every registered repository.
+repositories stored in global git config, management commands
+(`git issue repo add|list|rm|prune`), a `--repo <name>` flag that targets
+any registered repository from anywhere, and `--all` aggregation for `list`
+and `ready` across every registered repository.
 
 ## Motivation
 
@@ -37,8 +37,33 @@ when, and only when, they appear in all capitals, as shown here.
 - **registered repository** — a directory named by a registry entry;
   either backend (git repository or XDG-managed directory) qualifies.
 - **target repository** — the registered repository selected by `--repo`.
+- **sandbox** — the throwaway environment a conformance runner provides for
+  each evidence transcript (see Evidence conventions).
 
 ## Specification
+
+### Evidence conventions
+
+Each transcript block in this document is an independent conformance test
+executed under replay-and-diff. The runner provides, per block, a fresh
+sandbox: an empty directory whose logical path is exactly `/tmp/gi-rfc`
+(the shell's working directory at block start), a `HOME` inside the sandbox
+with empty global git config, a configured git identity, and no registry
+entries. Blocks construct every piece of state they reference — no block
+depends on another block, on this repository, or on the author's machine.
+
+Notation: lines beginning `$ ` are commands (shell state persists within a
+block); other lines are the expected output, compared byte-exactly; a line
+`? N` asserts that the immediately preceding command exited with status N,
+and absent a `?` line the status is asserted to be 0. Where real output
+embeds generated identifiers or timestamps, the transcript asserts through
+a deterministic projection (`grep -c`, `cut`, `sort`) — the projection is
+part of the evidence. Runners on systems where `/tmp` is a symlink
+normalize exactly the sandbox-root prefix between its physical and logical
+spellings; no other substitution exists. A `fidelity=` modifier on the
+fence info string is reserved for future per-block strictness levels
+(e.g. strict alignment for state-machine tables and production rules) and
+is currently undefined.
 
 ### Storage
 
@@ -48,10 +73,11 @@ The registry lives in global git config under keys of the form
 the registry with stock git, with no git-issue binary involved.
 
 ```transcript @R-config-store
-$ git issue repo add tracker /Users/ndn/development/git-issue-tracker
-Registered 'tracker' -> /Users/ndn/development/git-issue-tracker
+$ mkdir -p tracker
+$ git issue repo add tracker /tmp/gi-rfc/tracker
+Registered 'tracker' -> /tmp/gi-rfc/tracker
 $ git config --global --get-regexp '^issue\.repo\.'
-issue.repo.tracker.path /Users/ndn/development/git-issue-tracker
+issue.repo.tracker.path /tmp/gi-rfc/tracker
 ```
 
 ### Names
@@ -86,37 +112,58 @@ For git this means a linked worktree resolves to the main worktree (per
 `git worktree list`); other multi-workspace systems layered on git (e.g.
 jj workspaces) resolve through the same git-level rule. [R-worktree-root]
 
-```transcript @R-worktree-root
-$ git issue repo add fix /Users/ndn/development/proj/.worktrees/fix-123
-Registered 'fix' -> /Users/ndn/development/proj (main worktree of the given path)
-```
-
 ```transcript @R-reject-duplicate
-$ git issue repo add tracker /elsewhere
-Error: 'tracker' is already registered (-> /Users/ndn/development/git-issue-tracker); use --force to replace
+$ mkdir -p a b
+$ git issue repo add tracker /tmp/gi-rfc/a
+Registered 'tracker' -> /tmp/gi-rfc/a
+$ git issue repo add tracker /tmp/gi-rfc/b
+Error: 'tracker' is already registered (-> /tmp/gi-rfc/a); use --force to replace
+? 1
 ```
 
 ```transcript @R-force-replace
-$ git issue repo add --force tracker /elsewhere
-Registered 'tracker' -> /elsewhere (replaced /Users/ndn/development/git-issue-tracker)
+$ mkdir -p a b
+$ git issue repo add tracker /tmp/gi-rfc/a
+Registered 'tracker' -> /tmp/gi-rfc/a
+$ git issue repo add --force tracker /tmp/gi-rfc/b
+Registered 'tracker' -> /tmp/gi-rfc/b (replaced /tmp/gi-rfc/a)
 ```
 
 ```transcript @R-abs-path
-$ cd /Users/ndn/development && git issue repo add brain ./brain
-Registered 'brain' -> /Users/ndn/development/brain
+$ mkdir -p sub/brain
+$ cd sub
+$ git issue repo add brain ./brain
+Registered 'brain' -> /tmp/gi-rfc/sub/brain
+```
+
+```transcript @R-worktree-root
+$ git init -q proj
+$ cd proj
+$ git commit -q --allow-empty -m init
+$ git worktree add --quiet ../fix-wt
+$ cd ..
+$ git issue repo add fix ./fix-wt
+Registered 'fix' -> /tmp/gi-rfc/proj (main worktree of the given path)
 ```
 
 ### repo list
 
-`repo list` MUST print every registry entry with its path, and MUST mark
-entries whose path no longer exists rather than omitting or failing on
-them. [R-list-missing]
+`repo list` MUST print one entry per line in exactly the form
+`<name> <path>` — single space separators, no column alignment — with
+` (missing)` appended when the path does not exist; missing entries are
+shown, never omitted, and never cause failure. [R-list-missing] This line
+format is a contract: agents parse it.
 
 ```transcript @R-list-missing
+$ mkdir -p a gone
+$ git issue repo add tracker /tmp/gi-rfc/a
+Registered 'tracker' -> /tmp/gi-rfc/a
+$ git issue repo add old /tmp/gi-rfc/gone
+Registered 'old' -> /tmp/gi-rfc/gone
+$ rmdir gone
 $ git issue repo list
-tracker  /Users/ndn/development/git-issue-tracker
-brain    /Users/ndn/development/brain
-old      /Users/ndn/gone  (missing)
+tracker /tmp/gi-rfc/a
+old /tmp/gi-rfc/gone (missing)
 ```
 
 ### repo rm
@@ -125,11 +172,15 @@ old      /Users/ndn/gone  (missing)
 contents untouched — it forgets, never deletes. [R-repo-rm]
 
 ```transcript @R-repo-rm
-$ git issue repo rm old
-Removed 'old' (repository contents untouched)
+$ mkdir -p a
+$ touch a/keep
+$ git issue repo add tracker /tmp/gi-rfc/a
+Registered 'tracker' -> /tmp/gi-rfc/a
+$ git issue repo rm tracker
+Removed 'tracker' (repository contents untouched)
+$ ls a
+keep
 $ git issue repo list
-tracker  /Users/ndn/development/git-issue-tracker
-brain    /Users/ndn/development/brain
 ```
 
 ### repo prune
@@ -140,51 +191,97 @@ path exists. [R-prune] Pruning is the only bulk registry mutation; no other
 command removes entries as a side effect.
 
 ```transcript @R-prune
+$ mkdir -p a gone
+$ git issue repo add tracker /tmp/gi-rfc/a
+Registered 'tracker' -> /tmp/gi-rfc/a
+$ git issue repo add old /tmp/gi-rfc/gone
+Registered 'old' -> /tmp/gi-rfc/gone
+$ rmdir gone
 $ git issue repo prune
-Pruned 'old' (/Users/ndn/gone)
+Pruned 'old' (/tmp/gi-rfc/gone)
 $ git issue repo list
-tracker  /Users/ndn/development/git-issue-tracker
-brain    /Users/ndn/development/brain
+tracker /tmp/gi-rfc/a
 ```
 
 ### Targeting: --repo
 
 `--repo <name>` MUST run the given command in the target repository exactly
 as if invoked from that directory, with both storage backends supported by
-the normal per-directory detection. [R-target-repo] An unknown name or a
+the normal per-directory detection. The flag MUST be accepted both before
+and after the subcommand (`git issue --repo x list` and
+`git issue list --repo x`) — the trailing position keeps the flag with the
+subcommand if a subcommand is ever promoted to its own hyphenated binary,
+per git convention. [R-target-repo] An unknown name or a
 registered-but-missing path MUST produce an error naming the problem, with
 a nonzero exit. [R-target-invalid]
 
 ```transcript @R-target-repo
-$ cd /tmp && git issue --repo tracker list
-#43c456e [open] Multi-project registry: repo add/list/rm, --repo, --all (P: medium)
+$ git init -q proj
+$ cd proj
+$ git commit -q --allow-empty -m init
+$ git issue create "target smoke" >/dev/null 2>&1
+$ cd ..
+$ git issue repo add proj /tmp/gi-rfc/proj
+Registered 'proj' -> /tmp/gi-rfc/proj
+$ git issue --repo proj list 2>/dev/null | grep -c "target smoke"
+1
+$ git issue list --repo proj 2>/dev/null | grep -c "target smoke"
+1
 ```
 
 ```transcript @R-target-invalid
 $ git issue --repo nosuch list
 Error: 'nosuch' is not a registered repository (see: git issue repo list)
+? 1
+$ mkdir -p gone
+$ git issue repo add old /tmp/gi-rfc/gone
+Registered 'old' -> /tmp/gi-rfc/gone
+$ rmdir gone
 $ git issue --repo old list
-Error: 'old' points to /Users/ndn/gone, which does not exist
+Error: 'old' points to /tmp/gi-rfc/gone, which does not exist
+? 1
 ```
 
 ### Aggregation: --all
 
 `list --all` and `ready --all` MUST run against every registry entry and
-prefix each output line with `[<name>] `. [R-all-prefix] A failing entry
-(missing path, broken repository) MUST NOT abort the sweep: remaining
-entries are still processed, failures are summarized at the end, and the
-exit status is nonzero if any entry failed. [R-all-continues]
+prefix each output line with `[<name>] ` — plain text at the very start of
+the line, single space after the bracket, no alignment padding, before any
+terminal styling. [R-all-prefix] A failing entry (missing path, broken
+repository) MUST NOT abort the sweep: remaining entries are still
+processed, failures are summarized at the end, and the exit status is
+nonzero if any entry failed. [R-all-continues]
 
 ```transcript @R-all-prefix
-$ git issue ready --all
-[tracker] #48137e7 [open]  Implement git issue export --beads  (P: medium)
-[brain]   #a11ce55 [open]  Fix sync race  (P: high)
+$ git init -q a
+$ cd a
+$ git commit -q --allow-empty -m init
+$ git issue create "alpha task" >/dev/null 2>&1
+$ cd ..
+$ git issue repo add a /tmp/gi-rfc/a
+Registered 'a' -> /tmp/gi-rfc/a
+$ git issue list --all 2>/dev/null | grep -c "^\[a\] "
+1
 ```
 
 ```transcript @R-all-continues
-$ git issue list --all
-[tracker] #43c456e [open] Multi-project registry: repo add/list/rm, --repo, --all (P: medium)
-Warning: skipped 'old': /Users/ndn/gone does not exist
+$ git init -q a
+$ cd a
+$ git commit -q --allow-empty -m init
+$ git issue create "alpha task" >/dev/null 2>&1
+$ cd ..
+$ git issue repo add a /tmp/gi-rfc/a
+Registered 'a' -> /tmp/gi-rfc/a
+$ mkdir -p gone
+$ git issue repo add old /tmp/gi-rfc/gone
+Registered 'old' -> /tmp/gi-rfc/gone
+$ rmdir gone
+$ git issue list --all 2>/dev/null | grep -c "^\[a\] "
+1
+$ git issue list --all 2>&1 >/dev/null | grep -c "skipped 'old'"
+1
+$ git issue list --all >/dev/null 2>&1
+? 1
 ```
 
 ### Execution model (informative)
@@ -225,7 +322,7 @@ canonical lowercase storage). Names sit in git config's subsection
 position, which is case-sensitive — `issue.repo.Api.path` and
 `issue.repo.api.path` verifiably coexist as distinct keys — so unrestricted
 case admits confusable twins, and folding papers over that at the cost of a
-normalization rule whose behavior users must learn implicitly. Rejected in
+normalization rule whose behavior users learn implicitly. Rejected in
 favor of strict rejection: an explicit error is preferred over input that
 "works" while silently associating a differently-spelled name with a
 project. [R-name-charset] is therefore strict.
@@ -235,6 +332,14 @@ project. [R-name-charset] is therefore strict.
 Registering any repository the tool touches. Rejected: surprise writes to
 global config, and the registry stops being a statement of intent —
 explicit `repo add` came out of the original design conversation.
+
+### Aligned column output
+
+Padding `repo list` columns and `[<name>]` prefixes to the widest entry.
+Rejected: under byte-exact conformance, alignment makes every line's bytes
+depend on the whole registry — adding one long name rewrites all evidence
+— and parseability favors the fixed single-space form. Aligned display, if
+ever wanted, is a presentation flag, not the normative default.
 
 ## Security Considerations
 
@@ -276,12 +381,16 @@ alike.
 - 2026-08-14: draft-00 created.
 - 2026-08-14: name-case question raised in review; strict rejection
   confirmed over case-folding (recorded under Alternatives Considered).
-- 2026-08-14 (rev -01): author-call interview concluded. Added
-  `repo add --force` replacement [R-force-replace] (chosen over rm-then-add
-  with the rebinding risk noted and accepted; mitigated by mandatory
-  old->new reporting) and `repo prune` [R-prune] (explicit bulk cleanup of
-  missing entries, keeping list/--repo semantics as drafted). `--all`
-  failure behavior confirmed as drafted (continue + summarize + nonzero).
-- 2026-08-14 (rev -01): worktree refinement — registering a linked working
-  copy resolves to the primary [R-worktree-root]; issue refs are
-  per-repository and worktree paths are transient.
+- 2026-08-14 (rev -01): author-call interview concluded: `repo add --force`
+  [R-force-replace] (rebinding risk accepted, mitigated by mandatory
+  old->new reporting), `repo prune` [R-prune], `--all` behavior confirmed;
+  worktree refinement [R-worktree-root] (issue refs are per-repository,
+  worktree paths transient).
+- 2026-08-14 (rev -02): pushback review resolved. Evidence conventions
+  added: per-block sandbox at `/tmp/gi-rfc`, self-provisioning transcripts,
+  `? N` exit-status notation, deterministic projections for generated
+  identifiers, `fidelity=` modifier reserved. All transcripts rewritten
+  replayable. Alignment dropped from outputs (recorded under Alternatives
+  Considered); `repo list` line format made contractual; `--repo` accepted
+  in both flag positions (trailing preferred per git subcommand-promotion
+  convention).
