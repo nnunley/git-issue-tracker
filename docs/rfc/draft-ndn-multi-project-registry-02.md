@@ -47,9 +47,10 @@ when, and only when, they appear in all capitals, as shown here.
 Each transcript block in this document is an independent conformance test
 executed under replay-and-diff. The runner provides, per block, a fresh
 sandbox: an empty directory whose logical path is exactly `/tmp/gi-rfc`
-(the shell's working directory at block start), a `HOME` inside the sandbox
-with empty global git config, a configured git identity, and no registry
-entries. Blocks construct every piece of state they reference — no block
+(the shell's working directory at block start), `HOME` and `XDG_CONFIG_HOME`
+redirected inside the sandbox (empty global git config, no host excludes),
+system git config neutralized (`GIT_CONFIG_NOSYSTEM=1`), a configured git
+identity, and no registry entries. Blocks construct every piece of state they reference — no block
 depends on another block, on this repository, or on the author's machine.
 
 Notation: lines beginning `$ ` are commands (shell state persists within a
@@ -394,3 +395,6 @@ alike.
   Considered); `repo list` line format made contractual; `--repo` accepted
   in both flag positions (trailing preferred per git subcommand-promotion
   convention).
+- 2026-08-14 (rev -02): sandbox contract hardened from replay experience:
+  XDG_CONFIG_HOME redirected and system git config neutralized
+  (GIT_CONFIG_NOSYSTEM=1) join the runner obligations.
