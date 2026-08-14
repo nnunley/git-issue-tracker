@@ -245,7 +245,14 @@ jobs:
       run: git clone --depth 1 https://github.com/nnunley/llm-rfc-skill /tmp/llm-rfc-skill
 
     - name: Lint all RFC documents
-      run: /tmp/llm-rfc-skill/skill/rfc-lint docs/rfc/*.md
+      run: |
+        # Collect all RFC files (drafts and published, excluding index.md)
+        rfc_files=$(find docs/rfc -maxdepth 1 -type f \( -name 'draft-*.md' -o -name '[0-9]*.md' \))
+        if [ -z "$rfc_files" ]; then
+          echo "No RFC files found to lint"
+          exit 0
+        fi
+        /tmp/llm-rfc-skill/skill/rfc-lint $rfc_files
 
     - name: Run conformance tests (published RFCs)
       run: |
