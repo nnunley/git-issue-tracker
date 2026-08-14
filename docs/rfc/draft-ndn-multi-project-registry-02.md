@@ -44,27 +44,7 @@ when, and only when, they appear in all capitals, as shown here.
 
 ### Evidence conventions
 
-Each transcript block in this document is an independent conformance test
-executed under replay-and-diff. The runner provides, per block, a fresh
-sandbox: an empty directory whose logical path is exactly `/tmp/gi-rfc`
-(the shell's working directory at block start), `HOME` and `XDG_CONFIG_HOME`
-redirected inside the sandbox (empty global git config, no host excludes),
-system git config neutralized (`GIT_CONFIG_NOSYSTEM=1`), a configured git
-identity, and no registry entries. Blocks construct every piece of state they reference — no block
-depends on another block, on this repository, or on the author's machine.
-
-Notation: lines beginning `$ ` are commands (shell state persists within a
-block); other lines are the expected output, compared byte-exactly; a line
-`? N` asserts that the immediately preceding command exited with status N,
-and absent a `?` line the status is asserted to be 0. Where real output
-embeds generated identifiers or timestamps, the transcript asserts through
-a deterministic projection (`grep -c`, `cut`, `sort`) — the projection is
-part of the evidence. Runners on systems where `/tmp` is a symlink
-normalize exactly the sandbox-root prefix between its physical and logical
-spellings; no other substitution exists. A `fidelity=` modifier on the
-fence info string is reserved for future per-block strictness levels
-(e.g. strict alignment for state-machine tables and production rules) and
-is currently undefined.
+Evidence conventions are governed by draft-ndn-authoring-rfcs-00, section "Evidence conventions" (the process BCP). For this RFC: all transcript blocks start with no registry entries.
 
 ### Storage
 
@@ -395,6 +375,9 @@ alike.
   Considered); `repo list` line format made contractual; `--repo` accepted
   in both flag positions (trailing preferred per git subcommand-promotion
   convention).
+- 2026-08-14 (rev -02): evidence conventions now cite the process BCP
+  (draft-ndn-authoring-rfcs-00) as canonical; local text reduced to
+  document-specific notes.
 - 2026-08-14 (rev -02): sandbox contract hardened from replay experience:
   XDG_CONFIG_HOME redirected and system git config neutralized
   (GIT_CONFIG_NOSYSTEM=1) join the runner obligations.
