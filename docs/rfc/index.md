@@ -9,4 +9,4 @@ lock — concurrent publishes conflict here and merge resolution decides).
 
 ## Drafts
 
-- draft-ndn-multi-project-registry-00 — Multi-Project Registry for git-issue
+- draft-ndn-multi-project-registry-01 — Multi-Project Registry for git-issue

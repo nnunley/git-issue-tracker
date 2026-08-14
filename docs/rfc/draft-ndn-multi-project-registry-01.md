@@ -1,4 +1,4 @@
-# draft-ndn-multi-project-registry-00: Multi-Project Registry for git-issue
+# draft-ndn-multi-project-registry-01: Multi-Project Registry for git-issue
 
 **Status:** DRAFT
 **Category:** Standards-Track
@@ -72,15 +72,33 @@ MUST reject nonconforming names. [R-name-charset]
 
 ### repo add
 
-`repo add <name> <path>` MUST reject a name that is already registered;
-replacing an entry is an explicit `repo rm` followed by `repo add`.
-[R-reject-duplicate] The stored path MUST be absolute; a relative `<path>`
-argument is resolved against the current working directory at registration
-time. [R-abs-path]
+`repo add <name> <path>` MUST reject a name that is already registered.
+[R-reject-duplicate] `repo add --force <name> <path>` MUST replace the
+existing entry and MUST report both the old and new path, so a rebinding is
+never silent. [R-force-replace] The stored path MUST be absolute; a
+relative `<path>` argument is resolved against the current working
+directory at registration time. [R-abs-path]
+
+Issue refs belong to the repository, not to any particular checkout: when
+`<path>` is a linked secondary working copy, registration MUST resolve and
+store the primary working copy instead, and MUST report the substitution.
+For git this means a linked worktree resolves to the main worktree (per
+`git worktree list`); other multi-workspace systems layered on git (e.g.
+jj workspaces) resolve through the same git-level rule. [R-worktree-root]
+
+```transcript @R-worktree-root
+$ git issue repo add fix /Users/ndn/development/proj/.worktrees/fix-123
+Registered 'fix' -> /Users/ndn/development/proj (main worktree of the given path)
+```
 
 ```transcript @R-reject-duplicate
 $ git issue repo add tracker /elsewhere
-Error: 'tracker' is already registered (-> /Users/ndn/development/git-issue-tracker)
+Error: 'tracker' is already registered (-> /Users/ndn/development/git-issue-tracker); use --force to replace
+```
+
+```transcript @R-force-replace
+$ git issue repo add --force tracker /elsewhere
+Registered 'tracker' -> /elsewhere (replaced /Users/ndn/development/git-issue-tracker)
 ```
 
 ```transcript @R-abs-path
@@ -109,6 +127,21 @@ contents untouched — it forgets, never deletes. [R-repo-rm]
 ```transcript @R-repo-rm
 $ git issue repo rm old
 Removed 'old' (repository contents untouched)
+$ git issue repo list
+tracker  /Users/ndn/development/git-issue-tracker
+brain    /Users/ndn/development/brain
+```
+
+### repo prune
+
+`repo prune` MUST remove exactly the entries whose path does not exist,
+MUST report each removal by name and path, and MUST NOT touch entries whose
+path exists. [R-prune] Pruning is the only bulk registry mutation; no other
+command removes entries as a side effect.
+
+```transcript @R-prune
+$ git issue repo prune
+Pruned 'old' (/Users/ndn/gone)
 $ git issue repo list
 tracker  /Users/ndn/development/git-issue-tracker
 brain    /Users/ndn/development/brain
@@ -243,3 +276,9 @@ alike.
 - 2026-08-14: draft-00 created.
 - 2026-08-14: name-case question raised in review; strict rejection
   confirmed over case-folding (recorded under Alternatives Considered).
+- 2026-08-14 (rev -01): author-call interview concluded. Added
+  `repo add --force` replacement [R-force-replace] (chosen over rm-then-add
+  with the rebinding risk noted and accepted; mitigated by mandatory
+  old->new reporting) and `repo prune` [R-prune] (explicit bulk cleanup of
+  missing entries, keeping list/--repo semantics as drafted). `--all`
+  failure behavior confirmed as drafted (continue + summarize + nonzero).
