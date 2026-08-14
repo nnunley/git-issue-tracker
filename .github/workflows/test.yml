@@ -228,3 +228,41 @@ jobs:
         fi
         
         echo "✅ Performance tests passed"
+
+  rfc-conformance:
+    runs-on: ubuntu-latest
+    name: RFC Conformance
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Git
+      run: |
+        git config --global user.name "Test User"
+        git config --global user.email "test@example.com"
+
+    - name: Clone RFC tooling
+      run: git clone --depth 1 https://github.com/nnunley/llm-rfc-skill /tmp/llm-rfc-skill
+
+    - name: Lint all RFC documents
+      run: /tmp/llm-rfc-skill/skill/rfc-lint docs/rfc/*.md
+
+    - name: Run conformance tests (published RFCs)
+      run: |
+        # Guard: only run rfc-run if published RFCs exist
+        if [ "$(find docs/rfc -maxdepth 1 -type f -name '[0-9]*.md' | wc -l)" -gt 0 ]; then
+          /tmp/llm-rfc-skill/skill/rfc-run docs/rfc/[0-9]*.md
+        else
+          echo "No published RFCs yet (expected at this stage)"
+        fi
+
+    - name: Run conformance tests (draft RFCs) - informational only
+      continue-on-error: true
+      run: |
+        # Optional: run drafts as non-failing step for visibility
+        if [ "$(find docs/rfc -maxdepth 1 -type f -name 'draft-*.md' | wc -l)" -gt 0 ]; then
+          echo "Running draft RFC conformance tests (non-blocking)..."
+          /tmp/llm-rfc-skill/skill/rfc-run docs/rfc/draft-*.md
+        else
+          echo "No draft RFCs found"
+        fi
