@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Install git-issue as a native git subcommand
 
 set -e
@@ -12,8 +12,12 @@ NC='\033[0m'
 echo -e "${BLUE}🔧 Installing git-issue as native git subcommand...${NC}"
 echo ""
 
-# Determine installation directory
-if [[ -w "/usr/local/bin" ]]; then
+# Determine installation directory.
+# GIT_ISSUE_INSTALL_DIR overrides autodetection (used by tests and packagers).
+if [[ -n "${GIT_ISSUE_INSTALL_DIR:-}" ]]; then
+    mkdir -p "$GIT_ISSUE_INSTALL_DIR"
+    INSTALL_DIR="$GIT_ISSUE_INSTALL_DIR"
+elif [[ -w "/usr/local/bin" ]]; then
     INSTALL_DIR="/usr/local/bin"
 elif [[ -w "$HOME/.local/bin" ]]; then
     INSTALL_DIR="$HOME/.local/bin"
@@ -51,9 +55,13 @@ cp "$(dirname "$0")/bin/gh-to-git-issue" "$INSTALL_DIR/gh-to-git-issue"
 chmod +x "$INSTALL_DIR/git-issue"
 chmod +x "$INSTALL_DIR/gh-to-git-issue"
 
-# Install awk programs
+# Install awk programs (glob must be outside the quotes to expand)
 mkdir -p "$INSTALL_DIR/../share/git-issue/awk"
-cp "$(dirname "$0")/share/git-issue/awk/*.awk" "$INSTALL_DIR/../share/git-issue/awk/"
+cp "$(dirname "$0")"/share/git-issue/awk/*.awk "$INSTALL_DIR/../share/git-issue/awk/"
+
+# Install hook templates (setup-sync needs them)
+mkdir -p "$INSTALL_DIR/../share/git-issue/hooks"
+cp "$(dirname "$0")"/hooks/post-merge "$(dirname "$0")"/hooks/pre-push "$INSTALL_DIR/../share/git-issue/hooks/"
 
 echo -e "${GREEN}✅ Installation complete!${NC}"
 echo ""

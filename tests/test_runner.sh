@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Test runner for git-issue - uses lightweight bash testing
 # No external dependencies - pure bash assertions
 

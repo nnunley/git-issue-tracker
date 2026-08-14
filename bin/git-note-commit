@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Script to add issue tracking and thoughts to git commits using git notes
 
 set -e

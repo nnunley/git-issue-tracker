@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Content-safety tests: hostile or unlucky issue CONTENT must never hide,
 # corrupt, or forge OTHER issues in any listing, and must not abort commands.
 

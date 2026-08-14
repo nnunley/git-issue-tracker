@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Test issue description functionality
 
 # Add the git-issue script to PATH for testing (resolve before cd)

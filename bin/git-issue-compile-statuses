@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Compile statuses definition → statuses.bash
 # Usage: git-issue-compile-statuses [input] [output]
 # Generates bash case statements for zero-overhead status validation

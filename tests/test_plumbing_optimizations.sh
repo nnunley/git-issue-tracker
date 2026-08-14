@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Test that plumbing optimizations work correctly and maintain compatibility
 
 # Add the git-issue script to PATH for testing (resolve before cd)

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Dual-mode + multi-call dispatch tests
 set -e
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
