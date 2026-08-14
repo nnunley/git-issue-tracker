@@ -185,6 +185,18 @@ A bare repository whose contents are the registry, syncable by push/pull.
 Rejected as the heaviest option; revisitable if registry sync across
 machines becomes a requirement.
 
+### Case-folding names instead of rejecting them
+
+Accepting `Api` and registering it as `api` (case-insensitive input,
+canonical lowercase storage). Names sit in git config's subsection
+position, which is case-sensitive — `issue.repo.Api.path` and
+`issue.repo.api.path` verifiably coexist as distinct keys — so unrestricted
+case admits confusable twins, and folding papers over that at the cost of a
+normalization rule whose behavior users must learn implicitly. Rejected in
+favor of strict rejection: an explicit error is preferred over input that
+"works" while silently associating a differently-spelled name with a
+project. [R-name-charset] is therefore strict.
+
 ### Automatic registration
 
 Registering any repository the tool touches. Rejected: surprise writes to
@@ -229,3 +241,5 @@ alike.
 - 2026-08-13: Requirements interview conducted (storage, scope, mechanism,
   registration policy); design synthesis approved with the refactor spec.
 - 2026-08-14: draft-00 created.
+- 2026-08-14: name-case question raised in review; strict rejection
+  confirmed over case-folding (recorded under Alternatives Considered).
