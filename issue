@@ -3,7 +3,9 @@ title: bench_deps.sh hangs on macOS
 status: open
 priority: medium
 created: 2026-08-14T02:06:19Z
-updated: 2026-08-14T02:06:19Z
+updated: 2026-08-14T02:06:20Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
+
+tests/bench_deps.sh hangs indefinitely on macOS (confirmed pre-existing: reproduces at merge-base before the portable-install fixes). Passes on ubuntu. Likely gdate/date or read loop difference; excluded from test batteries since it is a benchmark.
