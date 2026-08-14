@@ -9,3 +9,6 @@ assignee: Norman Nunley, Jr
 hash_source: content
 
 Design settled in docs/plans/2026-08-13-modularization-refactor-design.md (sub-project 2): global git config store issue.repo.<name>.path; repo add/list/rm; --repo <name> targeting; list/ready --all aggregation with [name] prefixes; one subprocess per repo. Was blocked by the dispatch-and-awk epic (9c2d3e9, closed) — now ready.
+
+## Comments
+[2026-08-14T06:08:27Z] Norman Nunley, Jr: RFC drafted: docs/rfc/draft-ndn-multi-project-registry-00.md (DRAFT, lint-clean, 8 provable requirements with embedded evidence). Implementation plan should cover: R-config-store R-name-charset R-reject-duplicate R-abs-path R-list-missing R-repo-rm R-target-repo R-target-invalid R-all-prefix R-all-continues
