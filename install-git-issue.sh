@@ -17,7 +17,8 @@ echo ""
 if [[ -n "${GIT_ISSUE_INSTALL_DIR:-}" ]]; then
     mkdir -p "$GIT_ISSUE_INSTALL_DIR"
     INSTALL_DIR="$GIT_ISSUE_INSTALL_DIR"
-elif [[ -w "/usr/local/bin" ]]; then
+elif [[ -w "/usr/local/bin" && -w "/usr/local/share" ]]; then
+    # Both halves must be writable: bin for the tools, share for awk + hooks
     INSTALL_DIR="/usr/local/bin"
 elif [[ -w "$HOME/.local/bin" ]]; then
     INSTALL_DIR="$HOME/.local/bin"
