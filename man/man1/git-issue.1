@@ -141,6 +141,47 @@ List non-closed issues in topological (dependency) order.
 .BI "deps [" id "] [--dot]"
 Print the dependency graph as text, or as Graphviz DOT with
 .BR \-\-dot .
+.SS Registry
+.TP
+.BI "repo add [\-\-force] " "name path"
+Register
+.I path
+under
+.I name
+in the global registry.
+The stored path is absolute; a relative
+.I path
+is resolved against the current directory.
+A linked worktree is stored as its main worktree, and the substitution is
+reported.
+Registering an already-registered name fails unless
+.B \-\-force
+is given, in which case both the old and the new path are reported.
+Names are 1\(en63 characters of
+.BR a\-z ,
+.BR 0\-9 ,
+.B \-
+and
+.BR _ .
+.TP
+.B repo list
+Print one entry per line as
+.IR name " " path ,
+single-space separated, with
+.B " (missing)"
+appended when the path does not exist.
+Missing entries are listed, never omitted, and never cause failure.
+This format is a contract; scripts and agents parse it.
+.TP
+.BI "repo rm " name
+Forget
+.IR name .
+The repository's contents are left untouched.
+.TP
+.B repo prune
+Forget exactly those entries whose path no longer exists, reporting each
+by name and path.
+This is the only bulk registry mutation.
 .SS Configuration
 .TP
 .B statuses
@@ -155,6 +196,27 @@ Run once after upgrading.
 .TP
 .BI "setup-sync [enable|disable|status]"
 Toggle automatic git notes sync on push and pull.
+.SH GLOBAL OPTIONS
+.TP
+.BI "\-\-repo " name
+Run the command in the registered repository
+.IR name ,
+exactly as if invoked from that directory.
+Accepted both before and after the subcommand.
+An unknown name, or a registered path that does not exist, is an error
+with a nonzero exit.
+.TP
+.B \-\-all
+Supported by
+.B list
+and
+.BR ready .
+Run against every registered repository, prefixing each output line with
+.BI [ name "] " \&.
+A failing entry does not abort the sweep: the remaining repositories are
+still processed, the failures are summarized on standard error, and the
+exit status is nonzero.
+Repositories are visited sequentially, one subprocess each.
 .SH STATUSES
 Six statuses ship by default:
 .BR open ,
@@ -258,6 +320,14 @@ Outside a repo,
 .B git\-issue
 uses an XDG-compliant standalone directory.
 .SH FILES
+.TP
+.B ~/.gitconfig
+Holds the multi-project registry as
+.BI issue.repo. name .path
+entries.
+Written only by
+.BR "git issue repo" ;
+no other command mutates it.
 .TP
 .B .git\-issue/statuses
 Project-level status definitions.

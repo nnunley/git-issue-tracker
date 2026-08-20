@@ -84,7 +84,15 @@ git issue-status
 | `git issue ready` | List issues with no open blockers |
 | `git issue topo` | Topological ordering of issues |
 | `git issue deps [<id>] [--dot]` | Dependency graph (text or Graphviz DOT) |
+| `git issue repo add [--force] <name> <path>` | Register a repository in the global registry |
+| `git issue repo list` | List registered repositories as `<name> <path>` |
+| `git issue repo rm <name>` | Forget a repository (contents untouched) |
+| `git issue repo prune` | Forget entries whose path no longer exists |
 | `git issue-status` | Show status summary |
+
+Two global options work with any command: `--repo <name>` runs it in a
+registered repository, and `--all` sweeps `list` or `ready` across every
+one. Both are accepted before or after the subcommand.
 
 ### Statuses
 - `open` - New issue, not yet started
@@ -150,6 +158,55 @@ git issue deps --dot | dot -Tpng -o deps.png
 - Marking a blocker `closed` cascades unblock to dependents
 - Cycle detection via POSIX `tsort` prevents circular dependencies
 - `dep rebuild` regenerates the edge index if it gets out of sync
+
+## Multi-Project Registry
+
+`git-issue` normally works on whatever repository you are standing in.
+The registry names your repositories so you — or an agent — can reach any
+of them from anywhere, and ask "what should I work on next, *anywhere*?"
+
+```bash
+# Register repositories (explicit: nothing is ever registered for you)
+git issue repo add tracker ~/src/git-issue-tracker
+git issue repo add api ~/src/api
+# Registered 'tracker' -> /home/you/src/git-issue-tracker
+
+# See what is tracked. Entries whose path is gone are shown, not hidden.
+git issue repo list
+# tracker /home/you/src/git-issue-tracker
+# api /home/you/src/api
+
+# Run any command against a registered repository, from anywhere
+git issue --repo api list
+git issue create "New bug" --repo api      # either flag position works
+
+# Sweep every registered repository; each line is prefixed with its name
+git issue ready --all
+# [tracker] #a064d35 [open]  Fix navbar  (P: high)
+# [api] #d4e5f6a [open]  Rate limiting  (P: medium)
+
+# Forget a repository (this never deletes anything on disk)
+git issue repo rm api
+git issue repo prune          # drop entries whose path no longer exists
+```
+
+The registry is stored in your global git config as
+`issue.repo.<name>.path`, so anything that can read git config can read
+it without git-issue installed:
+
+```bash
+git config --global --get-regexp '^issue\.repo\.'
+```
+
+Names are lowercase letters, digits, `-` and `_`. A path that is a linked
+worktree registers as its main worktree, since issue refs belong to the
+repository rather than to a checkout. A sweep never stops at a broken
+entry: it reports the skip on stderr, keeps going, and exits nonzero.
+
+With no registry entries, behavior is exactly as before.
+
+The full specification is
+[`docs/rfc/draft-ndn-multi-project-registry-02.md`](docs/rfc/draft-ndn-multi-project-registry-02.md).
 
 ## 🔗 Git Integration
 
