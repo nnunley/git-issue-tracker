@@ -1,7 +1,7 @@
 # draft-ndn-multi-project-registry-02: Multi-Project Registry for git-issue
 
 **Status:** DRAFT
-**Corpus:** red (spec-first — transcripts are the acceptance criteria for the unimplemented registry)
+**Corpus:** green
 **Category:** Standards-Track
 **Authors:** Norman Nunley, Jr <nnunley@gmail.com>, Claude (drafting agent)
 **Date:** 2026-08-14
@@ -382,3 +382,16 @@ alike.
 - 2026-08-14 (rev -02): sandbox contract hardened from replay experience:
   XDG_CONFIG_HOME redirected and system git config neutralized
   (GIT_CONFIG_NOSYSTEM=1) join the runner obligations.
+- 2026-08-20 (rev -02): registry implemented in `bin/git-issue`; corpus
+  flipped red -> green (12/12 transcripts replay, and the [R-name-charset]
+  table matches). Two findings from implementation, both recorded rather
+  than silently absorbed:
+  - `repo list`'s single-space line format and the `[<name>] ` prefix are
+    emitted uncolored, since [R-config-store] and friends are byte-exact
+    and the rest of the tool's output is unconditionally ANSI-colored.
+  - Under aggregation the per-repository decoration (`Issues:`,
+    `Ready to work on:`, `  (none)`) is suppressed, so a sweep emits
+    exactly one prefixed line per issue. [R-all-prefix]'s witness
+    (`grep -c "^\[a\] "` = 1 for a one-issue repository) requires this;
+    the normative "prefix each output line" sentence should be read as
+    ranging over the sweep's lines, not over each child's full display.
