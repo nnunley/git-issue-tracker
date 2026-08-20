@@ -247,6 +247,19 @@ jobs:
     - name: Clone RFC tooling
       run: git clone --depth 1 https://github.com/nnunley/llm-rfc-skill /tmp/llm-rfc-skill
 
+    # The corpus exercises `git issue` itself, so this job must install the
+    # subject under test. Without it the transcripts fail with "git: 'issue'
+    # is not a git command" — which a red-by-declaration corpus hides, since
+    # `rfc-run --expect` treats all-blocks-failing as the declared outcome.
+    - name: Install git-issue (subject under test)
+      run: |
+        chmod +x bin/* tests/*.sh
+        make install PREFIX=$HOME/.local
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Verify git-issue is on PATH
+      run: git issue --help > /dev/null
+
     - name: Lint all RFC documents
       run: |
         # Collect all RFC files (drafts and published, excluding index.md)
