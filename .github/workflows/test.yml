@@ -67,6 +67,9 @@ jobs:
     - name: Run dispatch tests
       run: ./tests/test_dispatch.sh
 
+    - name: Run multi-project registry tests
+      run: ./tests/test_registry.sh
+
     - name: Run install layout smoke test
       run: ./tests/test_install_layout.sh
 

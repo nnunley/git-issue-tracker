@@ -263,6 +263,14 @@ usage() {
     echo "  deps [<id>] [--dot]                      Show dependency graph (text or Graphviz DOT)"
     echo "  migrate-status                                                              Migrate issue data from state→status"
     echo "  setup-sync [enable|disable|status]     Configure automatic git notes sync"
+    echo "  repo add [--force] <name> <path>        Register a repository in the global registry"
+    echo "  repo list                               List registered repositories as '<name> <path>'"
+    echo "  repo rm <name>                          Forget a repository (contents untouched)"
+    echo "  repo prune                              Forget entries whose path no longer exists"
+    echo ""
+    echo "Global options:"
+    echo "  --repo <name>                           Run the command in a registered repository"
+    echo "  --all                                   (list, ready) run across every registered repository"
     echo ""
     echo "Examples:"
     echo "  git issue create 'Add user authentication' --description='Implement OAuth2 login'"
@@ -272,6 +280,9 @@ usage() {
     echo "  git issue commit --fixes a1b2c3d      # Add trailer to HEAD commit"
     echo "  git issue show a1b2c3d --with-commits # Show issue with related commits"
     echo "  git issue scan-commits --since='1 week ago'  # Find issue references in commits"
+    echo "  git issue repo add tracker ~/src/tracker      # Register a repository"
+    echo "  git issue --repo tracker list                 # Run anywhere, against 'tracker'"
+    echo "  git issue ready --all                         # Ready work across every repository"
     echo "  gh issue list --json number,title,body,state,author,createdAt,updatedAt,url | gh-to-git-issue | git issue import"
     echo ""
 }
@@ -519,8 +530,12 @@ $description"
 
 # List all issues
 list_issues() {
-    echo -e "${BLUE}Issues:${NC}"
-    echo ""
+    # Aggregation (--all) suppresses the decoration: the sweep's contract
+    # is one prefixed line per issue.
+    if [[ -z "${GIT_ISSUE_NO_HEADER:-}" ]]; then
+        echo -e "${BLUE}Issues:${NC}"
+        echo ""
+    fi
 
     # Batch-read all issues, extract fields via awk (3 git processes total)
     _issue_tsv_stream | while IFS=$'\037' read -r id status_val title priority assignee role _; do
@@ -2541,9 +2556,9 @@ list_ready_issues() {
         results="${results}${rank} ${line}"$'\n'
     done <<< "$all_tsv"
 
-    echo -e "${BLUE}Ready to work on:${NC}"
+    [[ -z "${GIT_ISSUE_NO_HEADER:-}" ]] && echo -e "${BLUE}Ready to work on:${NC}"
     if [[ -z "$results" ]]; then
-        echo "  (none)"
+        [[ -z "${GIT_ISSUE_NO_HEADER:-}" ]] && echo "  (none)"
     else
         local sorted
         sorted=$(echo "$results" | sort -n | sed 's/^[0-9] //' | grep -v '^$')
@@ -2909,6 +2924,307 @@ $comments"
     echo -e "${GREEN}Format migration complete: $migrated migrated, $skipped already up to date${NC}"
 }
 
+# ---------------------------------------------------------------------------
+# Multi-project registry — draft-ndn-multi-project-registry-02
+#
+# The registry is `issue.repo.<name>.path` in global git config; nothing
+# else stores it, so stock git reads it without git-issue installed.
+# Messages here are deliberately uncolored: they are a byte-exact contract
+# with the RFC's evidence corpus (and with agents parsing `repo list`).
+# ---------------------------------------------------------------------------
+
+# Path of this script, valid after a `cd` — needed to re-exec ourselves in
+# a target repository (see the RFC's Execution model).
+_GI_SELF="$GIT_ISSUE_BIN_DIR/${0##*/}"
+
+# repo-name per the RFC's Formal Grammar.
+_gi_reg_name_valid() {
+    [[ "$1" =~ ^[a-z0-9_-]{1,63}$ ]]
+}
+
+# Lexical absolutization. Deliberately does NOT resolve symlinks: the
+# registry stores the path as the user spelled it, and `pwd -P` would
+# rewrite e.g. /tmp -> /private/tmp on macOS.
+_gi_abs_path() {
+    local p="$1" part
+    local -a out=()
+    [[ "$p" != /* ]] && p="$PWD/$p"
+    local IFS='/'
+    for part in $p; do
+        case "$part" in
+            ''|.) ;;
+            ..)   [[ ${#out[@]} -gt 0 ]] && unset "out[$(( ${#out[@]} - 1 ))]" ;;
+            *)    out+=("$part") ;;
+        esac
+    done
+    unset IFS
+    if [[ ${#out[@]} -eq 0 ]]; then
+        printf '/'
+    else
+        printf '/%s' "${out[@]}"
+    fi
+}
+
+# Relative path from $1 to $2 (both absolute). Used to carry a
+# physically-resolved answer back into the caller's logical namespace.
+_gi_relpath() {
+    local from="$1" to="$2" i j
+    local -a f t rel=()
+    local IFS='/'
+    read -r -a f <<< "${from#/}"
+    read -r -a t <<< "${to#/}"
+    unset IFS
+    i=0
+    while [[ $i -lt ${#f[@]} && $i -lt ${#t[@]} && "${f[i]}" == "${t[i]}" ]]; do
+        i=$(( i + 1 ))
+    done
+    for (( j = i; j < ${#f[@]}; j++ )); do rel+=(".."); done
+    for (( j = i; j < ${#t[@]}; j++ )); do rel+=("${t[j]}"); done
+    if [[ ${#rel[@]} -eq 0 ]]; then
+        printf '.'
+    else
+        local IFS='/'
+        printf '%s' "${rel[*]}"
+    fi
+}
+
+# If $1 is a linked secondary working copy, echo the main worktree in the
+# same (logical) namespace as $1 and succeed; otherwise fail. Issue refs
+# live in the repository, not in a checkout of it.
+_gi_worktree_root() {
+    local abs="$1" gitdir commondir main_phys given_phys rel
+    [[ -d "$abs" ]] || return 1
+    gitdir=$(git -C "$abs" rev-parse --git-dir 2>/dev/null) || return 1
+    commondir=$(git -C "$abs" rev-parse --git-common-dir 2>/dev/null) || return 1
+    [[ "$gitdir" != "$commondir" ]] || return 1
+    [[ "${commondir##*/}" == ".git" ]] || return 1
+    main_phys=$(cd "${commondir%/*}" 2>/dev/null && pwd -P) || return 1
+    given_phys=$(cd "$abs" 2>/dev/null && pwd -P) || return 1
+    rel=$(_gi_relpath "$given_phys" "$main_phys")
+    _gi_abs_path "$abs/$rel"
+}
+
+_gi_reg_get() {
+    git config --global --get "issue.repo.$1.path" 2>/dev/null
+}
+
+# Emit "name<TAB>path" per entry, in git config file order.
+_gi_reg_list() {
+    local key value name
+    git config --global --get-regexp '^issue\.repo\..*\.path$' 2>/dev/null |
+    while read -r key value; do
+        name="${key#issue.repo.}"
+        name="${name%.path}"
+        printf '%s\t%s\n' "$name" "$value"
+    done
+}
+
+gi_repo_add() {
+    local force=0 name="" path="" have_name=0 have_path=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f) force=1 ;;
+            --) ;;
+            -*) printf "Error: unknown flag '%s' for 'repo add'\n" "$1" >&2; return 1 ;;
+            *)
+                if [[ $have_name -eq 0 ]]; then
+                    name="$1"; have_name=1
+                elif [[ $have_path -eq 0 ]]; then
+                    path="$1"; have_path=1
+                else
+                    printf "Error: 'repo add' takes exactly <name> <path>\n" >&2; return 1
+                fi
+                ;;
+        esac
+        shift
+    done
+    if [[ $have_name -eq 0 || $have_path -eq 0 ]]; then
+        printf "Error: usage: git issue repo add [--force] <name> <path>\n" >&2
+        return 1
+    fi
+    if ! _gi_reg_name_valid "$name"; then
+        printf "Error: invalid repository name '%s' (allowed: 1-63 of a-z, 0-9, '-', '_')\n" "$name" >&2
+        return 1
+    fi
+
+    local abs note="" root existing
+    abs=$(_gi_abs_path "$path")
+    if root=$(_gi_worktree_root "$abs"); then
+        abs="$root"
+        note=" (main worktree of the given path)"
+    fi
+
+    if existing=$(_gi_reg_get "$name"); then
+        if [[ $force -eq 0 ]]; then
+            printf "Error: '%s' is already registered (-> %s); use --force to replace\n" "$name" "$existing" >&2
+            return 1
+        fi
+        git config --global "issue.repo.$name.path" "$abs"
+        printf "Registered '%s' -> %s%s (replaced %s)\n" "$name" "$abs" "$note" "$existing"
+        return 0
+    fi
+    git config --global "issue.repo.$name.path" "$abs"
+    printf "Registered '%s' -> %s%s\n" "$name" "$abs" "$note"
+}
+
+# One entry per line as "<name> <path>", single spaces, no alignment —
+# this line format is a contract; agents parse it.
+gi_repo_list() {
+    local name path
+    _gi_reg_list | while IFS=$'\t' read -r name path; do
+        if [[ -e "$path" ]]; then
+            printf '%s %s\n' "$name" "$path"
+        else
+            printf '%s %s (missing)\n' "$name" "$path"
+        fi
+    done
+}
+
+gi_repo_rm() {
+    local name="${1:-}"
+    if [[ -z "$name" ]]; then
+        printf "Error: usage: git issue repo rm <name>\n" >&2
+        return 1
+    fi
+    if ! _gi_reg_get "$name" >/dev/null; then
+        printf "Error: '%s' is not a registered repository (see: git issue repo list)\n" "$name" >&2
+        return 1
+    fi
+    git config --global --remove-section "issue.repo.$name" >/dev/null 2>&1
+    printf "Removed '%s' (repository contents untouched)\n" "$name"
+}
+
+gi_repo_prune() {
+    local name path
+    while IFS=$'\t' read -r name path; do
+        [[ -n "$name" ]] || continue
+        [[ -e "$path" ]] && continue
+        git config --global --remove-section "issue.repo.$name" >/dev/null 2>&1
+        printf "Pruned '%s' (%s)\n" "$name" "$path"
+    done < <(_gi_reg_list)
+}
+
+gi_repo_command() {
+    local sub="${1:-}"
+    [[ $# -gt 0 ]] && shift
+    case "$sub" in
+        add)   gi_repo_add "$@" ;;
+        list)  gi_repo_list "$@" ;;
+        rm)    gi_repo_rm "$@" ;;
+        prune) gi_repo_prune "$@" ;;
+        ""|--help|-h|help)
+            printf "Usage: git issue repo <add|list|rm|prune>\n" >&2
+            [[ -z "$sub" ]] && return 1
+            return 0
+            ;;
+        *)
+            printf "Error: unknown 'repo' subcommand '%s' (expected add, list, rm or prune)\n" "$sub" >&2
+            return 1
+            ;;
+    esac
+}
+
+# Run the command in a registered repository, exactly as if invoked from
+# that directory. One process per repository: GIT_DIR, the caches and the
+# compiled status machine are all process-global state.
+_gi_target_repo() {
+    local name="$1"; shift
+    local path
+    if ! path=$(_gi_reg_get "$name"); then
+        printf "Error: '%s' is not a registered repository (see: git issue repo list)\n" "$name" >&2
+        exit 1
+    fi
+    if [[ ! -d "$path" ]]; then
+        printf "Error: '%s' points to %s, which does not exist\n" "$name" "$path" >&2
+        exit 1
+    fi
+    cd "$path" || exit 1
+    unset GIT_DIR
+    exec "$_GI_SELF" "$@"
+}
+
+# Sweep every registry entry, prefixing each stdout line with "[<name>] ".
+# A failing entry never aborts the sweep; failures are summarized on
+# stderr and make the exit status nonzero.
+_gi_aggregate() {
+    local -a argv=("$@")
+    local name path line rc failures=0
+    while IFS=$'\t' read -r name path; do
+        [[ -n "$name" ]] || continue
+        if [[ ! -d "$path" ]]; then
+            printf "Warning: skipped '%s' (%s does not exist)\n" "$name" "$path" >&2
+            failures=$(( failures + 1 ))
+            continue
+        fi
+        ( cd "$path" && unset GIT_DIR && GIT_ISSUE_NO_HEADER=1 exec "$_GI_SELF" "${argv[@]}" ) |
+        while IFS= read -r line; do
+            printf '[%s] %s\n' "$name" "$line"
+        done
+        rc=${PIPESTATUS[0]}
+        if [[ "$rc" -ne 0 ]]; then
+            printf "Warning: skipped '%s' (%s: git-issue exited %s)\n" "$name" "$path" "$rc" >&2
+            failures=$(( failures + 1 ))
+        fi
+    done < <(_gi_reg_list)
+    [[ $failures -eq 0 ]]
+}
+
+# Pre-dispatch: peel off --repo/--all (accepted before or after the
+# subcommand) and handle `repo`, all before any storage detection — those
+# paths must not touch, or create, a per-directory issue store.
+_gi_dispatch() {
+    local -a rest=()
+    local arg target="" all=0 want_target=0
+    for arg in "$@"; do
+        if [[ $want_target -eq 1 ]]; then
+            target="$arg"; want_target=0; continue
+        fi
+        case "$arg" in
+            --repo)   want_target=1 ;;
+            --repo=*) target="${arg#--repo=}" ;;
+            --all)    all=1 ;;
+            *)        rest+=("$arg") ;;
+        esac
+    done
+    if [[ $want_target -eq 1 ]]; then
+        printf "Error: --repo requires a repository name (see: git issue repo list)\n" >&2
+        exit 1
+    fi
+
+    if [[ "${rest[0]:-}" == "repo" ]]; then
+        if [[ -n "$target" || $all -eq 1 ]]; then
+            printf "Error: 'repo' manages the registry; --repo/--all do not apply to it\n" >&2
+            exit 1
+        fi
+        gi_repo_command "${rest[@]:1}"
+        return $?
+    fi
+
+    if [[ -n "$target" && $all -eq 1 ]]; then
+        printf "Error: --repo and --all are mutually exclusive\n" >&2
+        exit 1
+    fi
+
+    if [[ $all -eq 1 ]]; then
+        case "${rest[0]:-}" in
+            list|ready) ;;
+            *)
+                printf "Error: --all is supported only by 'list' and 'ready'\n" >&2
+                exit 1
+                ;;
+        esac
+        _gi_aggregate "${rest[@]}" || exit 1
+        return 0
+    fi
+
+    if [[ -n "$target" ]]; then
+        _gi_target_repo "$target" ${rest[@]+"${rest[@]}"}
+    fi
+
+    main ${rest[@]+"${rest[@]}"}
+}
+
+
 main() {
     # Initialize storage backend before any operations
     detect_storage_backend
@@ -3177,7 +3493,7 @@ status_report() {
 _gi_entry() {
     case "$(basename "$0")" in
         git-issue-status) status_report "$@" ;;
-        *)                main "$@" ;;
+        *)                _gi_dispatch "$@" ;;
     esac
 }
 
