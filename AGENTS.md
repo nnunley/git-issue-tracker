@@ -1,5 +1,16 @@
 # Agent Instructions for git-issue-tracker
 
+## Ledger
+
+This repo tracks agent working-state with `ledger` (durable, git-backed,
+stored in `refs/ledger/*`). Run `ledger ls` at the start of a session to see
+open work before starting new work. Record status and handoffs with
+`ledger set` / `ledger note`; never write secrets into a ledger entry.
+
+Read `rfc-tooling-dependency` before touching `~/development/llm-rfc-skill`:
+that repo is worked by several agents and has its own coordination ledger
+with rules about claiming shared files.
+
 ## Project Overview
 
 `git-issue` is a lightweight, git-native issue tracking CLI that stores issues as git notes with hash-based IDs. Pure bash + git, zero external dependencies.

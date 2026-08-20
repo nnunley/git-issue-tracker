@@ -6,7 +6,7 @@ SHAREDIR = $(DESTDIR)$(PREFIX)/share/git-issue
 MAN1DIR = $(DESTDIR)$(PREFIX)/share/man/man1
 MAN8DIR = $(DESTDIR)$(PREFIX)/share/man/man8
 
-.PHONY: install uninstall test test-deps test-content-safety test-dispatch test-layout bench-deps clean install-mcp uninstall-mcp test-mcp build-mcp clean-mcp
+.PHONY: install uninstall test test-deps test-content-safety test-dispatch test-layout test-registry bench-deps clean install-mcp uninstall-mcp test-mcp build-mcp clean-mcp
 
 install:
 	@echo "Installing git-issue..."
@@ -92,12 +92,17 @@ test-layout:
 	chmod +x tests/test_install_layout.sh
 	./tests/test_install_layout.sh
 
+test-registry:
+	@echo "Running multi-project registry tests..."
+	chmod +x tests/test_registry.sh
+	./tests/test_registry.sh
+
 bench-deps:
 	@echo "Running dependency benchmark..."
 	chmod +x tests/bench_deps.sh
 	./tests/bench_deps.sh $(COUNT)
 
-test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout
+test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-registry
 
 clean:
 	@echo "Cleaning up..."
