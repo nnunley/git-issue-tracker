@@ -1,9 +1,9 @@
 id: 43c456e
 title: Multi-project registry: repo add/list/rm, --repo, --all
-status: open
+status: closed
 priority: medium
 created: 2026-08-13T21:15:40Z
-updated: 2026-08-13T21:15:40Z
+updated: 2026-08-21T21:34:16Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
