@@ -270,22 +270,9 @@ jobs:
         fi
         /tmp/llm-rfc-skill/skill/rfc-lint $rfc_files
 
-    - name: Run conformance tests (published RFCs)
-      run: |
-        # Guard: only run rfc-run if published RFCs exist
-        if [ "$(find docs/rfc -maxdepth 1 -type f -name '[0-9]*.md' | wc -l)" -gt 0 ]; then
-          /tmp/llm-rfc-skill/skill/rfc-run docs/rfc/[0-9]*.md
-        else
-          echo "No published RFCs yet (expected at this stage)"
-        fi
-
-    - name: Verify draft corpus declarations (blocking — red only by declaration)
-      run: |
-        if [ "$(find docs/rfc -maxdepth 1 -type f -name 'draft-*.md' | wc -l)" -gt 0 ]; then
-          /tmp/llm-rfc-skill/skill/rfc-run --expect docs/rfc/draft-*.md
-        else
-          echo "No draft RFCs found"
-        fi
+    - name: Full conformance gate (rfc-check)
+      run: /tmp/llm-rfc-skill/skill/rfc-check docs/rfc
+      shell: bash
 
     - name: Per-document conformance report
       if: always()
