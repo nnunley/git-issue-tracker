@@ -109,8 +109,10 @@ Error: unsupported porcelain version 'v2' (supported: v1)
 
 In porcelain mode, stdout MUST carry records and nothing else: no ANSI
 styling, no headings, no `(none)` placeholders, no tips. An empty result
-MUST produce empty stdout and exit 0. [R-plain-stdout] Diagnostics and
-progress remain on stderr and are not part of the contract.
+MUST produce empty stdout and exit 0. [R-plain-stdout] Informational
+banners (repository detection, status compilation) are suppressed in
+porcelain mode; errors remain on stderr and their wording is not part of
+the contract.
 
 ```transcript @R-plain-stdout
 $ git init -q proj
@@ -578,3 +580,7 @@ reader, and the porcelain flag would simply be rejected as unknown.
   with an explicit format marker `v: 2` [R-format-marker]; absence of the
   marker means format 1 for both description and comments
   ([R-legacy-read] reworded); writes upgrade format-1 notes in place.
+- 2026-09-06: planning: informational stderr banners are suppressed in
+  porcelain mode ([R-plain-stdout] prose), since the transcript runner
+  compares stdout and stderr together and consumers gain nothing from
+  them.
