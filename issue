@@ -1,0 +1,11 @@
+id: e4e021f
+v: 2
+title: body.awk trailing scan never excluded id: lines
+status: open
+priority: medium
+created: 2026-09-06T21:11:18Z
+updated: 2026-09-06T21:11:18Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: front_matter.awk and extract_issues.awk exclude id: (and now description:) from the trailing-header scan; body.awk excludes only description:. A malformed format-1 note with an id: line below the body is classified differently by the two parsers. Theoretical edge, untested.
