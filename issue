@@ -1,0 +1,11 @@
+id: f3902ef
+v: 2
+title: porcelain: trailing empty continuation lines and empty comment text
+status: open
+priority: medium
+created: 2026-09-06T21:11:17Z
+updated: 2026-09-06T21:11:17Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: get_description passes through command substitution and loses trailing empty continuation lines; an empty comment text or a description whose first line is empty yields a 'key: ' line with a trailing space. Both are cosmetic and untested. Found in Task 8 and Task 10 reviews.
