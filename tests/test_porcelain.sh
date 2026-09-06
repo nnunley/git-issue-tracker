@@ -287,6 +287,21 @@ git commit -q --allow-empty -m "no refs here"
 scan_out=$("$GI" scan-commits 2>&1)
 eq "scan-commits: says none found when there are none" "1" "$(printf '%s' "$scan_out" | grep -c 'No issue references found')"
 
+echo "Testing unknown id on deps and dep list is an error [R-error-porcelain]"
+fresh_repo unknowndeps
+err_file="$WORK/unknowndeps.err"
+out=$("$GI" deps nosuch --porcelain 2>"$err_file") && rc=0 || rc=$?
+err=$(cat "$err_file")
+eq "deps nosuch: nonzero exit" "1" "$([[ $rc -ne 0 ]] && echo 1 || echo 0)"
+eq "deps nosuch: error mentions the id" "1" "$(printf '%s' "$err" | grep -c 'nosuch')"
+eq "deps nosuch: nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+
+out=$("$GI" dep list nosuch --porcelain 2>"$err_file") && rc=0 || rc=$?
+err=$(cat "$err_file")
+eq "dep list nosuch: nonzero exit" "1" "$([[ $rc -ne 0 ]] && echo 1 || echo 0)"
+eq "dep list nosuch: error mentions the id" "1" "$(printf '%s' "$err" | grep -c 'nosuch')"
+eq "dep list nosuch: nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]
