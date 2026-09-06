@@ -206,6 +206,49 @@ eq "tab in title stored as space" "1" "$(note "$tabid" | grep -c '^title: tab he
 "$GI" update "$a" --assignee="$(printf 'two\nlines')" >/dev/null 2>&1
 eq "newline in assignee stored as space" "two lines" "$("$GI" list --porcelain | awk -F'\t' -v a="$a" '$2==a{print $5}')"
 
+echo "Testing continuation guards in the in-place rewriters [R-store-continuation]"
+fresh_repo guards
+# A description continuation line that looks exactly like a header. awk splits
+# fields after leading whitespace, so an unguarded "$1 == field" rule in the
+# rewrite programs would edit or delete this line instead of the real header.
+"$GI" create "guard task" --description="$(printf 'see below\nstatus: unclear')" >/dev/null 2>&1
+"$GI" create "other task" >/dev/null 2>&1
+g=$("$GI" list --porcelain | awk -F'\t' '$12=="guard task"{print $2}')
+o=$("$GI" list --porcelain | awk -F'\t' '$12=="other task"{print $2}')
+gnote() { git cat-file -p "refs/notes/issue-$g:issue"; }
+"$GI" update "$g" --status=closed >/dev/null 2>&1
+eq "update keeps the lookalike continuation line" "1" "$(gnote | grep -c '^ status: unclear$')"
+eq "update rewrote the real header" "1" "$(gnote | grep -c '^status: closed$')"
+"$GI" dep add "$g" blocks "$o" >/dev/null 2>&1
+eq "dep add keeps the lookalike continuation line" "1" "$(gnote | grep -c '^ status: unclear$')"
+eq "dep add wrote the edge" "1" "$(gnote | grep -c "^blocks: $o\$")"
+"$GI" dep rm "$g" blocks "$o" >/dev/null 2>&1
+eq "dep rm keeps the lookalike continuation line" "1" "$(gnote | grep -c '^ status: unclear$')"
+eq "dep rm dropped the edge" "0" "$(gnote | grep -c '^blocks: ')"
+eq "description survives all three rewrites" "see below"$'\n'"status: unclear" \
+   "$(src "get_description \"\$(read_issue_data $g)\"")"
+eq "real status still readable" "closed" "$("$GI" list --porcelain | awk -F'\t' -v g="$g" '$2==g{print $3}')"
+
+echo "Testing format-2 canonicalization is a fixed point [R-format-marker]"
+# A second write that changes nothing material must reproduce the same blob,
+# byte for byte. A user-level no-op flag ("--status=closed" on a closed issue)
+# is skipped before it reaches the writer, so this drives write_issue_data
+# directly with the note's own data: a real write (the ref gains a commit),
+# with no fresh "updated:" stamp to mask a difference.
+"$GI" comment "$g" "$(printf 'note\nwith continuation')" >/dev/null 2>&1
+blob_before=$(git rev-parse "refs/notes/issue-$g:issue")
+commits_before=$(git rev-list --count "refs/notes/issue-$g")
+src "write_issue_data '$g' \"\$(read_issue_data '$g')\"" >/dev/null 2>&1
+eq "rewriting a note with its own data is a real write" \
+   "$((commits_before + 1))" "$(git rev-list --count "refs/notes/issue-$g")"
+eq "rewriting a note with its own data leaves the blob identical" \
+   "$blob_before" "$(git rev-parse "refs/notes/issue-$g:issue")"
+eq "_gi_to_format_2 is idempotent" \
+   "$(src "_gi_to_format_2 \"\$(read_issue_data '$g')\"")" \
+   "$(src "_gi_to_format_2 \"\$(_gi_to_format_2 \"\$(read_issue_data '$g')\")\"")"
+eq "marker is not duplicated by the second write" "1" "$(git cat-file -p "refs/notes/issue-$g:issue" | grep -c '^v: 2$')"
+eq "updated: is still a single header" "1" "$(git cat-file -p "refs/notes/issue-$g:issue" | grep -c '^updated: ')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]
