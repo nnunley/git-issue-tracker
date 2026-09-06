@@ -1,4 +1,5 @@
-# Required: -v FIELDS=<pipe-separated known field names>. Input: __ISSUE__-delimited batch stream on stdin. Output: US(\037)-separated: id status title priority assignee role depends_on
+# Required: -v FIELDS=<pipe-separated known field names>. Input: __ISSUE__-delimited batch stream on stdin.
+# Output: US(\037)-separated: id status title priority assignee role depends_on updated blocks parent_of relates_to
 function reset(   i) {
     split("", top); split("", trail_k); split("", trail_v)
     ntrail = 0; in_body = 0; pending_blank = 0; in_comments = 0
@@ -12,12 +13,12 @@ function emit(   i, status) {
         if (trail_k[i] != "id") top[trail_k[i]] = trail_v[i]
     if (top["id"] != "") {
         status = (top["status"] != "") ? top["status"] : top["state"]
-        print top["id"] OFS status OFS top["title"] OFS top["priority"] OFS top["assignee"] OFS top["role"] OFS top["depends_on"]
+        print top["id"] OFS status OFS top["title"] OFS top["priority"] OFS top["assignee"] OFS top["role"] OFS top["depends_on"] OFS top["updated"] OFS top["blocks"] OFS top["parent_of"] OFS top["relates_to"]
     }
     reset()
 }
 BEGIN { OFS = "\037"; header_re = "^(" FIELDS "): ?"; reset() }
-{ gsub(/[[:cntrl:]]/, "") }
+{ gsub(/\t/, " "); gsub(/[[:cntrl:]]/, "") }
 substr($0, 1, 10) == "__ISSUE__ " && length($0) == 50 && substr($0, 11) ~ /^[0-9a-f]+$/ {
     emit(); next
 }

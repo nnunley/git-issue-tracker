@@ -550,7 +550,7 @@ list_issues() {
     fi
 
     # Batch-read all issues, extract fields via awk (3 git processes total)
-    _issue_tsv_stream | while IFS=$'\037' read -r id status_val title priority assignee role _; do
+    _issue_tsv_stream | while IFS=$'\037' read -r id status_val title priority assignee role depends_on updated blocks parent_of relates_to; do
         # Color based on status
         local color_name
         color_name=$(status_color "$status_val" 2>/dev/null || echo "")
@@ -2516,14 +2516,14 @@ list_ready_issues() {
 
     # Build status lookup (id:status per line, for grep-based lookup)
     local status_index=""
-    while IFS=$'\037' read -r id status_val _ _ _ _ _; do
+    while IFS=$'\037' read -r id status_val _ _ _ _ _ _ _ _ _; do
         [[ -z "$id" ]] && continue
         status_index="${status_index}${id}:${status_val}"$'\n'
     done <<< "$all_tsv"
 
     # Filter and collect results
     local results=""
-    while IFS=$'\037' read -r id status_val title priority assignee role depends_on; do
+    while IFS=$'\037' read -r id status_val title priority assignee role depends_on updated blocks parent_of relates_to; do
         [[ -z "$id" ]] && continue
 
         # Skip closed and blocked issues
@@ -2597,7 +2597,7 @@ topo_sort_issues() {
     local non_done_ids=()
     local issue_index=""  # id\ttitle\tpriority\tdepends_on per line
     local non_done_list=""
-    while IFS=$'\037' read -r id status_val title priority _ _ depends_on; do
+    while IFS=$'\037' read -r id status_val title priority _ _ depends_on _ _ _ _; do
         [[ -z "$id" ]] && continue
         [[ "$status_val" == "closed" ]] && continue
         non_done_ids+=("$id")

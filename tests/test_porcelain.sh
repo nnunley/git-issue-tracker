@@ -48,6 +48,16 @@ eq "empty list is empty stdout" "0" "$("$GI" list --porcelain | wc -c | tr -d ' 
 eq "empty list is silent on stderr" "" "$("$GI" list --porcelain 2>&1 >/dev/null)"
 eq "no banner under --porcelain" "0" "$("$GI" list --porcelain 2>&1 | grep -c 'Using current' || true)"
 
+echo "Testing batch stream shape (internal) [R-issue-line] [R-field-normalize]"
+fresh_repo stream
+"$GI" create "$(printf 'tab\there')" >/dev/null 2>&1
+# Sourcing the script exposes its functions without running the entry
+# point (the guard at the bottom checks BASH_SOURCE[0] == $0).
+stream=$(cd "$WORK/stream" && bash -c "source '$GI' 2>/dev/null; _issue_tsv_stream")
+eq "stream has eleven fields" "11" "$(printf '%s' "$stream" | awk -F'\037' '{print NF}')"
+eq "tab in title becomes a space" "tab here" "$(printf '%s' "$stream" | cut -d $'\037' -f3)"
+eq "updated is the eighth field" "1" "$(printf '%s' "$stream" | cut -d $'\037' -f8 | grep -c 'T.*Z')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]
