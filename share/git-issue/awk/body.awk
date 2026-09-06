@@ -1,5 +1,10 @@
 # Required: -v FIELDS=<pipe-separated known field names>
-BEGIN { known_re = "^(" FIELDS "):" }
+BEGIN {
+    known_re = "^(" FIELDS "):"
+    # A "description:" line below the body is prose, not a trailing header:
+    # description is only ever a format-2 top-block header (see front_matter.awk).
+    not_trailing_re = "^description:"
+}
 { lines[++n] = $0 }
 END {
     # Find where comments start
@@ -11,11 +16,11 @@ END {
     # only KNOWN fields count, so body prose is not swallowed)
     scan = comments_at - 1
     while (scan > 0 && lines[scan] == "") scan--
-    while (scan > 0 && lines[scan] !~ known_re) scan--
+    while (scan > 0 && (lines[scan] !~ known_re || lines[scan] ~ not_trailing_re)) scan--
     trail_end = scan
     trail_start = trail_end + 1
     for (i = trail_end; i > 0; i--) {
-        if (lines[i] ~ known_re) {
+        if (lines[i] ~ known_re && lines[i] !~ not_trailing_re) {
             trail_start = i
         } else {
             break

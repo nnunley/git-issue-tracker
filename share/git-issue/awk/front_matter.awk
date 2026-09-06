@@ -1,5 +1,11 @@
 # Required: -v FIELDS=<pipe-separated known field names>
-BEGIN { known_re = "^(" FIELDS "):" }
+BEGIN {
+    known_re = "^(" FIELDS "):"
+    # Never a trailing header: "id" is always written first, and
+    # "description" is a format-2 top-block header only. Either one below the
+    # body is body prose, so it must not anchor or extend a trailing block.
+    not_trailing_re = "^(id|description):"
+}
 { lines[++n] = $0 }
 END {
     # Find where comments start (if any)
@@ -28,11 +34,11 @@ END {
     # "note: remember this" is not swallowed out of the body.
     scan = comments_at - 1
     while (scan > 0 && lines[scan] == "") scan--
-    while (scan > 0 && lines[scan] !~ known_re) scan--
+    while (scan > 0 && (lines[scan] !~ known_re || lines[scan] ~ not_trailing_re)) scan--
     trail_end = scan
     trail_start = trail_end + 1
     for (i = trail_end; i > 0; i--) {
-        if (lines[i] ~ known_re) {
+        if (lines[i] ~ known_re && lines[i] !~ not_trailing_re) {
             trail_start = i
         } else {
             break
@@ -43,13 +49,14 @@ END {
     for (i = 1; i <= n; i++) {
         if (lines[i] == "") { first_blank = i; break }
     }
-    # Only treat as trailing headers if they come after the top block
-    # id never legitimately appears below the body (every write path
-    # emits it first), so trailing "id:" lines are body content, not headers
+    # Only treat as trailing headers if they come after the top block.
+    # id never legitimately appears below the body (every write path emits it
+    # first) and description is a format-2 top-block header, so either one
+    # down here is body content, not a header.
     trail_count = 0
     if (trail_start > first_blank && trail_start <= trail_end) {
         for (i = trail_start; i <= trail_end; i++) {
-            if (lines[i] ~ known_re && lines[i] !~ /^id:/) {
+            if (lines[i] ~ known_re && lines[i] !~ not_trailing_re) {
                 trail_count++
                 trail_headers[trail_count] = lines[i]
                 split(lines[i], kv, ": *")

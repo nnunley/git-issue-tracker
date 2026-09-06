@@ -148,6 +148,34 @@ eq "human show unfolds comments" "one"$'\n'"two" "$("$GI" show abc1234 2>/dev/nu
 eq "human show of format 2 prints description" "1" "$("$GI" show def5678 2>/dev/null | grep -c '^first$')"
 eq "stream reads format 2 title" "modern" "$("$GI" list --porcelain | awk -F'\t' '$2=="def5678"{print $12}')"
 
+# A format-1 body whose last line looks like "description: ..." is prose:
+# description is a format-2 top-block header only, so it must never anchor or
+# extend a trailing header block.
+blob=$(printf 'id: aaa1111\ntitle: legacy2\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\n\nold body\ndescription: how to reproduce\n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-aaa1111 "$(git commit-tree "$tree" -m legacy2 </dev/null)"
+eq "format 1 body ending in description: stays in the body" "old body"$'\n'"description: how to reproduce" "$(src 'get_description "$(read_issue_data aaa1111)"')"
+eq "format 1 description: line is not a trailing header" "" "$(src 'get_field_value "$(parse_front_matter "$(read_issue_data aaa1111)")" description')"
+eq "human show keeps the description: body line" "1" "$("$GI" show aaa1111 2>/dev/null | grep -c '^description: how to reproduce$')"
+# A prose line then "title: hijack" then "description: ...": the description
+# line breaks trailing-block contiguity, so the bogus title cannot win.
+blob=$(printf 'id: bbb2222\ntitle: legacy3\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\n\nold body\ntitle: hijack\ndescription: how to reproduce\n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-bbb2222 "$(git commit-tree "$tree" -m legacy3 </dev/null)"
+eq "trailing description: does not extend a trailing block" "legacy3" "$("$GI" list --porcelain | awk -F'\t' '$2=="bbb2222"{print $12}')"
+
+# Legacy comment continuations survive folding: a blank line and a line that
+# itself begins with a space must both round-trip through fold + unfold.
+blob=$(printf 'id: ccc3333\ntitle: legacy4\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\n\nbody\n\n## Comments\n[2026-01-01T00:00:00Z] conformance: first\n\nsecond\n  indented\n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-ccc3333 "$(git commit-tree "$tree" -m legacy4 </dev/null)"
+eq "format 1 blank line folds to a lone-space continuation" \
+   "[2026-01-01T00:00:00Z] conformance: first"$'\n'" "$'\n'" second"$'\n'"   indented" \
+   "$(src 'parse_comment_records "$(read_issue_data ccc3333)"')"
+eq "fold then unfold is the identity for legacy comments" \
+   "[2026-01-01T00:00:00Z] conformance: first"$'\n'""$'\n'"second"$'\n'"  indented" \
+   "$(src 'parse_comments "$(read_issue_data ccc3333)"')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]

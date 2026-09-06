@@ -8,16 +8,24 @@ function emit(   i, status) {
     # Trailing headers override top headers (split front matter).
     # id never legitimately appears below the body — every write path
     # emits it first — so an "id:" line down there is body content and
-    # must not let one issue masquerade as (or hide) another.
+    # must not let one issue masquerade as (or hide) another. Same for
+    # description, which is a format-2 top-block header only.
     for (i = 1; i <= ntrail; i++)
-        if (trail_k[i] != "id") top[trail_k[i]] = trail_v[i]
+        if (trail_k[i] != "id" && trail_k[i] != "description") top[trail_k[i]] = trail_v[i]
     if (top["id"] != "") {
         status = (top["status"] != "") ? top["status"] : top["state"]
         print top["id"] OFS status OFS top["title"] OFS top["priority"] OFS top["assignee"] OFS top["role"] OFS top["depends_on"] OFS top["updated"] OFS top["blocks"] OFS top["parent_of"] OFS top["relates_to"]
     }
     reset()
 }
-BEGIN { OFS = "\037"; header_re = "^(" FIELDS "): ?"; reset() }
+BEGIN {
+    OFS = "\037"
+    header_re = "^(" FIELDS "): ?"
+    # Below the body, a "description:" line is prose: it neither joins nor
+    # extends a trailing header block (see the emit() guard).
+    not_trailing_re = "^description:"
+    reset()
+}
 { gsub(/\t/, " "); gsub(/[[:cntrl:]]/, "") }
 substr($0, 1, 10) == "__ISSUE__ " && length($0) == 50 && substr($0, 11) ~ /^[0-9a-f]+$/ {
     emit(); next
@@ -35,7 +43,7 @@ in_body == 0 {
 }
 {
     if ($0 == "") { pending_blank = 1; next }
-    if ($0 ~ header_re) {
+    if ($0 ~ header_re && $0 !~ not_trailing_re) {
         # A blank line breaks trailing-block contiguity: restart
         if (pending_blank) { ntrail = 0; pending_blank = 0 }
         ntrail++
