@@ -78,6 +78,17 @@ eq "queue: filtered by role" "" "$("$GI" queue dev --porcelain)"
 eq "topo: order without rank numbers" "12 alpha task"$'\n'"12 beta task" "$("$GI" topo --porcelain | awk -F'\t' '{print NF, $12}')"
 eq "topo: empty repo is empty stdout" "0" "$(fresh_repo lines-empty >/dev/null; "$GI" topo --porcelain | wc -c | tr -d ' ')"
 
+echo "Testing repo column under --all [R-all-column]"
+fresh_repo agg-a
+"$GI" create "alpha task" >/dev/null 2>&1
+"$GI" repo add agg-a "$WORK/agg-a" >/dev/null 2>&1
+cd "$WORK"
+eq "--all fills column 1" "agg-a|open|alpha task" "$("$GI" list --all --porcelain 2>/dev/null | cut -f1,3,12 | tr '\t' '|')"
+eq "--all has no bracket prefix" "0" "$("$GI" list --all --porcelain 2>/dev/null | grep -c '^\[' || true)"
+eq "--repo leaves column 1 empty" "|open|alpha task" "$("$GI" --repo agg-a list --porcelain | cut -f1,3,12 | tr '\t' '|')"
+eq "ready --all fills column 1" "agg-a" "$("$GI" ready --all --porcelain 2>/dev/null | cut -f1)"
+"$GI" repo rm agg-a >/dev/null 2>&1
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]

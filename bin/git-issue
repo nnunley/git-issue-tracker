@@ -3201,7 +3201,11 @@ _gi_aggregate() {
         fi
         ( cd "$path" && unset GIT_DIR && GIT_ISSUE_NO_HEADER=1 exec "$_GI_SELF" "${argv[@]}" ) |
         while IFS= read -r line; do
-            printf '[%s] %s\n' "$name" "$line"
+            if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+                printf '%s%s\n' "$name" "$line"
+            else
+                printf '[%s] %s\n' "$name" "$line"
+            fi
         done
         rc=${PIPESTATUS[0]}
         if [[ "$rc" -ne 0 ]]; then
