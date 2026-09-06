@@ -104,6 +104,17 @@ eq "dep list: all edges" "2" "$("$GI" dep list --porcelain | wc -l | tr -d ' ')"
 eq "deps: no marker line leaks" "0" "$("$GI" deps --porcelain | grep -c last_rebuilt || true)"
 eq "deps: empty graph is empty stdout" "0" "$(fresh_repo edges-empty >/dev/null; "$GI" deps --porcelain | wc -c | tr -d ' ')"
 
+echo "Testing reference lines [R-ref-line]"
+fresh_repo refs
+"$GI" create "alpha task" >/dev/null 2>&1
+a=$(porcelain_ids)
+git commit -q --allow-empty -m "work" -m "Fixes: $a"
+git commit -q --allow-empty -m "more" -m "Issue: #$a"
+eq "full hash, lowercase key, id" "40 fixes 1"$'\n'"40 issue 1" \
+   "$("$GI" scan-commits --porcelain | awk -F'\t' -v a="$a" '{print length($1), $2, ($3==a)}' | sort)"
+eq "no banner or tip on stdout" "2" "$("$GI" scan-commits --porcelain | wc -l | tr -d ' ')"
+eq "no references is empty stdout" "0" "$(fresh_repo refs-empty >/dev/null; "$GI" scan-commits --porcelain | wc -c | tr -d ' ')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]

@@ -1577,10 +1577,12 @@ add_issue_trailer() {
 scan_commits_for_issues() {
     local since="${1:-}"
     local format="${2:-summary}"
-    
-    echo -e "${BLUE}🔍 Scanning commits for issue references...${NC}"
-    echo ""
-    
+
+    if [[ -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        echo -e "${BLUE}🔍 Scanning commits for issue references...${NC}"
+        echo ""
+    fi
+
     # Build git log arguments
     local git_log_args=("--oneline")
     if [[ -n "$since" ]]; then
@@ -1610,15 +1612,20 @@ scan_commits_for_issues() {
             else
                 # Summary format
                 echo "$trailers" | while IFS= read -r trailer; do
-                    local issue_id=$(echo "$trailer" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
-                    local trailer_type=$(echo "$trailer" | cut -d':' -f1)
-                    echo "${commit_hash:0:7} $trailer_type: #$issue_id"
+                    local issue_id trailer_type
+                    issue_id=$(echo "$trailer" | grep -oE '#?[a-f0-9]{7}' | head -1 | sed 's/^#//')
+                    trailer_type=$(echo "$trailer" | cut -d':' -f1)
+                    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+                        printf '%s\t%s\t%s\n' "$commit_hash" "$(echo "$trailer_type" | tr 'A-Z' 'a-z')" "$issue_id"
+                    else
+                        echo "${commit_hash:0:7} $trailer_type: #$issue_id"
+                    fi
                 done
             fi
         fi
     done
     
-    if [[ $issue_refs_found -eq 0 ]]; then
+    if [[ $issue_refs_found -eq 0 && -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
         echo -e "${YELLOW}No issue references found in commit trailers${NC}"
         echo -e "${GRAY}Tip: Use 'git issue commit --fixes <id>' to add trailers to commits${NC}"
     fi
