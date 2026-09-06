@@ -152,9 +152,9 @@ $ git issue create "beta task" >/dev/null 2>&1
 $ a=$(git issue list --porcelain | awk -F'\t' '$12=="alpha task"{print $2}')
 $ b=$(git issue list --porcelain | awk -F'\t' '$12=="beta task"{print $2}')
 $ git issue dep add "$a" blocks "$b" >/dev/null 2>&1
-$ git issue list --porcelain | awk -F'\t' -v a="$a" -v b="$b" '{ gsub(a,"A"); gsub(b,"B"); print $3, $8, $9, $12 }'
-open A  alpha task
-blocked  A beta task
+$ git issue list --porcelain | awk -F'\t' -v a="$a" -v b="$b" '{ gsub(a,"A"); gsub(b,"B"); print $12 "|" $3 "|" $8 "|" $9 }' | sort
+alpha task|open|B|
+beta task|blocked||A
 ```
 
 ```transcript @R-issue-line-shared
