@@ -1159,42 +1159,39 @@ setup_sync_disable() {
 setup_sync_status() {
     local git_dir=$(git rev-parse --git-dir)
     local hooks_dir="$git_dir/hooks"
-    
+
+    local sync_enabled=$(git config --get git-issue.sync.enabled 2>/dev/null || echo "false")
+    local post_merge=false pre_push=false auto_fetch=false
+    [[ -f "$hooks_dir/post-merge" && -x "$hooks_dir/post-merge" ]] && post_merge=true
+    [[ -f "$hooks_dir/pre-push"   && -x "$hooks_dir/pre-push"   ]] && pre_push=true
+    if git config --get-regexp "remote\..*\.fetch" 2>/dev/null | grep -q "refs/notes"; then
+        auto_fetch=true
+    fi
+    local note_count=$(git for-each-ref --format="%(refname)" 'refs/notes/issue-*' 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        printf 'enabled\t%s\n'         "$sync_enabled"
+        printf 'post-merge-hook\t%s\n' "$post_merge"
+        printf 'pre-push-hook\t%s\n'   "$pre_push"
+        printf 'auto-fetch\t%s\n'      "$auto_fetch"
+        printf 'issue-notes\t%s\n'     "$note_count"
+        return 0
+    fi
+
+    local mark_pm="❌" mark_pp="❌" mark_af="❌"
+    [[ "$post_merge" == true ]] && mark_pm="✅"
+    [[ "$pre_push"   == true ]] && mark_pp="✅"
+    [[ "$auto_fetch" == true ]] && mark_af="✅"
+
     echo -e "${BLUE}Git Notes Sync Status${NC}"
     echo "===================="
-    
-    # Check configuration
-    local sync_enabled=$(git config --get git-issue.sync.enabled 2>/dev/null || echo "false")
     echo "Config enabled: $sync_enabled"
-    
-    # Check hooks
-    local post_merge_exists="❌"
-    local pre_push_exists="❌"
-    
-    if [[ -f "$hooks_dir/post-merge" && -x "$hooks_dir/post-merge" ]]; then
-        post_merge_exists="✅"
-    fi
-    
-    if [[ -f "$hooks_dir/pre-push" && -x "$hooks_dir/pre-push" ]]; then
-        pre_push_exists="✅"
-    fi
-    
-    echo "Post-merge hook: $post_merge_exists"
-    echo "Pre-push hook: $pre_push_exists"
-    
-    # Check notes refs configuration
-    local notes_fetch_configured="❌"
-    if git config --get-regexp "remote\..*\.fetch" | grep -q "refs/notes"; then
-        notes_fetch_configured="✅"
-    fi
-    echo "Notes auto-fetch: $notes_fetch_configured"
-    
-    # Count existing notes
-    local note_count=$(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | wc -l)
+    echo "Post-merge hook: $mark_pm"
+    echo "Pre-push hook: $mark_pp"
+    echo "Notes auto-fetch: $mark_af"
     echo "Issue notes: $note_count"
-    
     echo ""
-    if [[ "$sync_enabled" == "true" && "$post_merge_exists" == "✅" && "$pre_push_exists" == "✅" ]]; then
+    if [[ "$sync_enabled" == "true" && "$post_merge" == true && "$pre_push" == true ]]; then
         echo -e "${GREEN}✓ Automatic sync is fully configured and enabled${NC}"
     else
         echo -e "${YELLOW}⚠️  Automatic sync is not fully configured${NC}"

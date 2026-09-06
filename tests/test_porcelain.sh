@@ -115,6 +115,18 @@ eq "full hash, lowercase key, id" "40 fixes 1"$'\n'"40 issue 1" \
 eq "no banner or tip on stdout" "2" "$("$GI" scan-commits --porcelain | wc -l | tr -d ' ')"
 eq "no references is empty stdout" "0" "$(fresh_repo refs-empty >/dev/null; "$GI" scan-commits --porcelain | wc -c | tr -d ' ')"
 
+echo "Testing key-value lines [R-kv-line]"
+fresh_repo kv
+"$GI" create "alpha task" >/dev/null 2>&1
+eq "sync status keys in order" \
+   "enabled false"$'\n'"post-merge-hook false"$'\n'"pre-push-hook false"$'\n'"auto-fetch false"$'\n'"issue-notes 1" \
+   "$("$GI" setup-sync status --porcelain | tr '\t' ' ')"
+"$GI" setup-sync enable >/dev/null 2>&1 || true
+eq "sync status reflects enable" "true" "$("$GI" setup-sync status --porcelain | awk -F'\t' '$1=="enabled"{print $2}')"
+"$GI" repo add kv "$WORK/kv" >/dev/null 2>&1
+eq "repo list unchanged under --porcelain" "$("$GI" repo list)" "$("$GI" repo list --porcelain)"
+"$GI" repo rm kv >/dev/null 2>&1
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]
