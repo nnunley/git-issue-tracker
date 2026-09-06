@@ -2355,10 +2355,31 @@ dep_rm() {
     echo -e "${GREEN}Removed dependency: #$from_id $dep_type #$to_id${NC}"
 }
 
+# Porcelain edge lines (R-edge-line): from<TAB>type<TAB>to, one per edge in
+# the edge index, optionally restricted to edges leaving <id>.
+_porcelain_edges() {
+    local only="${1:-}"
+    ensure_edge_index_current
+    read_edge_index | while read -r from type to; do
+        [[ -z "$from" || "$from" == "last_rebuilt_from:" ]] && continue
+        [[ -n "$only" && "$from" != "$only" ]] && continue
+        printf '%s\t%s\t%s\n' "$from" "$type" "$to"
+    done
+}
+
 # List dependency relationships
 # Usage: dep_list [issue_id]
 dep_list() {
     local target_id="$1"
+
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        if [[ -n "$target_id" ]] && ! issue_exists "$target_id"; then
+            echo -e "${RED}Error: Issue #$target_id not found${NC}" >&2
+            return 1
+        fi
+        _porcelain_edges "$target_id"
+        return 0
+    fi
 
     # Ensure edge index is current before querying
     ensure_edge_index_current
@@ -2698,6 +2719,15 @@ topo_sort_issues() {
 # Show dependency edges in text mode
 show_deps() {
     local target_id="$1"
+
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        if [[ -n "$target_id" ]] && ! issue_exists "$target_id"; then
+            echo -e "${RED}Error: Issue #$target_id not found${NC}" >&2
+            return 1
+        fi
+        _porcelain_edges "$target_id"
+        return 0
+    fi
 
     ensure_edge_index_current
 

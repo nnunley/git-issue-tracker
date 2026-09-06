@@ -89,6 +89,21 @@ eq "--repo leaves column 1 empty" "|open|alpha task" "$("$GI" --repo agg-a list 
 eq "ready --all fills column 1" "agg-a" "$("$GI" ready --all --porcelain 2>/dev/null | cut -f1)"
 "$GI" repo rm agg-a >/dev/null 2>&1
 
+echo "Testing edge lines [R-edge-line]"
+fresh_repo edges
+"$GI" create "alpha task" >/dev/null 2>&1
+"$GI" create "beta task"  >/dev/null 2>&1
+a=$("$GI" list --porcelain | awk -F'\t' '$12=="alpha task"{print $2}')
+b=$("$GI" list --porcelain | awk -F'\t' '$12=="beta task"{print $2}')
+"$GI" dep add "$a" blocks "$b" >/dev/null 2>&1
+norm() { awk -F'\t' -v a="$a" -v b="$b" '{ gsub(a,"A"); gsub(b,"B"); print }'; }
+eq "deps: both directions, tab-separated" "A	blocks	B"$'\n'"B	depends_on	A" "$("$GI" deps --porcelain | norm | sort)"
+eq "deps <id>: edges from that id" "A	blocks	B" "$("$GI" deps "$a" --porcelain | norm)"
+eq "dep list <id>: same shape" "B	depends_on	A" "$("$GI" dep list "$b" --porcelain | norm)"
+eq "dep list: all edges" "2" "$("$GI" dep list --porcelain | wc -l | tr -d ' ')"
+eq "deps: no marker line leaks" "0" "$("$GI" deps --porcelain | grep -c last_rebuilt || true)"
+eq "deps: empty graph is empty stdout" "0" "$(fresh_repo edges-empty >/dev/null; "$GI" deps --porcelain | wc -c | tr -d ' ')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]
