@@ -4,7 +4,6 @@
 **Corpus:** red (spec-first — evidence is the acceptance criteria)
 **Category:** Standards-Track
 **Authors:** Norman Nunley, Jr <nnunley@gmail.com>, Claude (drafting agent)
-**Date:** 2026-09-06
 
 ## Abstract
 
@@ -101,7 +100,7 @@ $ git init -q proj
 $ cd proj
 $ git commit -q --allow-empty -m init
 $ git issue list --porcelain=v2
-Error: unsupported porcelain version 'v2' (supported: v1)
+! Error: unsupported porcelain version 'v2' (supported: v1)
 ? 1
 ```
 
@@ -562,25 +561,3 @@ reader, and the porcelain flag would simply be rejected as unknown.
 - draft-ndn-authoring-rfcs-00 — evidence conventions and the process
   this document follows.
 - BCP 14 (RFC 2119, RFC 8174); RFC 5234/7405 (ABNF).
-
-## Changelog
-
-- 2026-09-06: Requirements interview conducted (scope: every read command;
-  columns: display fields plus `updated` and the four dependency fields;
-  `repo` column always present; `show` in export layout; continuation
-  rule for output and storage; no `-z`, tab and newline normalized in
-  single-line fields; magit integration to its own RFC). Design synthesis
-  approved.
-- 2026-09-06: draft-00 created, corpus declared red (spec-first). One
-  refinement beyond the synthesis, recorded under Alternatives
-  Considered: the description moves into the header block with
-  continuation rather than staying in the body region, so the storage
-  rule covers descriptions and comments with one encoding.
-- 2026-09-06: author review: layout detection by header presence replaced
-  with an explicit format marker `v: 2` [R-format-marker]; absence of the
-  marker means format 1 for both description and comments
-  ([R-legacy-read] reworded); writes upgrade format-1 notes in place.
-- 2026-09-06: planning: informational stderr banners are suppressed in
-  porcelain mode ([R-plain-stdout] prose), since the transcript runner
-  compares stdout and stderr together and consumers gain nothing from
-  them.

@@ -1378,23 +1378,13 @@ Covers R-show-block. All fourteen RFC transcripts now replay."
 ### Task 11: Flip the corpus, document, and gate
 
 **Files:**
-- Modify: `docs/rfc/draft-ndn-porcelain-output-00.md` (masthead `Corpus:` and Changelog)
+- Modify: `docs/rfc/draft-ndn-porcelain-output-00.md` (masthead `Corpus:` only)
 - Modify: `README.md`, `man/man1/git-issue.1`
 - Modify: `AGENTS.md` (one line pointing agents at `--porcelain`)
 
 - [ ] **Step 1: Flip the declaration**
 
-Change `**Corpus:** red (spec-first — evidence is the acceptance criteria)` to `**Corpus:** green`. Append to the Changelog:
-
-```markdown
-- <today, via date>: implemented in `bin/git-issue`; corpus flipped red -> green
-  (14/14 transcripts replay and the [R-field-normalize] table matches).
-  Findings recorded during implementation: <list anything the executor had
-  to decide that the spec did not say, e.g. scan-commits accepting a trailer
-  id without '#'>.
-```
-
-Use `date +%Y-%m-%d` for the date.
+Change `**Corpus:** red (spec-first — evidence is the acceptance criteria)` to `**Corpus:** green`. The RFC has no Changelog section by design: the commit log is the document's history. Anything the executor had to decide that the spec did not say (for example scan-commits accepting a trailer id without `#`) goes in the commit message of Step 4, not in the document.
 
 - [ ] **Step 2: Run the full gate**
 
@@ -1426,7 +1416,10 @@ git commit -m "rfc: porcelain output corpus is green
 
 All fourteen transcripts replay and the normalization table matches.
 Documents --porcelain and the format-2 note layout in the README, the
-man page, and the agent instructions."
+man page, and the agent instructions.
+
+Findings from implementation, recorded here because the commit log is
+the RFC's history: <one bullet per decision the spec left open>"
 ```
 
 - [ ] **Step 5: Ledger and handoff**
