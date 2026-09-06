@@ -327,6 +327,16 @@ read_issue_data() {
     git cat-file -p "$blob_hash" 2>/dev/null || return 1
 }
 
+# Note format: 2 when line 2 is the marker "v: 2", else 1 (R-format-marker).
+note_format() {
+    local data="$1"
+    if [[ "$(printf '%s\n' "$data" | sed -n '2p')" == "v: 2" ]]; then
+        echo 2
+    else
+        echo 1
+    fi
+}
+
 # Batch-read all issue data using git cat-file --batch (3 git processes total
 # instead of 3 per issue).  Outputs __ISSUE__-delimited stream of issue blobs.
 # Consumers pipe through awk to extract fields they need.
@@ -361,7 +371,7 @@ _batch_issue_stream() {
 
 # Known header fields. Used to tell real headers (including trailing ones from
 # split front matter) apart from body prose like "note: remember this".
-KNOWN_HEADER_FIELDS='id|title|status|state|priority|created|updated|author|assignee|role|labels|hash_source|github_id|github_url|jira_id|jira_url|gitlab_id|gitlab_url|blocks|depends_on|parent_of|relates_to|issue_type|external_ref|waits_for'
+KNOWN_HEADER_FIELDS='id|title|status|state|priority|created|updated|author|assignee|role|labels|hash_source|github_id|github_url|jira_id|jira_url|gitlab_id|gitlab_url|blocks|depends_on|parent_of|relates_to|issue_type|external_ref|waits_for|description'
 # Dummy objectname used for the flush/legacy delimiters emitted by hand
 BATCH_FLUSH_HASH='0000000000000000000000000000000000000000'
 
@@ -462,13 +472,30 @@ parse_front_matter() {
 # Excludes both the trailing header block and any stray lines after it.
 parse_body() {
     local data="$1"
+    [[ "$(note_format "$data")" == "2" ]] && return 0
     echo "$data" | awk -f "$(require_awk_file body.awk)" -v FIELDS="$KNOWN_HEADER_FIELDS"
 }
 
-# Parse comments from issue data (after ## Comments marker)
-parse_comments() {
+# Description for either note format, newlines preserved.
+get_description() {
     local data="$1"
-    echo "$data" | awk '/^## Comments$/{p=1; next} p{print}'
+    if [[ "$(note_format "$data")" == "2" ]]; then
+        get_field_raw "$(parse_front_matter "$data")" "description"
+    else
+        parse_body "$data"
+    fi
+}
+
+# Comments as canonical folded records (R-legacy-read, R-store-continuation):
+# first line "[ts] author: text", continuation lines prefixed by one space.
+parse_comment_records() {
+    local data="$1"
+    printf '%s\n' "$data" | awk -f "$(require_awk_file comments.awk)" -v FORMAT="$(note_format "$data")"
+}
+
+# Comments for human display: records with continuation unfolded.
+parse_comments() {
+    parse_comment_records "$1" | sed 's/^ //'
 }
 
 # Trim leading/trailing whitespace. Quote-safe replacement for `| xargs`,
@@ -481,12 +508,23 @@ trim_ws() {
     printf '%s' "$s"
 }
 
-# Get field value from front matter
-get_field_value() {
+# Raw value of a header field with continuation lines unfolded (joined by
+# newline, leading space stripped). Empty if absent.
+get_field_raw() {
     local front_matter="$1"
     local field="$2"
+    printf '%s\n' "$front_matter" | awk -v f="$field" '
+        $0 ~ "^" f ":" { v = $0; sub("^" f ": ?", "", v); found = 1; next }
+        found && /^ / { v = v "\n" substr($0, 2); next }
+        found { exit }
+        END { if (found) printf "%s", v }'
+}
+
+# Single-line view of a field: newlines become spaces (unchanged behavior
+# for every field but description, which callers read with get_field_raw).
+get_field_value() {
     local value
-    value=$(echo "$front_matter" | grep "^$field:" | cut -d' ' -f2- | tr '\n' ' ')
+    value=$(get_field_raw "$1" "$2" | tr '\n' ' ')
     trim_ws "$value"
 }
 
@@ -601,12 +639,11 @@ show_issue() {
     
     local data=$(read_issue_data "$id")
     local front_matter=$(parse_front_matter "$data")
-    local body=$(parse_body "$data")
     local comments=$(parse_comments "$data")
 
     # Extract fields
     local title=$(get_field_value "$front_matter" "title")
-    local description="$body"
+    local description=$(get_description "$data")
     local github_id=$(get_field_value "$front_matter" "github_id")
     local github_url=$(get_field_value "$front_matter" "github_url")
     local jira_id=$(get_field_value "$front_matter" "jira_id")
@@ -3596,7 +3633,7 @@ _gi_entry() {
 # would print an error yet let the command "succeed" with exit 0.
 _gi_check_awk_files() {
     local f
-    for f in extract_issues.awk front_matter.awk body.awk; do
+    for f in extract_issues.awk front_matter.awk body.awk comments.awk; do
         if [[ ! -f "$GIT_ISSUE_AWK_DIR/$f" ]]; then
             echo -e "${RED}Error: awk program not found: $GIT_ISSUE_AWK_DIR/$f — reinstall git-issue or set GIT_ISSUE_AWK_DIR${NC}" >&2
             exit 1

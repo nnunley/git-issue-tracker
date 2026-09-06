@@ -7,7 +7,8 @@ END {
     for (i = 1; i <= n; i++) {
         if (lines[i] == "## Comments") { comments_at = i; break }
     }
-    # Collect top headers (before first blank line)
+    # Collect top headers (before first blank line); a line beginning with
+    # one space continues the previous header's value (format 2).
     top_count = 0
     for (i = 1; i <= n; i++) {
         if (lines[i] == "") break
@@ -17,6 +18,8 @@ END {
             # Extract key for dedup
             split(lines[i], kv, ": *")
             top_keys[top_count] = kv[1]
+        } else if (lines[i] ~ /^ / && top_count > 0) {
+            top_headers[top_count] = top_headers[top_count] "\n" lines[i]
         }
     }
     # Find trailing header block: scan backwards from end/comments,

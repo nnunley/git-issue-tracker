@@ -127,6 +127,27 @@ eq "sync status reflects enable" "true" "$("$GI" setup-sync status --porcelain |
 eq "repo list unchanged under --porcelain" "$("$GI" repo list)" "$("$GI" repo list --porcelain)"
 "$GI" repo rm kv >/dev/null 2>&1
 
+echo "Testing readers on both formats [R-legacy-read]"
+fresh_repo readers
+# A hand-built format-1 note (no marker, body region, raw multi-line comment).
+blob=$(printf 'id: abc1234\ntitle: legacy\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\n\nold body\nsecond body line\n\n## Comments\n[2026-01-01T00:00:00Z] conformance: one\ntwo\n[2026-01-02T00:00:00Z] conformance: three\n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-abc1234 "$(git commit-tree "$tree" -m legacy </dev/null)"
+# A hand-built format-2 note.
+blob=$(printf 'id: def5678\nv: 2\ntitle: modern\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\ndescription: first\n ## Comments\n third\n\n## Comments\n[2026-01-01T00:00:00Z] conformance: one\n two\n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-def5678 "$(git commit-tree "$tree" -m modern </dev/null)"
+src() { bash -c "source '$GI' 2>/dev/null; $*"; }
+eq "format 1 detected" "1" "$(src 'note_format "$(read_issue_data abc1234)"')"
+eq "format 2 detected" "2" "$(src 'note_format "$(read_issue_data def5678)"')"
+eq "format 1 description from body" "old body"$'\n'"second body line" "$(src 'get_description "$(read_issue_data abc1234)"')"
+eq "format 2 description from header, continuation unfolded" "first"$'\n'"## Comments"$'\n'"third" "$(src 'get_description "$(read_issue_data def5678)"')"
+eq "format 1 comments folded canonically" "[2026-01-01T00:00:00Z] conformance: one"$'\n'" two"$'\n'"[2026-01-02T00:00:00Z] conformance: three" "$(src 'parse_comment_records "$(read_issue_data abc1234)"')"
+eq "format 2 comments pass through" "[2026-01-01T00:00:00Z] conformance: one"$'\n'" two" "$(src 'parse_comment_records "$(read_issue_data def5678)"')"
+eq "human show unfolds comments" "one"$'\n'"two" "$("$GI" show abc1234 2>/dev/null | sed -n '/^Comments:/,$p' | tail -n +3 | head -2 | sed -E 's/^\[[^]]+\] conformance: //')"
+eq "human show of format 2 prints description" "1" "$("$GI" show def5678 2>/dev/null | grep -c '^first$')"
+eq "stream reads format 2 title" "modern" "$("$GI" list --porcelain | awk -F'\t' '$2=="def5678"{print $12}')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]
