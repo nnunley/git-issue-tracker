@@ -669,21 +669,51 @@ list_issues() {
     done
 }
 
+# Canonical header order for show --porcelain (R-show-block); matches the
+# hkey alternatives in the RFC grammar. description and comment follow.
+_PORCELAIN_SHOW_FIELDS="id title status priority created updated author assignee role labels hash_source github_id github_url jira_id jira_url gitlab_id gitlab_url blocks depends_on parent_of relates_to issue_type external_ref waits_for"
+
+_porcelain_show() {
+    local data="$1"
+    local front_matter
+    front_matter=$(parse_front_matter "$data")
+    local f v
+    for f in $_PORCELAIN_SHOW_FIELDS; do
+        if [[ "$f" == "status" ]]; then
+            v=$(get_field_value "$front_matter" status)
+            [[ -z "$v" ]] && v=$(get_field_value "$front_matter" state)
+        else
+            v=$(get_field_value "$front_matter" "$f")
+        fi
+        [[ -n "$v" ]] && printf '%s: %s\n' "$f" "$v"
+    done
+    local description
+    description=$(get_description "$data")
+    if [[ -n "$description" ]]; then
+        printf 'description: %s\n' "$(gi_fold "$description")"
+    fi
+    parse_comment_records "$data" | sed -E '/^\[/s/^/comment: /'
+}
+
 # Show issue details
 show_issue() {
     local id="$1"
-    
+
     if [[ -z "$id" ]]; then
         echo -e "${RED}Error: Issue ID is required${NC}" >&2
         return 1
     fi
-    
+
     if ! issue_exists "$id"; then
         echo -e "${RED}Error: Issue #$id not found${NC}" >&2
         return 1
     fi
-    
+
     local data=$(read_issue_data "$id")
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        _porcelain_show "$data"
+        return 0
+    fi
     local front_matter=$(parse_front_matter "$data")
     local comments=$(parse_comments "$data")
 

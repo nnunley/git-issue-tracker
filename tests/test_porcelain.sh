@@ -249,6 +249,20 @@ eq "_gi_to_format_2 is idempotent" \
 eq "marker is not duplicated by the second write" "1" "$(git cat-file -p "refs/notes/issue-$g:issue" | grep -c '^v: 2$')"
 eq "updated: is still a single header" "1" "$(git cat-file -p "refs/notes/issue-$g:issue" | grep -c '^updated: ')"
 
+echo "Testing show block [R-show-block]"
+fresh_repo showp
+"$GI" create "alpha task" --description="$(printf 'first line\nsecond line')" >/dev/null 2>&1
+a=$(porcelain_ids)
+"$GI" comment "$a" "$(printf 'one\ntwo')" >/dev/null 2>&1
+"$GI" update "$a" --role=dev >/dev/null 2>&1
+eq "canonical block" \
+   "title: alpha task"$'\n'"status: open"$'\n'"priority: medium"$'\n'"author: conformance"$'\n'"assignee: conformance"$'\n'"role: dev"$'\n'"hash_source: content"$'\n'"description: first line"$'\n'" second line"$'\n'"comment: [T] conformance: one"$'\n'" two" \
+   "$("$GI" show "$a" --porcelain | grep -vE '^(id|created|updated): ' | sed -E 's/^(comment: )\[[^]]+\]/\1[T]/')"
+eq "id first" "id: $a" "$("$GI" show "$a" --porcelain | head -1)"
+eq "marker not emitted" "0" "$("$GI" show "$a" --porcelain | grep -c '^v:' || true)"
+eq "no blank lines" "0" "$("$GI" show "$a" --porcelain | grep -c '^$' || true)"
+eq "unknown id is an error" "1" "$("$GI" show nosuch --porcelain >/dev/null 2>&1; echo $?)"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]
