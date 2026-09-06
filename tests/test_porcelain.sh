@@ -58,6 +58,26 @@ eq "stream has eleven fields" "11" "$(printf '%s' "$stream" | awk -F'\037' '{pri
 eq "tab in title becomes a space" "tab here" "$(printf '%s' "$stream" | cut -d $'\037' -f3)"
 eq "updated is the eighth field" "1" "$(printf '%s' "$stream" | cut -d $'\037' -f8 | grep -c 'T.*Z')"
 
+echo "Testing issue lines [R-issue-line] [R-issue-line-shared] [R-plain-stdout]"
+fresh_repo lines
+"$GI" create "alpha task" >/dev/null 2>&1
+"$GI" create "beta task"  >/dev/null 2>&1
+a=$("$GI" list --porcelain | awk -F'\t' '$12=="alpha task"{print $2}')
+b=$("$GI" list --porcelain | awk -F'\t' '$12=="beta task"{print $2}')
+"$GI" update "$b" --role=dev >/dev/null 2>&1
+"$GI" dep add "$a" blocks "$b" >/dev/null 2>&1
+eq "twelve columns" "12" "$("$GI" list --porcelain | head -1 | awk -F'\t' '{print NF}')"
+eq "repo column empty, title last" "|open|medium|conformance||||alpha task" \
+   "$("$GI" list --porcelain | awk -F'\t' -v a="$a" '$2==a' | cut -f1,3-6,10-12 | tr '\t' '|')"
+eq "blocks and depends_on columns" "blocked  A beta task"$'\n'"open B  alpha task" \
+   "$("$GI" list --porcelain | awk -F'\t' -v a="$a" -v b="$b" '{ gsub(a,"A"); gsub(b,"B"); print $3, $8, $9, $12 }' | sort)"
+eq "no ANSI in porcelain list" "0" "$("$GI" list --porcelain | grep -c "$(printf '\033')" || true)"
+eq "ready: only unblocked, twelve columns" "12 alpha task" "$("$GI" ready --porcelain | awk -F'\t' '{print NF, $12}')"
+eq "ready: no header or (none) on stdout" "" "$(cd "$WORK/lines" && "$GI" ready --porcelain --role=nobody)"
+eq "queue: filtered by role" "" "$("$GI" queue dev --porcelain)"
+eq "topo: order without rank numbers" "12 alpha task"$'\n'"12 beta task" "$("$GI" topo --porcelain | awk -F'\t' '{print NF, $12}')"
+eq "topo: empty repo is empty stdout" "0" "$(fresh_repo lines-empty >/dev/null; "$GI" topo --porcelain | wc -c | tr -d ' ')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]

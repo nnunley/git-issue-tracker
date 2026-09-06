@@ -541,6 +541,14 @@ $description"
 }
 
 # List all issues
+# One porcelain issue line (R-issue-line). Column 1 (repo) is empty here;
+# _gi_aggregate fills it under --all. Single-line fields are normalized
+# by the stream (tabs -> space), so a plain printf is safe.
+_porcelain_issue_line() {
+    printf '\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}"
+}
+
 list_issues() {
     # Aggregation (--all) suppresses the decoration: the sweep's contract
     # is one prefixed line per issue.
@@ -551,6 +559,11 @@ list_issues() {
 
     # Batch-read all issues, extract fields via awk (3 git processes total)
     _issue_tsv_stream | while IFS=$'\037' read -r id status_val title priority assignee role depends_on updated blocks parent_of relates_to; do
+        if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+            _porcelain_issue_line "$id" "$status_val" "$priority" "$assignee" "$role" "$updated" "$blocks" "$depends_on" "$parent_of" "$relates_to" "$title"
+            continue
+        fi
+
         # Color based on status
         local color_name
         color_name=$(status_color "$status_val" 2>/dev/null || echo "")
@@ -2562,9 +2575,14 @@ list_ready_issues() {
             *)        rank=9 ;;
         esac
 
-        local line="#${id} [${status_val}]  ${title}  (P: ${priority})"
-        [[ -n "$role" ]] && line="${line} [${role}]"
-        [[ -n "$assignee" ]] && line="${line} -> ${assignee}"
+        local line
+        if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+            line=$(_porcelain_issue_line "$id" "$status_val" "$priority" "$assignee" "$role" "$updated" "$blocks" "$depends_on" "$parent_of" "$relates_to" "$title")
+        else
+            line="#${id} [${status_val}]  ${title}  (P: ${priority})"
+            [[ -n "$role" ]] && line="${line} [${role}]"
+            [[ -n "$assignee" ]] && line="${line} -> ${assignee}"
+        fi
         results="${results}${rank} ${line}"$'\n'
     done <<< "$all_tsv"
 
@@ -2597,16 +2615,16 @@ topo_sort_issues() {
     local non_done_ids=()
     local issue_index=""  # id\ttitle\tpriority\tdepends_on per line
     local non_done_list=""
-    while IFS=$'\037' read -r id status_val title priority _ _ depends_on _ _ _ _; do
+    while IFS=$'\037' read -r id status_val title priority assignee role depends_on updated blocks parent_of relates_to; do
         [[ -z "$id" ]] && continue
         [[ "$status_val" == "closed" ]] && continue
         non_done_ids+=("$id")
         non_done_list="${non_done_list}${id}"$'\n'
-        issue_index="${issue_index}${id}"$'\t'"${title}"$'\t'"${priority}"$'\t'"${depends_on}"$'\n'
+        issue_index="${issue_index}${id}"$'\t'"${title}"$'\t'"${priority}"$'\t'"${depends_on}"$'\t'"${status_val}"$'\t'"${assignee}"$'\t'"${role}"$'\t'"${updated}"$'\t'"${blocks}"$'\t'"${parent_of}"$'\t'"${relates_to}"$'\n'
     done <<< "$all_tsv"
 
     if [[ ${#non_done_ids[@]} -eq 0 ]]; then
-        echo "No non-closed issues found."
+        [[ -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo "No non-closed issues found."
         return 0
     fi
 
@@ -2636,7 +2654,7 @@ topo_sort_issues() {
         return 1
     }
 
-    echo -e "${BLUE}Topological order (do first → do last):${NC}"
+    [[ -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo -e "${BLUE}Topological order (do first → do last):${NC}"
     local num=1
     echo "$sorted" | while IFS= read -r id; do
         [[ -z "$id" ]] && continue
@@ -2647,6 +2665,19 @@ topo_sort_issues() {
         title=$(echo "$idx_line" | cut -f2)
         priority=$(echo "$idx_line" | cut -f3)
         depends_on=$(echo "$idx_line" | cut -f4)
+
+        if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+            local status_val assignee role updated blocks parent_of relates_to
+            status_val=$(echo "$idx_line" | cut -f5)
+            assignee=$(echo "$idx_line" | cut -f6)
+            role=$(echo "$idx_line" | cut -f7)
+            updated=$(echo "$idx_line" | cut -f8)
+            blocks=$(echo "$idx_line" | cut -f9)
+            parent_of=$(echo "$idx_line" | cut -f10)
+            relates_to=$(echo "$idx_line" | cut -f11)
+            _porcelain_issue_line "$id" "$status_val" "$priority" "$assignee" "$role" "$updated" "$blocks" "$depends_on" "$parent_of" "$relates_to" "$title"
+            continue
+        fi
 
         local line="${num}. #${id}  ${title}  (P: ${priority})"
         if [[ -n "$depends_on" ]]; then
