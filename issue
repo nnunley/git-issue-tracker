@@ -1,0 +1,11 @@
+id: 040108f
+v: 2
+title: porcelain: legacy comments section drops lines before the first [ record
+status: open
+priority: medium
+created: 2026-09-06T21:11:17Z
+updated: 2026-09-06T21:11:17Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: comments.awk requires a started record; a format-1 note whose ## Comments section begins with prose (hand-edited) loses those lines on read and on upgrade. Found in Task 8 review of draft-ndn-porcelain-output-00.
