@@ -217,6 +217,109 @@ A failing entry does not abort the sweep: the remaining repositories are
 still processed, the failures are summarized on standard error, and the
 exit status is nonzero.
 Repositories are visited sequentially, one subprocess each.
+.TP
+.BI "\-\-porcelain[=v1]"
+Switch read commands to stable, tab-separated output for scripts and
+agents: no color, no headings, no
+.RI \(dq (none) \(dq
+placeholders, empty stdout for an empty result.
+Accepted both before and after the subcommand.
+.B v1
+is the only supported version and is frozen; any other version
+(for example
+.BR \-\-porcelain=v2 )
+is an error naming the supported versions, with a nonzero exit.
+See
+.B PORCELAIN FORMAT
+below.
+.SH PORCELAIN FORMAT
+.B \-\-porcelain
+(equivalently
+.BR \-\-porcelain=v1 )
+puts
+.BR list ", " ready ", " queue ", " topo ", " deps ", "
+.BR "dep list" ", " scan\-commits ", " "setup\-sync status" ", and " show
+into a stable, machine-readable mode.
+No line is ever decorated with color, a heading, or a
+.RI \(dq (none) \(dq
+placeholder, and an empty result is empty stdout with exit 0.
+Informational banners move to being suppressed; errors still go to
+stderr and their wording is not part of the contract.
+.PP
+.BR list ", " ready ", " queue ", and " topo
+each print one line per issue with exactly twelve tab-separated columns,
+in this order:
+.PP
+.RS
+repo, id, status, priority, assignee, role, updated, blocks,
+depends_on, parent_of, relates_to, title
+.RE
+.PP
+An unset field is empty;
+.BR blocks ", " depends_on ", " parent_of ", and " relates_to
+are comma-joined ids with no spaces;
+.B title
+is last because it is the only free-text column.
+Outside
+.B \-\-all
+the
+.B repo
+column is present but empty; under
+.B \-\-all
+it carries the registry name and the human
+.BI [ name "] "
+prefix is not printed.
+.PP
+.BR deps " and " "dep list"
+print one dependency edge per line as
+.BR from ", " type ", " to ,
+tab-separated.
+.B scan\-commits
+prints one line per commit trailer found, as the full commit hash, the
+trailer key in lowercase, and the issue id, tab-separated.
+.B "setup\-sync status"
+prints
+.BR key ", " value
+pairs, tab-separated, with the keys
+.BR enabled ", " post\-merge\-hook ", " pre\-push\-hook ", " auto\-fetch ,
+and
+.BR issue\-notes ,
+in that order.
+.PP
+.B show
+prints a single header block instead of columns: one
+.RB \(dq key : " " value \(dq
+line per known field that has a value, in canonical field order,
+excluding the format marker, then
+.BR description ,
+then one
+.B comment
+line per comment in stored order as
+.RB \(dq[ timestamp "] " author : " " text \(dq.
+A line beginning with one space continues the previous value; this is
+the only rule a consumer needs to reassemble a multi-line field.
+No blank line, section heading, or decoration appears in the block.
+.PP
+On disk, every note written by this version carries the format marker
+.B "v: 2"
+as its second header line, immediately after
+.BR id: .
+.B description
+is stored as a header in the top block, folded with the same
+leading-space continuation rule, and a comment under
+.B "## Comments"
+is stored as its
+.RB \(dq[ timestamp "] " author : " " text \(dq
+line followed by continuation lines.
+Every write emits format 2, upgrading a note stored in the older
+format in place; a note without the
+.B v:
+marker is read as format 1, where the description is the free-text body
+after the first blank line and comments continue verbatim until the next
+line beginning with
+.BR [ .
+The full specification, including the formal grammar, is
+.IR docs/rfc/draft\-ndn\-porcelain\-output\-00.md .
 .SH STATUSES
 Six statuses ship by default:
 .BR open ,

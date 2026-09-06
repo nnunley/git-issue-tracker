@@ -15,6 +15,8 @@ with rules about claiming shared files.
 
 `git-issue` is a lightweight, git-native issue tracking CLI that stores issues as git notes with hash-based IDs. Pure bash + git, zero external dependencies.
 
+Read state with `--porcelain` (tab-separated, stable; see `docs/rfc/draft-ndn-porcelain-output-00.md`), never by parsing the colored output.
+
 ## Current Work: Dependency Graph Feature
 
 We are adding a dependency graph system to close the biggest gap with [Beads](https://github.com/steveyegge/beads). The design is documented in `docs/plans/2026-02-28-dependency-graph-design.md`.

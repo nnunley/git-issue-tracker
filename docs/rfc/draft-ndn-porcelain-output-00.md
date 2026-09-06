@@ -1,7 +1,7 @@
 # draft-ndn-porcelain-output-00: Porcelain Output for git-issue Read Commands
 
 **Status:** DRAFT
-**Corpus:** red (spec-first — evidence is the acceptance criteria)
+**Corpus:** green
 **Category:** Standards-Track
 **Authors:** Norman Nunley, Jr <nnunley@gmail.com>, Claude (drafting agent)
 

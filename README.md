@@ -208,6 +208,56 @@ With no registry entries, behavior is exactly as before.
 The full specification is
 [`docs/rfc/draft-ndn-multi-project-registry-02.md`](docs/rfc/draft-ndn-multi-project-registry-02.md).
 
+## Machine-readable output
+
+`--porcelain` (accepted before or after the subcommand; `--porcelain=v1`
+is the same thing, and v1 is frozen — `--porcelain=v2` is reserved for a
+future, incompatible format) switches read commands to stable,
+tab-separated output: no color, no headings, no `(none)` placeholders,
+empty stdout for an empty result.
+
+`list`, `ready`, `queue`, and `topo` each emit one line per issue with
+twelve tab-separated columns: `repo`, `id`, `status`, `priority`,
+`assignee`, `role`, `updated`, `blocks`, `depends_on`, `parent_of`,
+`relates_to`, `title` (`repo` is empty unless `--all` is given, and
+`title` is last because it's the only free-text column).
+
+```bash
+$ git issue list --porcelain
+	a1b2c3d	open	medium	conformance			2026-01-01T00:00:00Z				alpha task
+```
+
+`deps` and `dep list` emit one edge per line as `from`, `type`, `to`.
+`scan-commits` emits one line per trailer as the full commit hash, the
+lowercase trailer key, and the issue id. `setup-sync status` emits
+`key`, `value` pairs (`enabled`, `post-merge-hook`, `pre-push-hook`,
+`auto-fetch`, `issue-notes`, in that order).
+
+`show --porcelain` emits a `key: value` header block instead of columns:
+
+```bash
+$ git issue show a1b2c3d --porcelain
+title: alpha task
+status: open
+priority: medium
+author: conformance
+description: first line
+ second line
+comment: [2026-01-01T00:00:00Z] conformance: one
+```
+
+A line beginning with one space continues the previous value — this is
+how multi-line descriptions and comments stay on one logical field. The
+same rule now governs the note as stored: on disk, a note carries `v: 2`
+as its second header line, and `description` is a header in the top
+block with continuation lines rather than free text in a body region.
+Notes written before this format are read the same way as ever (`v: 2`
+absent means format 1); every write upgrades a legacy note in place.
+
+The full specification, including the edge and reference line shapes
+and the storage grammar, is
+[`docs/rfc/draft-ndn-porcelain-output-00.md`](docs/rfc/draft-ndn-porcelain-output-00.md).
+
 ## 🔗 Git Integration
 
 git-issue creates bidirectional links between issues and commits:
