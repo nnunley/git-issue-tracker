@@ -166,8 +166,8 @@ test_control_bytes_stripped_and_columns_stable() {
 
     local output
     output=$(git issue list 2>&1)
-    assert_contains "#tabtitle [open] Tabhere (P: high)" "$output" \
-        "Tab in title is stripped instead of shifting columns"
+    assert_contains "#tabtitle [open] Tab here (P: high)" "$output" \
+        "Tab in title becomes a space instead of shifting columns"
     assert_contains "#notitle1 [open]  (P: high)" "$output" \
         "Empty title must not shift priority into the title column"
 }

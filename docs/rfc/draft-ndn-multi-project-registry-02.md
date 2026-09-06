@@ -4,7 +4,6 @@
 **Corpus:** green
 **Category:** Standards-Track
 **Authors:** Norman Nunley, Jr <nnunley@gmail.com>, Claude (drafting agent)
-**Date:** 2026-08-14
 
 ## Abstract
 
@@ -99,7 +98,7 @@ $ mkdir -p a b
 $ git issue repo add tracker /tmp/gi-rfc/a
 Registered 'tracker' -> /tmp/gi-rfc/a
 $ git issue repo add tracker /tmp/gi-rfc/b
-Error: 'tracker' is already registered (-> /tmp/gi-rfc/a); use --force to replace
+! Error: 'tracker' is already registered (-> /tmp/gi-rfc/a); use --force to replace
 ? 1
 ```
 
@@ -213,14 +212,14 @@ $ git issue list --repo proj 2>/dev/null | grep -c "target smoke"
 
 ```transcript @R-target-invalid
 $ git issue --repo nosuch list
-Error: 'nosuch' is not a registered repository (see: git issue repo list)
+! Error: 'nosuch' is not a registered repository (see: git issue repo list)
 ? 1
 $ mkdir -p gone
 $ git issue repo add old /tmp/gi-rfc/gone
 Registered 'old' -> /tmp/gi-rfc/gone
 $ rmdir gone
 $ git issue --repo old list
-Error: 'old' points to /tmp/gi-rfc/gone, which does not exist
+! Error: 'old' points to /tmp/gi-rfc/gone, which does not exist
 ? 1
 ```
 
@@ -355,43 +354,3 @@ alike.
   (sub-project 2) and tracker issue `43c456e`.
 - git-config(1) — storage substrate and access semantics.
 - BCP 14 (RFC 2119, RFC 8174); RFC 5234/7405 (ABNF).
-
-## Changelog
-
-- 2026-08-13: Requirements interview conducted (storage, scope, mechanism,
-  registration policy); design synthesis approved with the refactor spec.
-- 2026-08-14: draft-00 created.
-- 2026-08-14: name-case question raised in review; strict rejection
-  confirmed over case-folding (recorded under Alternatives Considered).
-- 2026-08-14 (rev -01): author-call interview concluded: `repo add --force`
-  [R-force-replace] (rebinding risk accepted, mitigated by mandatory
-  old->new reporting), `repo prune` [R-prune], `--all` behavior confirmed;
-  worktree refinement [R-worktree-root] (issue refs are per-repository,
-  worktree paths transient).
-- 2026-08-14 (rev -02): pushback review resolved. Evidence conventions
-  added: per-block sandbox at `/tmp/gi-rfc`, self-provisioning transcripts,
-  `? N` exit-status notation, deterministic projections for generated
-  identifiers, `fidelity=` modifier reserved. All transcripts rewritten
-  replayable. Alignment dropped from outputs (recorded under Alternatives
-  Considered); `repo list` line format made contractual; `--repo` accepted
-  in both flag positions (trailing preferred per git subcommand-promotion
-  convention).
-- 2026-08-14 (rev -02): evidence conventions now cite the process BCP
-  (draft-ndn-authoring-rfcs-00) as canonical; local text reduced to
-  document-specific notes.
-- 2026-08-14 (rev -02): sandbox contract hardened from replay experience:
-  XDG_CONFIG_HOME redirected and system git config neutralized
-  (GIT_CONFIG_NOSYSTEM=1) join the runner obligations.
-- 2026-08-20 (rev -02): registry implemented in `bin/git-issue`; corpus
-  flipped red -> green (12/12 transcripts replay, and the [R-name-charset]
-  table matches). Two findings from implementation, both recorded rather
-  than silently absorbed:
-  - `repo list`'s single-space line format and the `[<name>] ` prefix are
-    emitted uncolored, since [R-config-store] and friends are byte-exact
-    and the rest of the tool's output is unconditionally ANSI-colored.
-  - Under aggregation the per-repository decoration (`Issues:`,
-    `Ready to work on:`, `  (none)`) is suppressed, so a sweep emits
-    exactly one prefixed line per issue. [R-all-prefix]'s witness
-    (`grep -c "^\[a\] "` = 1 for a one-issue repository) requires this;
-    the normative "prefix each output line" sentence should be read as
-    ranging over the sweep's lines, not over each child's full display.

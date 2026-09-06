@@ -59,7 +59,7 @@ detect_storage_backend() {
     # Only use git mode if we have a local .git directory
     if [[ -d ".git" ]] || [[ -f ".git" ]]; then
         STORAGE_TYPE="git"
-        echo -e "${BLUE}Using current git repository${NC}" >&2
+        gi_info "${BLUE}Using current git repository${NC}"
     else
         STORAGE_TYPE="xdg"
         # Use platform-appropriate data directory with bare git repo
@@ -76,7 +76,7 @@ detect_storage_backend() {
         
         # Initialize bare git repo if it doesn't exist
         if [[ ! -d "$ISSUE_REPO_DIR" ]]; then
-            echo -e "${YELLOW}Creating bare git repository for issue tracking: $ISSUE_REPO_DIR${NC}" >&2
+            gi_info "${YELLOW}Creating bare git repository for issue tracking: $ISSUE_REPO_DIR${NC}"
             mkdir -p "$ISSUE_REPO_DIR"
             git init --bare "$ISSUE_REPO_DIR" >/dev/null 2>&1
             
@@ -100,7 +100,7 @@ detect_storage_backend() {
         # Set up git environment for XDG repo
         ORIGINAL_GIT_DIR="$GIT_DIR"
         export GIT_DIR="$ISSUE_REPO_DIR"
-        echo -e "${YELLOW}Using standalone git repository: $ISSUE_REPO_DIR${NC}" >&2
+        gi_info "${YELLOW}Using standalone git repository: $ISSUE_REPO_DIR${NC}"
     fi
 }
 
@@ -112,6 +112,13 @@ cleanup_xdg_environment() {
         else
             unset GIT_DIR
         fi
+    fi
+}
+
+# Informational message to stderr; silent in porcelain mode (R-plain-stdout).
+gi_info() {
+    if [[ -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        echo -e "$@" >&2
     fi
 }
 
@@ -181,7 +188,11 @@ FALLBACK
             compiler="git-issue-compile-statuses"
         fi
         if [[ -n "$compiler" ]]; then
-            "$compiler" "$def_file" >&2
+            if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+                "$compiler" "$def_file" >/dev/null 2>&1
+            else
+                "$compiler" "$def_file" >&2
+            fi
         fi
     fi
 
@@ -271,6 +282,7 @@ usage() {
     echo "Global options:"
     echo "  --repo <name>                           Run the command in a registered repository"
     echo "  --all                                   (list, ready) run across every registered repository"
+    echo "  --porcelain[=v1]                        Stable machine-readable output (see docs/rfc)"
     echo ""
     echo "Examples:"
     echo "  git issue create 'Add user authentication' --description='Implement OAuth2 login'"
@@ -315,6 +327,16 @@ read_issue_data() {
     git cat-file -p "$blob_hash" 2>/dev/null || return 1
 }
 
+# Note format: 2 when line 2 is the marker "v: 2", else 1 (R-format-marker).
+note_format() {
+    local data="$1"
+    if [[ "$(printf '%s\n' "$data" | sed -n '2p')" == "v: 2" ]]; then
+        echo 2
+    else
+        echo 1
+    fi
+}
+
 # Batch-read all issue data using git cat-file --batch (3 git processes total
 # instead of 3 per issue).  Outputs __ISSUE__-delimited stream of issue blobs.
 # Consumers pipe through awk to extract fields they need.
@@ -349,18 +371,20 @@ _batch_issue_stream() {
 
 # Known header fields. Used to tell real headers (including trailing ones from
 # split front matter) apart from body prose like "note: remember this".
-KNOWN_HEADER_FIELDS='id|title|status|state|priority|created|updated|author|assignee|role|labels|hash_source|github_id|github_url|jira_id|jira_url|gitlab_id|gitlab_url|blocks|depends_on|parent_of|relates_to|issue_type|external_ref|waits_for'
+KNOWN_HEADER_FIELDS='id|title|status|state|priority|created|updated|author|assignee|role|labels|hash_source|github_id|github_url|jira_id|jira_url|gitlab_id|gitlab_url|blocks|depends_on|parent_of|relates_to|issue_type|external_ref|waits_for|description'
 # Dummy objectname used for the flush/legacy delimiters emitted by hand
 BATCH_FLUSH_HASH='0000000000000000000000000000000000000000'
 
 # Extract one record per issue from _batch_issue_stream.
-# Output: one US (\037)-separated line per issue:
-#   id US status US title US priority US assignee US role US depends_on
+# Output: one US (\037)-separated line per issue, eleven fields:
+#   id US status US title US priority US assignee US role US depends_on US
+#   updated US blocks US parent_of US relates_to
 # US is used instead of tab because tab is IFS whitespace, so `read` collapses
 # consecutive tabs and empty fields (e.g. an empty title) shift every column.
 # Hardening, in order of the rules below:
-# - Control characters are stripped so stored content can neither inject
-#   terminal escapes into listings nor break the US-separated output.
+# - Tabs become a single space and other control characters are stripped, so
+#   stored content can neither inject terminal escapes into listings nor
+#   break the US-separated output.
 # - Record boundaries require the full "__ISSUE__ <40-hex>" delimiter.
 # - Header fields are honored in the top block (before the first blank line)
 #   and in a trailing block of contiguous known headers before the record end
@@ -376,9 +400,22 @@ write_issue_data() {
     local data="$2"
     local ref=$(get_issue_ref "$id")
 
+    # Every write emits format 2: the note is canonicalized (and a format-1
+    # note upgraded in place) here, so the v: 2 marker, the header-block
+    # description and the folded comments all come from one place.
+    data=$(_gi_to_format_2 "$data")
+
+    # If canonicalization collapsed the note (e.g. an awk helper failed and
+    # its exit was swallowed by the $(...) above), refuse to write a stub
+    # over a real note rather than silently destroying it.
+    if [[ -z "$data" ]] || ! printf '%s\n' "$data" | head -1 | grep -q '^id: '; then
+        echo -e "${RED}Error: refusing to write issue $id: note has no id line (is the awk directory installed?)${NC}" >&2
+        return 1
+    fi
+
     # Create blob from issue data
     local blob_hash
-    blob_hash=$(echo "$data" | git hash-object -w --stdin)
+    blob_hash=$(printf '%s\n' "$data" | git hash-object -w --stdin)
 
     # Create tree with single entry named "issue"
     local tree_hash
@@ -450,13 +487,30 @@ parse_front_matter() {
 # Excludes both the trailing header block and any stray lines after it.
 parse_body() {
     local data="$1"
+    [[ "$(note_format "$data")" == "2" ]] && return 0
     echo "$data" | awk -f "$(require_awk_file body.awk)" -v FIELDS="$KNOWN_HEADER_FIELDS"
 }
 
-# Parse comments from issue data (after ## Comments marker)
-parse_comments() {
+# Description for either note format, newlines preserved.
+get_description() {
     local data="$1"
-    echo "$data" | awk '/^## Comments$/{p=1; next} p{print}'
+    if [[ "$(note_format "$data")" == "2" ]]; then
+        get_field_raw "$(parse_front_matter "$data")" "description"
+    else
+        parse_body "$data"
+    fi
+}
+
+# Comments as canonical folded records (R-legacy-read, R-store-continuation):
+# first line "[ts] author: text", continuation lines prefixed by one space.
+parse_comment_records() {
+    local data="$1"
+    printf '%s\n' "$data" | awk -f "$(require_awk_file comments.awk)" -v FORMAT="$(note_format "$data")"
+}
+
+# Comments for human display: records with continuation unfolded.
+parse_comments() {
+    parse_comment_records "$1" | sed 's/^ //'
 }
 
 # Trim leading/trailing whitespace. Quote-safe replacement for `| xargs`,
@@ -469,18 +523,70 @@ trim_ws() {
     printf '%s' "$s"
 }
 
-# Get field value from front matter
-get_field_value() {
+# Continuation-encode a multi-line value: every line after the first gets
+# one leading space (R-store-continuation).
+gi_fold() {
+    printf '%s\n' "$1" | sed '2,$s/^/ /'
+}
+
+# Collapse tab, CR and LF to one space (R-field-normalize). Applied on every
+# write of a single-line field; description is the only multi-line field.
+gi_single_line() {
+    printf '%s' "$1" | tr '\t\r\n' '   '
+}
+
+# Canonical format-2 rendering of a note in either format (R-format-marker,
+# R-store-continuation, R-legacy-read). Reads the note through the same
+# parsers the readers use, so an upgrade never disagrees with what the
+# previous version displayed: headers keep their order with "id:" first and
+# "v: 2" second, the description becomes a folded top-block header, and the
+# comments become folded records under "## Comments".
+_gi_to_format_2() {
+    local data="$1"
+    local front_matter description comments headers
+    front_matter=$(parse_front_matter "$data")
+    description=$(get_description "$data")
+    comments=$(parse_comment_records "$data")
+    headers=$(printf '%s\n' "$front_matter" | awk -f "$(require_awk_file upgrade_note.awk)")
+
+    local out="$headers"
+    if [[ -n "$description" ]]; then
+        out="$out
+description: $(gi_fold "$description")"
+    fi
+    if [[ -n "$comments" ]]; then
+        out="$out
+
+## Comments
+$comments"
+    fi
+    printf '%s' "$out"
+}
+
+# Raw value of a header field with continuation lines unfolded (joined by
+# newline, leading space stripped). Empty if absent.
+get_field_raw() {
     local front_matter="$1"
     local field="$2"
+    printf '%s\n' "$front_matter" | awk -v f="$field" '
+        $0 ~ "^" f ":" { v = $0; sub("^" f ": ?", "", v); found = 1; next }
+        found && /^ / { v = v "\n" substr($0, 2); next }
+        found { exit }
+        END { if (found) printf "%s", v }'
+}
+
+# Single-line view of a field: newlines become spaces (unchanged behavior
+# for every field but description, which callers read with get_field_raw).
+get_field_value() {
     local value
-    value=$(echo "$front_matter" | grep "^$field:" | cut -d' ' -f2- | tr '\n' ' ')
+    value=$(get_field_raw "$1" "$2" | tr '\n' ' ')
     trim_ws "$value"
 }
 
 # Create new issue with auto-generated hash ID
 create_issue() {
-    local title="$1"
+    local title
+    title=$(gi_single_line "$1")   # R-field-normalize
     local description="$2"
     local author=$(get_git_user)
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -507,6 +613,7 @@ create_issue() {
     
     # Create issue data (only include non-empty fields)
     local issue_data="id: $id
+v: 2
 title: $title
 status: open
 priority: medium
@@ -515,11 +622,10 @@ updated: $timestamp
 author: $author
 assignee: $author
 hash_source: content"
-    # Body after blank line (multiline description support)
+    # Description is a top-block header with continuation lines (format 2)
     if [[ -n "$description" ]]; then
         issue_data="$issue_data
-
-$description"
+description: $(gi_fold "$description")"
     fi
 
     write_issue_data "$id" "$issue_data"
@@ -529,16 +635,29 @@ $description"
 }
 
 # List all issues
+# One porcelain issue line (R-issue-line). Column 1 (repo) is empty here;
+# _gi_aggregate fills it under --all. Single-line fields are normalized
+# by the stream (tabs -> space), so a plain printf is safe.
+_porcelain_issue_line() {
+    printf '\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}"
+}
+
 list_issues() {
     # Aggregation (--all) suppresses the decoration: the sweep's contract
     # is one prefixed line per issue.
-    if [[ -z "${GIT_ISSUE_NO_HEADER:-}" ]]; then
+    if [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
         echo -e "${BLUE}Issues:${NC}"
         echo ""
     fi
 
     # Batch-read all issues, extract fields via awk (3 git processes total)
-    _issue_tsv_stream | while IFS=$'\037' read -r id status_val title priority assignee role _; do
+    _issue_tsv_stream | while IFS=$'\037' read -r id status_val title priority assignee role depends_on updated blocks parent_of relates_to; do
+        if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+            _porcelain_issue_line "$id" "$status_val" "$priority" "$assignee" "$role" "$updated" "$blocks" "$depends_on" "$parent_of" "$relates_to" "$title"
+            continue
+        fi
+
         # Color based on status
         local color_name
         color_name=$(status_color "$status_val" 2>/dev/null || echo "")
@@ -560,28 +679,57 @@ list_issues() {
     done
 }
 
+# Canonical header order for show --porcelain (R-show-block); matches the
+# hkey alternatives in the RFC grammar. description and comment follow.
+_PORCELAIN_SHOW_FIELDS="id title status priority created updated author assignee role labels hash_source github_id github_url jira_id jira_url gitlab_id gitlab_url blocks depends_on parent_of relates_to issue_type external_ref waits_for"
+
+_porcelain_show() {
+    local data="$1"
+    local front_matter
+    front_matter=$(parse_front_matter "$data")
+    local f v
+    for f in $_PORCELAIN_SHOW_FIELDS; do
+        if [[ "$f" == "status" ]]; then
+            v=$(get_field_value "$front_matter" status)
+            [[ -z "$v" ]] && v=$(get_field_value "$front_matter" state)
+        else
+            v=$(get_field_value "$front_matter" "$f")
+        fi
+        [[ -n "$v" ]] && printf '%s: %s\n' "$f" "$v"
+    done
+    local description
+    description=$(get_description "$data")
+    if [[ -n "$description" ]]; then
+        printf 'description: %s\n' "$(gi_fold "$description")"
+    fi
+    parse_comment_records "$data" | sed -E '/^\[/s/^/comment: /'
+}
+
 # Show issue details
 show_issue() {
     local id="$1"
-    
+
     if [[ -z "$id" ]]; then
         echo -e "${RED}Error: Issue ID is required${NC}" >&2
         return 1
     fi
-    
+
     if ! issue_exists "$id"; then
         echo -e "${RED}Error: Issue #$id not found${NC}" >&2
         return 1
     fi
-    
+
     local data=$(read_issue_data "$id")
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        _porcelain_show "$data"
+        return 0
+    fi
     local front_matter=$(parse_front_matter "$data")
-    local body=$(parse_body "$data")
     local comments=$(parse_comments "$data")
 
     # Extract fields
     local title=$(get_field_value "$front_matter" "title")
-    local description="$body"
+    local description=$(get_description "$data")
     local github_id=$(get_field_value "$front_matter" "github_id")
     local github_url=$(get_field_value "$front_matter" "github_url")
     local jira_id=$(get_field_value "$front_matter" "jira_id")
@@ -641,7 +789,12 @@ show_issue() {
 update_issue() {
     local id=$1
     local field=$2
-    local value="${@:3}"
+    local value="${*:3}"
+    # Every field but description is single-line: tab, CR and LF collapse to
+    # one space before the value is stored (R-field-normalize).
+    if [[ "$field" != "description" ]]; then
+        value=$(gi_single_line "$value")
+    fi
     local ref=$(get_issue_ref "$id")
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     
@@ -689,22 +842,25 @@ update_issue() {
     data=$(read_issue_data "$id")
 
     if [[ "$field" == "description" ]]; then
-        # Description lives in the body (after blank line, before ## Comments)
+        # Description is a folded top-block header in format 2. Rebuild the
+        # note from the parsed views so a format-1 note is upgraded here too:
+        # upgrade_note.awk drops the old description (and its continuation
+        # lines) and puts "id:" first with the "v: 2" marker second.
         local headers
         headers=$(parse_front_matter "$data")
         local comments
-        comments=$(parse_comments "$data")
-        # Update the timestamp in headers
-        headers=$(echo "$headers" | awk -v ts="$timestamp" '
+        comments=$(parse_comment_records "$data")
+        # Update the timestamp in headers (continuation lines pass through)
+        headers=$(printf '%s\n' "$headers" | awk -v ts="$timestamp" '
+            /^ / { print; next }
             $1 == "updated:" { print "updated:", ts; next }
             { print }
-        ')
-        # Reconstruct: headers + blank line + new body + comments
+        ' | awk -f "$(require_awk_file upgrade_note.awk)")
+        # Reconstruct: headers + folded description + comments
         local updated_data="$headers"
         if [[ -n "$value" ]]; then
             updated_data="$updated_data
-
-$value"
+description: $(gi_fold "$value")"
         fi
         if [[ -n "$comments" ]]; then
             updated_data="$updated_data
@@ -719,6 +875,7 @@ $comments"
         # from reverting the update.
         updated_data=$(echo "$data" | awk -v field="$field:" -v value="$value" -v ts="$timestamp" '
             BEGIN { found=0; in_body=0 }
+            /^ / { print; next }
             !in_body && /^$/ { if (!found) { print field, value }; in_body=1; print; next }
             in_body && $1 == field { next }
             in_body { print; next }
@@ -1134,42 +1291,39 @@ setup_sync_disable() {
 setup_sync_status() {
     local git_dir=$(git rev-parse --git-dir)
     local hooks_dir="$git_dir/hooks"
-    
+
+    local sync_enabled=$(git config --get git-issue.sync.enabled 2>/dev/null || echo "false")
+    local post_merge=false pre_push=false auto_fetch=false
+    [[ -f "$hooks_dir/post-merge" && -x "$hooks_dir/post-merge" ]] && post_merge=true
+    [[ -f "$hooks_dir/pre-push"   && -x "$hooks_dir/pre-push"   ]] && pre_push=true
+    if git config --get-regexp "remote\..*\.fetch" 2>/dev/null | grep -q "refs/notes"; then
+        auto_fetch=true
+    fi
+    local note_count=$(git for-each-ref --format="%(refname)" 'refs/notes/issue-*' 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        printf 'enabled\t%s\n'         "$sync_enabled"
+        printf 'post-merge-hook\t%s\n' "$post_merge"
+        printf 'pre-push-hook\t%s\n'   "$pre_push"
+        printf 'auto-fetch\t%s\n'      "$auto_fetch"
+        printf 'issue-notes\t%s\n'     "$note_count"
+        return 0
+    fi
+
+    local mark_pm="❌" mark_pp="❌" mark_af="❌"
+    [[ "$post_merge" == true ]] && mark_pm="✅"
+    [[ "$pre_push"   == true ]] && mark_pp="✅"
+    [[ "$auto_fetch" == true ]] && mark_af="✅"
+
     echo -e "${BLUE}Git Notes Sync Status${NC}"
     echo "===================="
-    
-    # Check configuration
-    local sync_enabled=$(git config --get git-issue.sync.enabled 2>/dev/null || echo "false")
     echo "Config enabled: $sync_enabled"
-    
-    # Check hooks
-    local post_merge_exists="❌"
-    local pre_push_exists="❌"
-    
-    if [[ -f "$hooks_dir/post-merge" && -x "$hooks_dir/post-merge" ]]; then
-        post_merge_exists="✅"
-    fi
-    
-    if [[ -f "$hooks_dir/pre-push" && -x "$hooks_dir/pre-push" ]]; then
-        pre_push_exists="✅"
-    fi
-    
-    echo "Post-merge hook: $post_merge_exists"
-    echo "Pre-push hook: $pre_push_exists"
-    
-    # Check notes refs configuration
-    local notes_fetch_configured="❌"
-    if git config --get-regexp "remote\..*\.fetch" | grep -q "refs/notes"; then
-        notes_fetch_configured="✅"
-    fi
-    echo "Notes auto-fetch: $notes_fetch_configured"
-    
-    # Count existing notes
-    local note_count=$(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | wc -l)
+    echo "Post-merge hook: $mark_pm"
+    echo "Pre-push hook: $mark_pp"
+    echo "Notes auto-fetch: $mark_af"
     echo "Issue notes: $note_count"
-    
     echo ""
-    if [[ "$sync_enabled" == "true" && "$post_merge_exists" == "✅" && "$pre_push_exists" == "✅" ]]; then
+    if [[ "$sync_enabled" == "true" && "$post_merge" == true && "$pre_push" == true ]]; then
         echo -e "${GREEN}✓ Automatic sync is fully configured and enabled${NC}"
     else
         echo -e "${YELLOW}⚠️  Automatic sync is not fully configured${NC}"
@@ -1404,7 +1558,7 @@ export_to_github_format() {
     local front_matter=$(parse_front_matter "$data")
     
     local title=$(get_field_value "$front_matter" "title")
-    local description=$(parse_body "$data")
+    local description=$(get_description "$data")
     local status_val
     status_val=$(trim_ws "$(echo "$front_matter" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2-)")
     local labels=$(get_field_value "$front_matter" "labels")
@@ -1442,19 +1596,24 @@ add_comment() {
         return 1
     fi
     
-    # Get current data and append comment under ## Comments marker
-    data=$(read_issue_data "$id")
+    # Get current data and append comment under ## Comments marker. The note
+    # is canonicalized to format 2 first so the folded record we append is
+    # read back under the format-2 rule, not the legacy one.
+    data=$(_gi_to_format_2 "$(read_issue_data "$id")")
 
+    # The comment record is folded: continuation lines carry one leading
+    # space so a line beginning with "[" or "## " cannot be mistaken for a
+    # new record or a section marker (R-store-continuation).
     if echo "$data" | grep -q "^## Comments$"; then
         # Append to existing comments section
         updated_data="$data
-[$timestamp] $author: $comment"
+[$timestamp] $author: $(gi_fold "$comment")"
     else
         # Add new ## Comments section
         updated_data="$data
 
 ## Comments
-[$timestamp] $author: $comment"
+[$timestamp] $author: $(gi_fold "$comment")"
     fi
 
     write_issue_data "$id" "$updated_data"
@@ -1552,10 +1711,12 @@ add_issue_trailer() {
 scan_commits_for_issues() {
     local since="${1:-}"
     local format="${2:-summary}"
-    
-    echo -e "${BLUE}🔍 Scanning commits for issue references...${NC}"
-    echo ""
-    
+
+    if [[ -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        echo -e "${BLUE}🔍 Scanning commits for issue references...${NC}"
+        echo ""
+    fi
+
     # Build git log arguments
     local git_log_args=("--oneline")
     if [[ -n "$since" ]]; then
@@ -1566,16 +1727,18 @@ scan_commits_for_issues() {
     local commit_count=0
     local issue_refs_found=0
     
-    git log "${git_log_args[@]}" --format="%H %s" | while IFS=' ' read -r commit_hash commit_subject; do
+    # Process substitution (not a pipe) keeps the loop in the current shell,
+    # so issue_refs_found's updates below are visible after the loop exits.
+    while IFS=' ' read -r commit_hash commit_subject; do
         commit_count=$((commit_count + 1))
-        
+
         # Parse trailers from this commit
         local trailers
         trailers=$(parse_issue_trailers "$commit_hash")
-        
+
         if [[ -n "$trailers" ]]; then
             issue_refs_found=$((issue_refs_found + 1))
-            
+
             if [[ "$format" == "detailed" ]]; then
                 echo -e "${GREEN}Commit: ${commit_hash:0:7}${NC} - $commit_subject"
                 echo "$trailers" | while IFS= read -r trailer; do
@@ -1585,15 +1748,20 @@ scan_commits_for_issues() {
             else
                 # Summary format
                 echo "$trailers" | while IFS= read -r trailer; do
-                    local issue_id=$(echo "$trailer" | grep -o '#[a-f0-9]\{7\}' | sed 's/#//')
-                    local trailer_type=$(echo "$trailer" | cut -d':' -f1)
-                    echo "${commit_hash:0:7} $trailer_type: #$issue_id"
+                    local issue_id trailer_type
+                    issue_id=$(echo "$trailer" | grep -oE '#?[a-f0-9]{7}' | head -1 | sed 's/^#//')
+                    trailer_type=$(echo "$trailer" | cut -d':' -f1)
+                    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+                        printf '%s\t%s\t%s\n' "$commit_hash" "$(echo "$trailer_type" | tr 'A-Z' 'a-z')" "$issue_id"
+                    else
+                        echo "${commit_hash:0:7} $trailer_type: #$issue_id"
+                    fi
                 done
             fi
         fi
-    done
-    
-    if [[ $issue_refs_found -eq 0 ]]; then
+    done < <(git log "${git_log_args[@]}" --format="%H %s")
+
+    if [[ $issue_refs_found -eq 0 && -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
         echo -e "${YELLOW}No issue references found in commit trailers${NC}"
         echo -e "${GRAY}Tip: Use 'git issue commit --fixes <id>' to add trailers to commits${NC}"
     fi
@@ -2003,6 +2171,7 @@ append_to_field() {
     local updated_data
     updated_data=$(echo "$data" | awk -v field="${field}:" -v value="$new_value" -v ts="$timestamp" '
         BEGIN { found=0; in_body=0 }
+        /^ / { print; next }
         !in_body && /^$/ { if (!found) { print field, value }; in_body=1; print; next }
         in_body { print; next }
         $1 == field { print field, value; found=1; next }
@@ -2055,6 +2224,7 @@ remove_from_field() {
         # Field is now empty - remove it entirely
         local updated_data
         updated_data=$(echo "$data" | awk -v field="${field}:" -v ts="$timestamp" '
+            /^ / { print; next }
             $1 == field { next }
             $1 == "updated:" { print "updated:", ts; next }
             { print }
@@ -2064,6 +2234,7 @@ remove_from_field() {
         local updated_data
         updated_data=$(echo "$data" | awk -v field="${field}:" -v value="$new_value" -v ts="$timestamp" '
             BEGIN { found=0; in_body=0 }
+            /^ / { print; next }
             !in_body && /^$/ { if (!found) { print field, value }; in_body=1; print; next }
             in_body { print; next }
             $1 == field { print field, value; found=1; next }
@@ -2330,10 +2501,31 @@ dep_rm() {
     echo -e "${GREEN}Removed dependency: #$from_id $dep_type #$to_id${NC}"
 }
 
+# Porcelain edge lines (R-edge-line): from<TAB>type<TAB>to, one per edge in
+# the edge index, optionally restricted to edges leaving <id>.
+_porcelain_edges() {
+    local only="${1:-}"
+    ensure_edge_index_current
+    read_edge_index | while read -r from type to; do
+        [[ -z "$from" || "$from" == "last_rebuilt_from:" ]] && continue
+        [[ -n "$only" && "$from" != "$only" ]] && continue
+        printf '%s\t%s\t%s\n' "$from" "$type" "$to"
+    done
+}
+
 # List dependency relationships
 # Usage: dep_list [issue_id]
 dep_list() {
     local target_id="$1"
+
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        if [[ -n "$target_id" ]] && ! issue_exists "$target_id"; then
+            echo -e "${RED}Error: Issue #$target_id not found${NC}" >&2
+            return 1
+        fi
+        _porcelain_edges "$target_id"
+        return 0
+    fi
 
     # Ensure edge index is current before querying
     ensure_edge_index_current
@@ -2504,14 +2696,14 @@ list_ready_issues() {
 
     # Build status lookup (id:status per line, for grep-based lookup)
     local status_index=""
-    while IFS=$'\037' read -r id status_val _ _ _ _ _; do
+    while IFS=$'\037' read -r id status_val _ _ _ _ _ _ _ _ _; do
         [[ -z "$id" ]] && continue
         status_index="${status_index}${id}:${status_val}"$'\n'
     done <<< "$all_tsv"
 
     # Filter and collect results
     local results=""
-    while IFS=$'\037' read -r id status_val title priority assignee role depends_on; do
+    while IFS=$'\037' read -r id status_val title priority assignee role depends_on updated blocks parent_of relates_to; do
         [[ -z "$id" ]] && continue
 
         # Skip closed and blocked issues
@@ -2550,15 +2742,20 @@ list_ready_issues() {
             *)        rank=9 ;;
         esac
 
-        local line="#${id} [${status_val}]  ${title}  (P: ${priority})"
-        [[ -n "$role" ]] && line="${line} [${role}]"
-        [[ -n "$assignee" ]] && line="${line} -> ${assignee}"
+        local line
+        if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+            line=$(_porcelain_issue_line "$id" "$status_val" "$priority" "$assignee" "$role" "$updated" "$blocks" "$depends_on" "$parent_of" "$relates_to" "$title")
+        else
+            line="#${id} [${status_val}]  ${title}  (P: ${priority})"
+            [[ -n "$role" ]] && line="${line} [${role}]"
+            [[ -n "$assignee" ]] && line="${line} -> ${assignee}"
+        fi
         results="${results}${rank} ${line}"$'\n'
     done <<< "$all_tsv"
 
-    [[ -z "${GIT_ISSUE_NO_HEADER:-}" ]] && echo -e "${BLUE}Ready to work on:${NC}"
+    [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo -e "${BLUE}Ready to work on:${NC}"
     if [[ -z "$results" ]]; then
-        [[ -z "${GIT_ISSUE_NO_HEADER:-}" ]] && echo "  (none)"
+        [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo "  (none)"
     else
         local sorted
         sorted=$(echo "$results" | sort -n | sed 's/^[0-9] //' | grep -v '^$')
@@ -2583,18 +2780,18 @@ topo_sort_issues() {
 
     # Collect non-closed issue IDs and build lookup index (bash 3.2 compatible)
     local non_done_ids=()
-    local issue_index=""  # id\ttitle\tpriority\tdepends_on per line
+    local issue_index=""  # id\ttitle\tpriority\tdepends_on\tstatus\tassignee\trole\tupdated\tblocks\tparent_of\trelates_to per line
     local non_done_list=""
-    while IFS=$'\037' read -r id status_val title priority _ _ depends_on; do
+    while IFS=$'\037' read -r id status_val title priority assignee role depends_on updated blocks parent_of relates_to; do
         [[ -z "$id" ]] && continue
         [[ "$status_val" == "closed" ]] && continue
         non_done_ids+=("$id")
         non_done_list="${non_done_list}${id}"$'\n'
-        issue_index="${issue_index}${id}"$'\t'"${title}"$'\t'"${priority}"$'\t'"${depends_on}"$'\n'
+        issue_index="${issue_index}${id}"$'\t'"${title}"$'\t'"${priority}"$'\t'"${depends_on}"$'\t'"${status_val}"$'\t'"${assignee}"$'\t'"${role}"$'\t'"${updated}"$'\t'"${blocks}"$'\t'"${parent_of}"$'\t'"${relates_to}"$'\n'
     done <<< "$all_tsv"
 
     if [[ ${#non_done_ids[@]} -eq 0 ]]; then
-        echo "No non-closed issues found."
+        [[ -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo "No non-closed issues found."
         return 0
     fi
 
@@ -2624,7 +2821,7 @@ topo_sort_issues() {
         return 1
     }
 
-    echo -e "${BLUE}Topological order (do first → do last):${NC}"
+    [[ -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo -e "${BLUE}Topological order (do first → do last):${NC}"
     local num=1
     echo "$sorted" | while IFS= read -r id; do
         [[ -z "$id" ]] && continue
@@ -2635,6 +2832,19 @@ topo_sort_issues() {
         title=$(echo "$idx_line" | cut -f2)
         priority=$(echo "$idx_line" | cut -f3)
         depends_on=$(echo "$idx_line" | cut -f4)
+
+        if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+            local status_val assignee role updated blocks parent_of relates_to
+            status_val=$(echo "$idx_line" | cut -f5)
+            assignee=$(echo "$idx_line" | cut -f6)
+            role=$(echo "$idx_line" | cut -f7)
+            updated=$(echo "$idx_line" | cut -f8)
+            blocks=$(echo "$idx_line" | cut -f9)
+            parent_of=$(echo "$idx_line" | cut -f10)
+            relates_to=$(echo "$idx_line" | cut -f11)
+            _porcelain_issue_line "$id" "$status_val" "$priority" "$assignee" "$role" "$updated" "$blocks" "$depends_on" "$parent_of" "$relates_to" "$title"
+            continue
+        fi
 
         local line="${num}. #${id}  ${title}  (P: ${priority})"
         if [[ -n "$depends_on" ]]; then
@@ -2655,6 +2865,15 @@ topo_sort_issues() {
 # Show dependency edges in text mode
 show_deps() {
     local target_id="$1"
+
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        if [[ -n "$target_id" ]] && ! issue_exists "$target_id"; then
+            echo -e "${RED}Error: Issue #$target_id not found${NC}" >&2
+            return 1
+        fi
+        _porcelain_edges "$target_id"
+        return 0
+    fi
 
     ensure_edge_index_current
 
@@ -3158,7 +3377,11 @@ _gi_aggregate() {
         fi
         ( cd "$path" && unset GIT_DIR && GIT_ISSUE_NO_HEADER=1 exec "$_GI_SELF" "${argv[@]}" ) |
         while IFS= read -r line; do
-            printf '[%s] %s\n' "$name" "$line"
+            if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+                printf '%s%s\n' "$name" "$line"
+            else
+                printf '[%s] %s\n' "$name" "$line"
+            fi
         done
         rc=${PIPESTATUS[0]}
         if [[ "$rc" -ne 0 ]]; then
@@ -3174,7 +3397,7 @@ _gi_aggregate() {
 # paths must not touch, or create, a per-directory issue store.
 _gi_dispatch() {
     local -a rest=()
-    local arg target="" all=0 want_target=0
+    local arg target="" all=0 want_target=0 porcelain=0 pv=""
     for arg in "$@"; do
         if [[ $want_target -eq 1 ]]; then
             target="$arg"; want_target=0; continue
@@ -3183,9 +3406,20 @@ _gi_dispatch() {
             --repo)   want_target=1 ;;
             --repo=*) target="${arg#--repo=}" ;;
             --all)    all=1 ;;
+            --porcelain) porcelain=1 ;;
+            --porcelain=*)
+                pv="${arg#--porcelain=}"
+                if [[ "$pv" != "v1" ]]; then
+                    echo "Error: unsupported porcelain version '$pv' (supported: v1)" >&2
+                    exit 1
+                fi
+                porcelain=1 ;;
             *)        rest+=("$arg") ;;
         esac
     done
+    if [[ $porcelain -eq 1 ]]; then
+        export GIT_ISSUE_PORCELAIN=1
+    fi
     if [[ $want_target -eq 1 ]]; then
         printf "Error: --repo requires a repository name (see: git issue repo list)\n" >&2
         exit 1
@@ -3250,7 +3484,7 @@ main() {
         fi
         # Manual ID creation (legacy)
         manual_id="$2"
-        manual_title="${@:3}"
+        manual_title=$(gi_single_line "${*:3}")
         if issue_exists "$manual_id"; then
             echo -e "${RED}Issue #$manual_id already exists${NC}"
             exit 1
@@ -3259,6 +3493,7 @@ main() {
         timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         author=$(get_git_user)
         issue_data="id: $manual_id
+v: 2
 title: $manual_title
 status: open
 priority: medium
@@ -3504,7 +3739,7 @@ _gi_entry() {
 # would print an error yet let the command "succeed" with exit 0.
 _gi_check_awk_files() {
     local f
-    for f in extract_issues.awk front_matter.awk body.awk; do
+    for f in extract_issues.awk front_matter.awk body.awk comments.awk upgrade_note.awk; do
         if [[ ! -f "$GIT_ISSUE_AWK_DIR/$f" ]]; then
             echo -e "${RED}Error: awk program not found: $GIT_ISSUE_AWK_DIR/$f — reinstall git-issue or set GIT_ISSUE_AWK_DIR${NC}" >&2
             exit 1

@@ -97,12 +97,16 @@ test-registry:
 	chmod +x tests/test_registry.sh
 	./tests/test_registry.sh
 
+test-porcelain: ## Run porcelain output tests
+	chmod +x tests/test_porcelain.sh
+	./tests/test_porcelain.sh
+
 bench-deps:
 	@echo "Running dependency benchmark..."
 	chmod +x tests/bench_deps.sh
 	./tests/bench_deps.sh $(COUNT)
 
-test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-registry
+test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-registry test-porcelain
 
 clean:
 	@echo "Cleaning up..."

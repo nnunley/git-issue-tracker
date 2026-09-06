@@ -10,3 +10,4 @@ lock — concurrent publishes conflict here and merge resolution decides).
 ## Drafts
 
 - draft-ndn-multi-project-registry-02 — Multi-Project Registry for git-issue
+- draft-ndn-porcelain-output-00 — Porcelain Output for git-issue Read Commands
