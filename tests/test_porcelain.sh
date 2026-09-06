@@ -176,6 +176,36 @@ eq "fold then unfold is the identity for legacy comments" \
    "[2026-01-01T00:00:00Z] conformance: first"$'\n'""$'\n'"second"$'\n'"  indented" \
    "$(src 'parse_comments "$(read_issue_data ccc3333)"')"
 
+echo "Testing format-2 writes [R-format-marker] [R-store-continuation] [R-field-normalize]"
+fresh_repo writes
+"$GI" create "alpha task" --description="$(printf 'first line\n## Comments')" >/dev/null 2>&1
+a=$(porcelain_ids)
+note() { git cat-file -p "refs/notes/issue-$1:issue"; }
+eq "marker on line 2" "v: 2" "$(note "$a" | sed -n 2p)"
+eq "one id line" "1" "$(note "$a" | grep -c '^id:')"
+eq "description folded in header block" "description: first line"$'\n'" ## Comments" "$(note "$a" | grep -A1 '^description:')"
+eq "no body region" "0" "$(note "$a" | awk 'f && !/^## Comments$/ && $0!="" {c++} /^$/ {f=1} /^## Comments$/ {exit} END {print c+0}')"
+"$GI" comment "$a" "$(printf 'one\ntwo')" >/dev/null 2>&1
+eq "comment folded" "## Comments"$'\n'"[T] conformance: one"$'\n'" two" "$(note "$a" | sed -n '/^## Comments$/,$p' | sed -E 's/^\[[^]]+\]/[T]/')"
+"$GI" update "$a" --description="$(printf 'changed\nagain')" >/dev/null 2>&1
+eq "description update folded" "description: changed"$'\n'" again" "$(note "$a" | grep -A1 '^description:')"
+eq "description update keeps comments" "1" "$(note "$a" | grep -c '^ two$')"
+# Upgrade on write of a format-1 note
+blob=$(printf 'id: abc1234\ntitle: legacy\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\n\nold body\n\n## Comments\n[2026-01-01T00:00:00Z] conformance: one\ntwo\n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-abc1234 "$(git commit-tree "$tree" -m legacy </dev/null)"
+"$GI" update abc1234 --priority=high >/dev/null 2>&1
+eq "upgraded note has marker" "v: 2" "$(note abc1234 | sed -n 2p)"
+eq "upgraded note moved body to header" "1" "$(note abc1234 | grep -c '^description: old body$')"
+eq "upgraded note folded legacy comment" "1" "$(note abc1234 | grep -c '^ two$')"
+eq "upgraded note kept the update" "high" "$("$GI" list --porcelain | awk -F'\t' '$2=="abc1234"{print $4}')"
+# Single-line normalization on write
+"$GI" create "$(printf 'tab\there')" >/dev/null 2>&1
+tabid=$("$GI" list --porcelain | awk -F'\t' '$12=="tab here"{print $2}')
+eq "tab in title stored as space" "1" "$(note "$tabid" | grep -c '^title: tab here$')"
+"$GI" update "$a" --assignee="$(printf 'two\nlines')" >/dev/null 2>&1
+eq "newline in assignee stored as space" "two lines" "$("$GI" list --porcelain | awk -F'\t' -v a="$a" '$2==a{print $5}')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]

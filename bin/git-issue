@@ -398,9 +398,14 @@ write_issue_data() {
     local data="$2"
     local ref=$(get_issue_ref "$id")
 
+    # Every write emits format 2: the note is canonicalized (and a format-1
+    # note upgraded in place) here, so the v: 2 marker, the header-block
+    # description and the folded comments all come from one place.
+    data=$(_gi_to_format_2 "$data")
+
     # Create blob from issue data
     local blob_hash
-    blob_hash=$(echo "$data" | git hash-object -w --stdin)
+    blob_hash=$(printf '%s\n' "$data" | git hash-object -w --stdin)
 
     # Create tree with single entry named "issue"
     local tree_hash
@@ -508,6 +513,46 @@ trim_ws() {
     printf '%s' "$s"
 }
 
+# Continuation-encode a multi-line value: every line after the first gets
+# one leading space (R-store-continuation).
+gi_fold() {
+    printf '%s\n' "$1" | sed '2,$s/^/ /'
+}
+
+# Collapse tab, CR and LF to one space (R-field-normalize). Applied on every
+# write of a single-line field; description is the only multi-line field.
+gi_single_line() {
+    printf '%s' "$1" | tr '\t\r\n' '   '
+}
+
+# Canonical format-2 rendering of a note in either format (R-format-marker,
+# R-store-continuation, R-legacy-read). Reads the note through the same
+# parsers the readers use, so an upgrade never disagrees with what the
+# previous version displayed: headers keep their order with "id:" first and
+# "v: 2" second, the description becomes a folded top-block header, and the
+# comments become folded records under "## Comments".
+_gi_to_format_2() {
+    local data="$1"
+    local front_matter description comments headers
+    front_matter=$(parse_front_matter "$data")
+    description=$(get_description "$data")
+    comments=$(parse_comment_records "$data")
+    headers=$(printf '%s\n' "$front_matter" | awk -f "$(require_awk_file upgrade_note.awk)")
+
+    local out="$headers"
+    if [[ -n "$description" ]]; then
+        out="$out
+description: $(gi_fold "$description")"
+    fi
+    if [[ -n "$comments" ]]; then
+        out="$out
+
+## Comments
+$comments"
+    fi
+    printf '%s' "$out"
+}
+
 # Raw value of a header field with continuation lines unfolded (joined by
 # newline, leading space stripped). Empty if absent.
 get_field_raw() {
@@ -530,7 +575,8 @@ get_field_value() {
 
 # Create new issue with auto-generated hash ID
 create_issue() {
-    local title="$1"
+    local title
+    title=$(gi_single_line "$1")   # R-field-normalize
     local description="$2"
     local author=$(get_git_user)
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -557,6 +603,7 @@ create_issue() {
     
     # Create issue data (only include non-empty fields)
     local issue_data="id: $id
+v: 2
 title: $title
 status: open
 priority: medium
@@ -565,11 +612,10 @@ updated: $timestamp
 author: $author
 assignee: $author
 hash_source: content"
-    # Body after blank line (multiline description support)
+    # Description is a top-block header with continuation lines (format 2)
     if [[ -n "$description" ]]; then
         issue_data="$issue_data
-
-$description"
+description: $(gi_fold "$description")"
     fi
 
     write_issue_data "$id" "$issue_data"
@@ -703,7 +749,12 @@ show_issue() {
 update_issue() {
     local id=$1
     local field=$2
-    local value="${@:3}"
+    local value="${*:3}"
+    # Every field but description is single-line: tab, CR and LF collapse to
+    # one space before the value is stored (R-field-normalize).
+    if [[ "$field" != "description" ]]; then
+        value=$(gi_single_line "$value")
+    fi
     local ref=$(get_issue_ref "$id")
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     
@@ -751,22 +802,25 @@ update_issue() {
     data=$(read_issue_data "$id")
 
     if [[ "$field" == "description" ]]; then
-        # Description lives in the body (after blank line, before ## Comments)
+        # Description is a folded top-block header in format 2. Rebuild the
+        # note from the parsed views so a format-1 note is upgraded here too:
+        # upgrade_note.awk drops the old description (and its continuation
+        # lines) and puts "id:" first with the "v: 2" marker second.
         local headers
         headers=$(parse_front_matter "$data")
         local comments
-        comments=$(parse_comments "$data")
-        # Update the timestamp in headers
-        headers=$(echo "$headers" | awk -v ts="$timestamp" '
+        comments=$(parse_comment_records "$data")
+        # Update the timestamp in headers (continuation lines pass through)
+        headers=$(printf '%s\n' "$headers" | awk -v ts="$timestamp" '
+            /^ / { print; next }
             $1 == "updated:" { print "updated:", ts; next }
             { print }
-        ')
-        # Reconstruct: headers + blank line + new body + comments
+        ' | awk -f "$(require_awk_file upgrade_note.awk)")
+        # Reconstruct: headers + folded description + comments
         local updated_data="$headers"
         if [[ -n "$value" ]]; then
             updated_data="$updated_data
-
-$value"
+description: $(gi_fold "$value")"
         fi
         if [[ -n "$comments" ]]; then
             updated_data="$updated_data
@@ -781,6 +835,7 @@ $comments"
         # from reverting the update.
         updated_data=$(echo "$data" | awk -v field="$field:" -v value="$value" -v ts="$timestamp" '
             BEGIN { found=0; in_body=0 }
+            /^ / { print; next }
             !in_body && /^$/ { if (!found) { print field, value }; in_body=1; print; next }
             in_body && $1 == field { next }
             in_body { print; next }
@@ -1463,7 +1518,7 @@ export_to_github_format() {
     local front_matter=$(parse_front_matter "$data")
     
     local title=$(get_field_value "$front_matter" "title")
-    local description=$(parse_body "$data")
+    local description=$(get_description "$data")
     local status_val
     status_val=$(trim_ws "$(echo "$front_matter" | grep -E "^(status|state):" | head -1 | cut -d' ' -f2-)")
     local labels=$(get_field_value "$front_matter" "labels")
@@ -1501,19 +1556,24 @@ add_comment() {
         return 1
     fi
     
-    # Get current data and append comment under ## Comments marker
-    data=$(read_issue_data "$id")
+    # Get current data and append comment under ## Comments marker. The note
+    # is canonicalized to format 2 first so the folded record we append is
+    # read back under the format-2 rule, not the legacy one.
+    data=$(_gi_to_format_2 "$(read_issue_data "$id")")
 
+    # The comment record is folded: continuation lines carry one leading
+    # space so a line beginning with "[" or "## " cannot be mistaken for a
+    # new record or a section marker (R-store-continuation).
     if echo "$data" | grep -q "^## Comments$"; then
         # Append to existing comments section
         updated_data="$data
-[$timestamp] $author: $comment"
+[$timestamp] $author: $(gi_fold "$comment")"
     else
         # Add new ## Comments section
         updated_data="$data
 
 ## Comments
-[$timestamp] $author: $comment"
+[$timestamp] $author: $(gi_fold "$comment")"
     fi
 
     write_issue_data "$id" "$updated_data"
@@ -2069,6 +2129,7 @@ append_to_field() {
     local updated_data
     updated_data=$(echo "$data" | awk -v field="${field}:" -v value="$new_value" -v ts="$timestamp" '
         BEGIN { found=0; in_body=0 }
+        /^ / { print; next }
         !in_body && /^$/ { if (!found) { print field, value }; in_body=1; print; next }
         in_body { print; next }
         $1 == field { print field, value; found=1; next }
@@ -2121,6 +2182,7 @@ remove_from_field() {
         # Field is now empty - remove it entirely
         local updated_data
         updated_data=$(echo "$data" | awk -v field="${field}:" -v ts="$timestamp" '
+            /^ / { print; next }
             $1 == field { next }
             $1 == "updated:" { print "updated:", ts; next }
             { print }
@@ -2130,6 +2192,7 @@ remove_from_field() {
         local updated_data
         updated_data=$(echo "$data" | awk -v field="${field}:" -v value="$new_value" -v ts="$timestamp" '
             BEGIN { found=0; in_body=0 }
+            /^ / { print; next }
             !in_body && /^$/ { if (!found) { print field, value }; in_body=1; print; next }
             in_body { print; next }
             $1 == field { print field, value; found=1; next }
@@ -3379,7 +3442,7 @@ main() {
         fi
         # Manual ID creation (legacy)
         manual_id="$2"
-        manual_title="${@:3}"
+        manual_title=$(gi_single_line "${*:3}")
         if issue_exists "$manual_id"; then
             echo -e "${RED}Issue #$manual_id already exists${NC}"
             exit 1
@@ -3388,6 +3451,7 @@ main() {
         timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         author=$(get_git_user)
         issue_data="id: $manual_id
+v: 2
 title: $manual_title
 status: open
 priority: medium
@@ -3633,7 +3697,7 @@ _gi_entry() {
 # would print an error yet let the command "succeed" with exit 0.
 _gi_check_awk_files() {
     local f
-    for f in extract_issues.awk front_matter.awk body.awk comments.awk; do
+    for f in extract_issues.awk front_matter.awk body.awk comments.awk upgrade_note.awk; do
         if [[ ! -f "$GIT_ISSUE_AWK_DIR/$f" ]]; then
             echo -e "${RED}Error: awk program not found: $GIT_ISSUE_AWK_DIR/$f — reinstall git-issue or set GIT_ISSUE_AWK_DIR${NC}" >&2
             exit 1
