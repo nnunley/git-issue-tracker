@@ -288,14 +288,14 @@ in that order.
 .PP
 .B show
 prints a single header block instead of columns: one
-.RB \(dq key : " " value \(dq
+\(dq\fIkey\fR: \fIvalue\fR\(dq
 line per known field that has a value, in canonical field order,
 excluding the format marker, then
 .BR description ,
 then one
 .B comment
 line per comment in stored order as
-.RB \(dq[ timestamp "] " author : " " text \(dq.
+\(dq[\fItimestamp\fR] \fIauthor\fR: \fItext\fR\(dq.
 A line beginning with one space continues the previous value; this is
 the only rule a consumer needs to reassemble a multi-line field.
 No blank line, section heading, or decoration appears in the block.
@@ -309,7 +309,7 @@ is stored as a header in the top block, folded with the same
 leading-space continuation rule, and a comment under
 .B "## Comments"
 is stored as its
-.RB \(dq[ timestamp "] " author : " " text \(dq
+\(dq[\fItimestamp\fR] \fIauthor\fR: \fItext\fR\(dq
 line followed by continuation lines.
 Every write emits format 2, upgrading a note stored in the older
 format in place; a note without the

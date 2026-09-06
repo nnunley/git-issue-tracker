@@ -211,8 +211,8 @@ The full specification is
 ## Machine-readable output
 
 `--porcelain` (accepted before or after the subcommand; `--porcelain=v1`
-is the same thing, and v1 is frozen — `--porcelain=v2` is reserved for a
-future, incompatible format) switches read commands to stable,
+is the same thing, and v1 is frozen — any other version is rejected; a
+changed format would be a new version) switches read commands to stable,
 tab-separated output: no color, no headings, no `(none)` placeholders,
 empty stdout for an empty result.
 
@@ -224,8 +224,14 @@ twelve tab-separated columns: `repo`, `id`, `status`, `priority`,
 
 ```bash
 $ git issue list --porcelain
-	a1b2c3d	open	medium	conformance			2026-01-01T00:00:00Z				alpha task
+	a1b2c3d	open	medium	conformance		2026-01-01T00:00:00Z					alpha task
 ```
+
+Split on tabs, that line is `repo=""`, `id=a1b2c3d`, `status=open`,
+`priority=medium`, `assignee=conformance`, `role=""`,
+`updated=2026-01-01T00:00:00Z`, `blocks=""`, `depends_on=""`,
+`parent_of=""`, `relates_to=""`, `title="alpha task"` — twelve fields,
+`updated` at column 7 and `title` at column 12.
 
 `deps` and `dep list` emit one edge per line as `from`, `type`, `to`.
 `scan-commits` emits one line per trailer as the full commit hash, the
