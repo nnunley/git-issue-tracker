@@ -403,6 +403,14 @@ write_issue_data() {
     # description and the folded comments all come from one place.
     data=$(_gi_to_format_2 "$data")
 
+    # If canonicalization collapsed the note (e.g. an awk helper failed and
+    # its exit was swallowed by the $(...) above), refuse to write a stub
+    # over a real note rather than silently destroying it.
+    if [[ -z "$data" ]] || ! printf '%s\n' "$data" | head -1 | grep -q '^id: '; then
+        echo -e "${RED}Error: refusing to write issue $id: note has no id line (is the awk directory installed?)${NC}" >&2
+        return 1
+    fi
+
     # Create blob from issue data
     local blob_hash
     blob_hash=$(printf '%s\n' "$data" | git hash-object -w --stdin)

@@ -263,6 +263,18 @@ eq "marker not emitted" "0" "$("$GI" show "$a" --porcelain | grep -c '^v:' || tr
 eq "no blank lines" "0" "$("$GI" show "$a" --porcelain | grep -c '^$' || true)"
 eq "unknown id is an error" "1" "$("$GI" show nosuch --porcelain >/dev/null 2>&1; echo $?)"
 
+echo "Testing write_issue_data refuses a note without an id line [R-write-guard]"
+fresh_repo noid
+cd "$WORK/noid"
+err=$(src "write_issue_data zzz9999 'title: nope'" 2>&1 1>/dev/null) && rc=0 || rc=$?
+eq "refused write returns nonzero" "1" "$rc"
+eq "refused write reports the error" "1" \
+   "$(printf '%s' "$err" | grep -c 'Error: refusing to write issue zzz9999: note has no id line')"
+eq "refused write does not create the ref" "1" \
+   "$(git rev-parse --verify refs/notes/issue-zzz9999 >/dev/null 2>&1 && echo 0 || echo 1)"
+"$GI" create "normal write still works" >/dev/null 2>&1
+eq "a normal write still succeeds" "1" "$("$GI" list --porcelain | wc -l | tr -d ' ')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]
