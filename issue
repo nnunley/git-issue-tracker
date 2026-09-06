@@ -1,0 +1,11 @@
+id: c6ac08b
+v: 2
+title: test: per-guard mutation coverage for the five continuation guards
+status: open
+priority: medium
+created: 2026-09-06T21:11:19Z
+updated: 2026-09-06T21:11:19Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: The continuation-vs-header regression test only fails when all five '/^ / { print; next }' guards are removed; removing one in isolation passes. Add a scenario per rewrite path (update non-description field, add_to_field, remove_from_field, and the two others) so each guard is load-bearing.
