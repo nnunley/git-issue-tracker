@@ -376,13 +376,15 @@ KNOWN_HEADER_FIELDS='id|title|status|state|priority|created|updated|author|assig
 BATCH_FLUSH_HASH='0000000000000000000000000000000000000000'
 
 # Extract one record per issue from _batch_issue_stream.
-# Output: one US (\037)-separated line per issue:
-#   id US status US title US priority US assignee US role US depends_on
+# Output: one US (\037)-separated line per issue, eleven fields:
+#   id US status US title US priority US assignee US role US depends_on US
+#   updated US blocks US parent_of US relates_to
 # US is used instead of tab because tab is IFS whitespace, so `read` collapses
 # consecutive tabs and empty fields (e.g. an empty title) shift every column.
 # Hardening, in order of the rules below:
-# - Control characters are stripped so stored content can neither inject
-#   terminal escapes into listings nor break the US-separated output.
+# - Tabs become a single space and other control characters are stripped, so
+#   stored content can neither inject terminal escapes into listings nor
+#   break the US-separated output.
 # - Record boundaries require the full "__ISSUE__ <40-hex>" delimiter.
 # - Header fields are honored in the top block (before the first blank line)
 #   and in a trailing block of contiguous known headers before the record end
@@ -2778,7 +2780,7 @@ topo_sort_issues() {
 
     # Collect non-closed issue IDs and build lookup index (bash 3.2 compatible)
     local non_done_ids=()
-    local issue_index=""  # id\ttitle\tpriority\tdepends_on per line
+    local issue_index=""  # id\ttitle\tpriority\tdepends_on\tstatus\tassignee\trole\tupdated\tblocks\tparent_of\trelates_to per line
     local non_done_list=""
     while IFS=$'\037' read -r id status_val title priority assignee role depends_on updated blocks parent_of relates_to; do
         [[ -z "$id" ]] && continue
