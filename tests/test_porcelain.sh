@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Porcelain output tests — draft-ndn-porcelain-output-00.
+# Each section names the requirement IDs it covers. The RFC's transcripts
+# are the conformance corpus; these assertions are the faster unit layer
+# and cover edge cases the transcripts do not.
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+GI="$REPO_DIR/bin/git-issue"
+PASS=0; FAIL=0
+ok()  { PASS=$((PASS+1)); echo "  ✓ $1"; }
+bad() { FAIL=$((FAIL+1)); echo "  ✗ $1"; }
+eq()  { # eq <label> <want> <got>
+    if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1"$'\n'"      want: $2"$'\n'"      got:  $3"; fi
+}
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+export HOME="$WORK" XDG_CONFIG_HOME="$WORK/.config" GIT_CONFIG_NOSYSTEM=1
+unset GIT_DIR GIT_ISSUE_PORCELAIN
+git config --global user.name conformance
+git config --global user.email conformance@rfc
+
+# fresh_repo <name>: create and enter an empty repository with one commit.
+fresh_repo() {
+    local d="$WORK/$1"
+    rm -rf "$d"; mkdir -p "$d"; cd "$d"
+    git init -q; git commit -q --allow-empty -m init
+}
+# porcelain_ids: ids of all issues, one per line, in list order.
+porcelain_ids() { "$GI" list --porcelain | cut -f2; }
+
+echo "Testing flag position and version [R-flag-position] [R-version-frozen]"
+fresh_repo flag
+"$GI" create "alpha task" >/dev/null 2>&1
+eq "flag before subcommand" "alpha task" "$("$GI" --porcelain list | cut -f12)"
+eq "flag after subcommand"  "alpha task" "$("$GI" list --porcelain | cut -f12)"
+eq "explicit v1"            "alpha task" "$("$GI" list --porcelain=v1 | cut -f12)"
+eq "v2 rejected" \
+   "Error: unsupported porcelain version 'v2' (supported: v1)" \
+   "$("$GI" list --porcelain=v2 2>&1 || true)"
+set +e; "$GI" list --porcelain=v2 >/dev/null 2>&1; rc=$?; set -e
+eq "v2 exit status" "1" "$rc"
+
+echo "Testing plain stdout [R-plain-stdout]"
+fresh_repo plain
+eq "empty list is empty stdout" "0" "$("$GI" list --porcelain | wc -c | tr -d ' ')"
+eq "empty list is silent on stderr" "" "$("$GI" list --porcelain 2>&1 >/dev/null)"
+eq "no banner under --porcelain" "0" "$("$GI" list --porcelain 2>&1 | grep -c 'Using current' || true)"
+
+echo ""
+echo "PASS=$PASS FAIL=$FAIL"
+[[ $FAIL -eq 0 ]]

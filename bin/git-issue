@@ -59,7 +59,7 @@ detect_storage_backend() {
     # Only use git mode if we have a local .git directory
     if [[ -d ".git" ]] || [[ -f ".git" ]]; then
         STORAGE_TYPE="git"
-        echo -e "${BLUE}Using current git repository${NC}" >&2
+        gi_info "${BLUE}Using current git repository${NC}"
     else
         STORAGE_TYPE="xdg"
         # Use platform-appropriate data directory with bare git repo
@@ -76,7 +76,7 @@ detect_storage_backend() {
         
         # Initialize bare git repo if it doesn't exist
         if [[ ! -d "$ISSUE_REPO_DIR" ]]; then
-            echo -e "${YELLOW}Creating bare git repository for issue tracking: $ISSUE_REPO_DIR${NC}" >&2
+            gi_info "${YELLOW}Creating bare git repository for issue tracking: $ISSUE_REPO_DIR${NC}"
             mkdir -p "$ISSUE_REPO_DIR"
             git init --bare "$ISSUE_REPO_DIR" >/dev/null 2>&1
             
@@ -100,7 +100,7 @@ detect_storage_backend() {
         # Set up git environment for XDG repo
         ORIGINAL_GIT_DIR="$GIT_DIR"
         export GIT_DIR="$ISSUE_REPO_DIR"
-        echo -e "${YELLOW}Using standalone git repository: $ISSUE_REPO_DIR${NC}" >&2
+        gi_info "${YELLOW}Using standalone git repository: $ISSUE_REPO_DIR${NC}"
     fi
 }
 
@@ -112,6 +112,13 @@ cleanup_xdg_environment() {
         else
             unset GIT_DIR
         fi
+    fi
+}
+
+# Informational message to stderr; silent in porcelain mode (R-plain-stdout).
+gi_info() {
+    if [[ -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        echo -e "$@" >&2
     fi
 }
 
@@ -181,7 +188,11 @@ FALLBACK
             compiler="git-issue-compile-statuses"
         fi
         if [[ -n "$compiler" ]]; then
-            "$compiler" "$def_file" >&2
+            if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+                "$compiler" "$def_file" >/dev/null 2>&1
+            else
+                "$compiler" "$def_file" >&2
+            fi
         fi
     fi
 
@@ -271,6 +282,7 @@ usage() {
     echo "Global options:"
     echo "  --repo <name>                           Run the command in a registered repository"
     echo "  --all                                   (list, ready) run across every registered repository"
+    echo "  --porcelain[=v1]                        Stable machine-readable output (see docs/rfc)"
     echo ""
     echo "Examples:"
     echo "  git issue create 'Add user authentication' --description='Implement OAuth2 login'"
@@ -532,7 +544,7 @@ $description"
 list_issues() {
     # Aggregation (--all) suppresses the decoration: the sweep's contract
     # is one prefixed line per issue.
-    if [[ -z "${GIT_ISSUE_NO_HEADER:-}" ]]; then
+    if [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
         echo -e "${BLUE}Issues:${NC}"
         echo ""
     fi
@@ -2556,9 +2568,9 @@ list_ready_issues() {
         results="${results}${rank} ${line}"$'\n'
     done <<< "$all_tsv"
 
-    [[ -z "${GIT_ISSUE_NO_HEADER:-}" ]] && echo -e "${BLUE}Ready to work on:${NC}"
+    [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo -e "${BLUE}Ready to work on:${NC}"
     if [[ -z "$results" ]]; then
-        [[ -z "${GIT_ISSUE_NO_HEADER:-}" ]] && echo "  (none)"
+        [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo "  (none)"
     else
         local sorted
         sorted=$(echo "$results" | sort -n | sed 's/^[0-9] //' | grep -v '^$')
@@ -3174,7 +3186,7 @@ _gi_aggregate() {
 # paths must not touch, or create, a per-directory issue store.
 _gi_dispatch() {
     local -a rest=()
-    local arg target="" all=0 want_target=0
+    local arg target="" all=0 want_target=0 porcelain=0 pv=""
     for arg in "$@"; do
         if [[ $want_target -eq 1 ]]; then
             target="$arg"; want_target=0; continue
@@ -3183,9 +3195,20 @@ _gi_dispatch() {
             --repo)   want_target=1 ;;
             --repo=*) target="${arg#--repo=}" ;;
             --all)    all=1 ;;
+            --porcelain) porcelain=1 ;;
+            --porcelain=*)
+                pv="${arg#--porcelain=}"
+                if [[ "$pv" != "v1" ]]; then
+                    echo "Error: unsupported porcelain version '$pv' (supported: v1)" >&2
+                    exit 1
+                fi
+                porcelain=1 ;;
             *)        rest+=("$arg") ;;
         esac
     done
+    if [[ $porcelain -eq 1 ]]; then
+        export GIT_ISSUE_PORCELAIN=1
+    fi
     if [[ $want_target -eq 1 ]]; then
         printf "Error: --repo requires a repository name (see: git issue repo list)\n" >&2
         exit 1
