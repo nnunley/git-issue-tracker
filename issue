@@ -1,0 +1,11 @@
+id: 2ec6d74
+v: 2
+title: ids repeat across rapid creates in different repos
+status: open
+priority: medium
+created: 2026-09-06T21:11:18Z
+updated: 2026-09-06T21:11:18Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: generate_issue_id hashes title+author+timestamp at second granularity, so creating the same title in two repos within one second yields the same id (observed 4/5 in a loop). Within one repo the collision retry covers it. Pre-existing; noted during Task 3 of the porcelain work.
