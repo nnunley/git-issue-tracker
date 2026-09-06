@@ -1725,16 +1725,18 @@ scan_commits_for_issues() {
     local commit_count=0
     local issue_refs_found=0
     
-    git log "${git_log_args[@]}" --format="%H %s" | while IFS=' ' read -r commit_hash commit_subject; do
+    # Process substitution (not a pipe) keeps the loop in the current shell,
+    # so issue_refs_found's updates below are visible after the loop exits.
+    while IFS=' ' read -r commit_hash commit_subject; do
         commit_count=$((commit_count + 1))
-        
+
         # Parse trailers from this commit
         local trailers
         trailers=$(parse_issue_trailers "$commit_hash")
-        
+
         if [[ -n "$trailers" ]]; then
             issue_refs_found=$((issue_refs_found + 1))
-            
+
             if [[ "$format" == "detailed" ]]; then
                 echo -e "${GREEN}Commit: ${commit_hash:0:7}${NC} - $commit_subject"
                 echo "$trailers" | while IFS= read -r trailer; do
@@ -1755,8 +1757,8 @@ scan_commits_for_issues() {
                 done
             fi
         fi
-    done
-    
+    done < <(git log "${git_log_args[@]}" --format="%H %s")
+
     if [[ $issue_refs_found -eq 0 && -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
         echo -e "${YELLOW}No issue references found in commit trailers${NC}"
         echo -e "${GRAY}Tip: Use 'git issue commit --fixes <id>' to add trailers to commits${NC}"

@@ -275,6 +275,18 @@ eq "refused write does not create the ref" "1" \
 "$GI" create "normal write still works" >/dev/null 2>&1
 eq "a normal write still succeeds" "1" "$("$GI" list --porcelain | wc -l | tr -d ' ')"
 
+echo "Testing scan-commits reports found references [R-scan-commits]"
+fresh_repo scanhit
+git commit -q --allow-empty -m "$(printf 'do the thing\n\nFixes: #abc1234')"
+scan_out=$("$GI" scan-commits 2>&1)
+eq "scan-commits: reference line present" "1" "$(printf '%s' "$scan_out" | grep -c 'fixes: #abc1234\|Fixes: #abc1234')"
+eq "scan-commits: does not say none found" "0" "$(printf '%s' "$scan_out" | grep -c 'No issue references found')"
+
+fresh_repo scanmiss
+git commit -q --allow-empty -m "no refs here"
+scan_out=$("$GI" scan-commits 2>&1)
+eq "scan-commits: says none found when there are none" "1" "$(printf '%s' "$scan_out" | grep -c 'No issue references found')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]
