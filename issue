@@ -1,0 +1,11 @@
+id: 0f29e29
+v: 2
+title: emacs: registry path that no longer exists gives magit's generic error
+status: open
+priority: medium
+created: 2026-09-07T21:24:40Z
+updated: 2026-09-07T21:24:40Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: git-issue-repo-paths strips ' (missing)' and returns the dead path; magit-git-issue-visit then hits magit-outside-git-repo instead of a named user-error.
