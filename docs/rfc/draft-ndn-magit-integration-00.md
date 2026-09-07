@@ -40,8 +40,10 @@ when, and only when, they appear in all capitals, as shown here.
 
 - **core** — `git-issue.el`: process invocation, parsing, and one function
   per CLI command; loads without magit.
-- **UI** — `magit-git-issue.el`: everything that needs magit, transient, or
-  with-editor.
+- **UI** — `magit-git-issue.el`: everything that needs magit or transient.
+- **edit buffer** — a dedicated buffer for composing multi-line text,
+  following the key conventions of magit's commit message buffer:
+  `C-c C-c` finishes, `C-c C-k` aborts.
 - **issue struct** — the Lisp value the core returns for one porcelain
   issue line (`git-issue-issue`).
 - **detail struct** — the Lisp value for one `show --porcelain` block
@@ -225,9 +227,8 @@ under `contrib/emacs/test/`, run in the repository's test job with magit
 installed, rather than by the corpus: they need a live magit and transient,
 which the conformance sandbox does not provide.
 
-- `magit-git-issue.el` MUST require `git-issue`, `magit`, `transient`, and
-  `with-editor`, and MUST NOT duplicate any parsing or process code from
-  the core.
+- `magit-git-issue.el` MUST require `git-issue`, `magit`, and `transient`,
+  and MUST NOT duplicate any parsing or process code from the core.
 - Loading it MUST add `magit-git-issue-insert-issues` to
   `magit-status-sections-hook` (after the stashes section) and bind `x`
   to `magit-git-issue-dispatch` in `magit-dispatch` and
@@ -250,9 +251,9 @@ which the conformance sandbox does not provide.
   section each. `g` refreshes from the CLI.
 - `magit-git-issue-dispatch` MUST offer, acting on the issue at point when
   there is one and prompting for an id with `git-issue-read-id` otherwise:
-  create (title in the minibuffer, then a `with-editor` buffer for the
+  create (title in the minibuffer, then an edit buffer for the
   description, `C-c C-c` to finish, `C-c C-k` to abort, empty description
-  skipped), start, close, reopen, comment (a `with-editor` buffer), set
+  skipped), start, close, reopen, comment (an edit buffer), set
   status, set priority, set assignee, set role (minibuffer with
   completion where the CLI has a fixed vocabulary), dep add, dep rm
   (prompting for type and target id with completion), link to the commit
@@ -333,9 +334,11 @@ The package adds no new privilege, and never invokes a shell: arguments
 are passed as a list to `call-process`, so a title or comment containing
 shell metacharacters is data. Porcelain output is inserted into buffers as
 text with properties and never evaluated; the porcelain contract strips
-terminal styling, so no escape sequences reach a buffer. `with-editor`
-buffers for comments and descriptions send their contents as an argument,
-not through a temporary file the user could be induced to edit.
+terminal styling from records; the core strips any escape sequence the
+CLI leaves in an error message before the UI displays it. Edit buffers for
+comments and descriptions send their contents as an argument, not through
+a temporary file the user could be induced to edit, and a rejected
+submission leaves the composed text in place.
 
 ## References
 
@@ -344,7 +347,7 @@ not through a temporary file the user could be induced to edit.
 - draft-ndn-multi-project-registry-02 — `--all` and the trust boundary of
   registered paths.
 - draft-ndn-authoring-rfcs-00 — evidence conventions and process.
-- Magit manual, "Sections" and "Transient Commands"; transient manual;
-  with-editor — the extension points used.
+- Magit manual, "Sections" and "Transient Commands"; transient manual —
+  the extension points used.
 - git-commit(1), `--trailer` (git 2.32 and later).
 - BCP 14 (RFC 2119, RFC 8174); RFC 5234/7405 (ABNF).
