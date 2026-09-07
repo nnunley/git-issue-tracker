@@ -1,0 +1,11 @@
+id: f495183
+v: 2
+title: emacs: statuses defcustom should union the repo's observed statuses
+status: open
+priority: medium
+created: 2026-09-07T21:24:40Z
+updated: 2026-09-07T21:24:40Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: magit-git-issue-statuses is fixed; union it with statuses seen on this repo's issues so a custom status machine's vocabulary completes.
