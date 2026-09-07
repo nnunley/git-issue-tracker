@@ -1,7 +1,7 @@
 # draft-ndn-magit-integration-00: Emacs and Magit Integration for git-issue
 
 **Status:** DRAFT
-**Corpus:** red (spec-first — evidence is the acceptance criteria)
+**Corpus:** green
 **Category:** Standards-Track
 **Authors:** Norman Nunley, Jr <nnunley@gmail.com>, Claude (drafting agent)
 
