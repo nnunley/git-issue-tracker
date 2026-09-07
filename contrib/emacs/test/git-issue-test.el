@@ -23,12 +23,29 @@
       (should (string-match-p "not found" (cadr err))))))
 
 (ert-deftest git-issue-run-falls-back-to-stdout ()
-  ;; `comment' reports "Issue #... not found" on stdout, not stderr, so
-  ;; without the fallback the signalled message would be empty.
+  ;; Some subcommands have reported failure on stdout rather than stderr;
+  ;; the fallback keeps the message either way.
   (let ((default-directory (git-issue-test--scratch-repo)))
     (let ((err (should-error (git-issue-run "comment" "zzzzzzz" "hi")
                              :type 'git-issue-error)))
       (should (string-match-p "not found" (cadr err))))))
+
+(ert-deftest git-issue-error-data-is-plain-text ()
+  "Error data carries no terminal escape sequence, whatever the CLI printed."
+  (let ((default-directory (git-issue-test--scratch-repo)))
+    (dolist (command '(("comment" "zzzzzzz" "hi")
+                       ("show" "zzzzzzz")
+                       ("link" "zzzzzzz" "HEAD")
+                       ("update" "zzzzzzz" "--priority=high")))
+      (let ((err (should-error (apply #'git-issue-run command)
+                               :type 'git-issue-error)))
+        (should (string-match-p "not found" (cadr err)))
+        (should-not (string-match-p "\e" (cadr err)))))))
+
+(ert-deftest git-issue-plain-strips-escape-sequences ()
+  (should (equal (git-issue--plain "\e[0;31mError: nope\e[0m") "Error: nope"))
+  (should (equal (git-issue--plain "  plain  ") "plain"))
+  (should (equal (git-issue--plain "") "")))
 
 (ert-deftest git-issue-run-always-signals-something ()
   (let ((git-issue-program "false")

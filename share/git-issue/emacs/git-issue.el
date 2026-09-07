@@ -12,6 +12,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'seq)
 (require 'subr-x)
 
 (defgroup git-issue nil
@@ -32,21 +33,35 @@ read command exits 0 on an empty result per R-plain-stdout -- so this
 gives such a failure a name rather than an empty message.  The exit
 status is the second element of the error data.")
 
+(defconst git-issue--escape-sequence-regexp
+  "\e\\[[0-9;?]*[@-~]\\|\e][^\a\e]*\\(?:\a\\|\e\\\\\\)\\|\e[@-Z\\\\-_]"
+  "Terminal escape sequences the CLI may leave in a diagnostic.
+CSI (the SGR colours it prints), OSC, and the two-character escapes.")
+
+(defun git-issue--plain (string)
+  "STRING with terminal escape sequences removed.
+The CLI colours its diagnostics whether or not it is on a tty, and
+`git-issue-error' data is contractually plain text."
+  (string-trim (replace-regexp-in-string git-issue--escape-sequence-regexp
+                                         "" string t t)))
+
 (defun git-issue-run (&rest args)
   "Run `git-issue-program' with --porcelain and ARGS in `default-directory'.
 Return standard output as a string.  On nonzero exit signal
-`git-issue-error' whose data is the trimmed standard error, falling
-back to standard output for the subcommands that report failure there
-and to a generic message when the CLI says nothing at all."
+`git-issue-error' whose data is the standard error, falling back to
+standard output for the subcommands that report failure there and to
+`git-issue-silent-failure-message' when the CLI says nothing at all.
+The message is always plain text: any terminal escape sequence the CLI
+left in it is stripped here, so callers can display it as it is."
   (let ((err-file (make-temp-file "git-issue-stderr")))
     (unwind-protect
         (with-temp-buffer
           (let* ((status (apply #'call-process git-issue-program nil
                                 (list t err-file) nil "--porcelain" args))
-                 (out (string-trim (buffer-string))))
+                 (out (git-issue--plain (buffer-string))))
             (if (eql status 0)
                 (buffer-string)
-              (let ((err (string-trim
+              (let ((err (git-issue--plain
                           (with-temp-buffer
                             (insert-file-contents err-file)
                             (buffer-string)))))
