@@ -1,0 +1,11 @@
+id: c36c51c
+v: 2
+title: cli: remaining error diagnostics printed on stdout
+status: open
+priority: medium
+created: 2026-09-07T21:49:02Z
+updated: 2026-09-07T21:49:02Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: About 20 ${RED} diagnostics in bin/git-issue still go to stdout instead of stderr (e.g. link_issue's 'Invalid commit'). The not-found errors of update/comment/link were fixed in f1f5a6e; sweep the rest so porcelain consumers never see coloured errors on stdout.
