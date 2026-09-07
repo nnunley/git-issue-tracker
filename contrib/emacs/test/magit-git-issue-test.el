@@ -244,6 +244,41 @@ the section announce a failure in every repository with nothing ready."
                        (format "listed %s open medium alpha task" a)))
         (should (string-prefix-p "listed " (magit-git-issue-test--line)))))))
 
+(ert-deftest magit-git-issue-prefix-argument-means-all ()
+  "A prefix argument to `list' and `ready' means --all, and nothing else does."
+  (skip-unless (magit-git-issue-test--isolated-p))
+  (magit-git-issue-test--with-repo
+    (let ((a (git-issue-create "prefixed alpha"))
+          (second (magit-git-issue-test--repo)))
+      (git-issue-run "repo" "add" "prefixa" ".")
+      (let ((default-directory second))
+        (git-issue-create "prefixed beta")
+        (git-issue-run "repo" "add" "prefixb" "."))
+      ;; No prefix argument: this repository only, and no repo column.
+      (with-current-buffer (call-interactively #'magit-git-issue-list)
+        (magit-git-issue-test--goto "prefixed alpha")
+        (should (equal (magit-git-issue-test--line)
+                       (format "%s open medium prefixed alpha" a)))
+        (goto-char (point-min))
+        (should-not (search-forward "prefixed beta" nil t)))
+      (with-current-buffer (call-interactively #'magit-git-issue-ready)
+        (magit-git-issue-test--goto "prefixed alpha")
+        (should-not (string-prefix-p "prefixa " (magit-git-issue-test--line)))
+        (goto-char (point-min))
+        (should-not (search-forward "prefixed beta" nil t)))
+      ;; With one: every registered repository, each line prefixed by name.
+      (let ((current-prefix-arg '(4)))
+        (with-current-buffer (call-interactively #'magit-git-issue-list)
+          (magit-git-issue-test--goto "prefixed alpha")
+          (should (string-prefix-p "prefixa " (magit-git-issue-test--line)))
+          (magit-git-issue-test--goto "prefixed beta")
+          (should (string-prefix-p "prefixb " (magit-git-issue-test--line)))))
+      ;; `ready --all' reaches the other repository too.
+      (let ((current-prefix-arg '(4)))
+        (with-current-buffer (call-interactively #'magit-git-issue-ready)
+          (magit-git-issue-test--goto "prefixed beta")
+          (should (string-prefix-p "prefixb " (magit-git-issue-test--line))))))))
+
 (ert-deftest magit-git-issue-visit-runs-in-the-registered-repository ()
   (skip-unless (magit-git-issue-test--isolated-p))
   (magit-git-issue-test--with-repo
@@ -368,6 +403,28 @@ the section announce a failure in every repository with nothing ready."
         (should prompted)
         (should (equal (git-issue-issue-status (git-issue-show-issue a))
                        "in_progress"))))))
+
+(ert-deftest magit-git-issue-actions-refresh-only-on-success ()
+  "Every action refreshes the current magit buffer on success, and only then."
+  (magit-git-issue-test--with-repo
+    (let ((a (git-issue-create "alpha task"))
+          (refreshes 0))
+      (with-current-buffer (magit-status-setup-buffer default-directory)
+        (cl-letf (((symbol-function 'magit-refresh)
+                   (lambda (&rest _) (setq refreshes (1+ refreshes)))))
+          (magit-git-issue-test--goto "alpha task")
+          (magit-git-issue-start)
+          (should (= refreshes 1))
+          (should (equal (git-issue-issue-status (git-issue-show-issue a))
+                         "in_progress"))
+          ;; A rejected action must leave the buffer alone.
+          (setq refreshes 0)
+          (goto-char (point-min))
+          (should-not (magit-git-issue-issue-at-point))
+          (cl-letf (((symbol-function 'git-issue-read-id)
+                     (lambda (&rest _) "zzzzzzz")))
+            (should-error (magit-git-issue-close) :type 'user-error))
+          (should (= refreshes 0)))))))
 
 (ert-deftest magit-git-issue-actions-report-the-cli-error ()
   (magit-git-issue-test--with-repo
