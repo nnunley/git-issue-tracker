@@ -1,0 +1,11 @@
+id: e6449d3
+v: 2
+title: emacs: read the issue id inside the action's condition-case
+status: open
+priority: medium
+created: 2026-09-07T21:24:40Z
+updated: 2026-09-07T21:24:40Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: magit-git-issue--define-action, -comment and -show read the id via git-issue-read-id outside the condition-case, so a CLI failure while building completion escapes as a raw git-issue-error. From the magit whole-branch review.
