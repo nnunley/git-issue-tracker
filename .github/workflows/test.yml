@@ -98,6 +98,35 @@ jobs:
         git issue list
         git issue-status
 
+  emacs-ui:
+    runs-on: ubuntu-latest
+    name: Emacs UI (magit)
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Emacs
+      run: sudo apt-get update && sudo apt-get install -y emacs-nox
+
+    # The suite creates scratch repositories and commits in them.
+    - name: Set up Git
+      run: |
+        git config --global user.name "Test User"
+        git config --global user.email "test@example.com"
+        git config --global init.defaultBranch main
+
+    # Keeps the NonGNU ELPA download out of every run. The runner points
+    # `user-emacs-directory' at this path; HOME is redirected separately so
+    # the registry tests never touch a real ~/.gitconfig.
+    - name: Cache magit
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/git-issue-emacs
+        key: magit-${{ runner.os }}-v1
+
+    - name: Run UI tests
+      run: GIT_ISSUE_EMACS_SCRATCH=$HOME/.cache/git-issue-emacs make test-emacs-ui
+
   security-check:
     runs-on: ubuntu-latest
     name: Security Analysis

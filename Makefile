@@ -106,6 +106,10 @@ test-porcelain: ## Run porcelain output tests
 test-emacs-core: ## Run the Elisp core ERT suite (Emacs only, no magit)
 	PATH="$(CURDIR)/bin:$$PATH" emacs -Q --batch -L share/git-issue/emacs -l ert -l contrib/emacs/test/git-issue-test.el -f ert-run-tests-batch-and-exit
 
+test-emacs-ui: ## Run the magit UI ERT suite (downloads magit into a scratch dir)
+	chmod +x contrib/emacs/test/run-ui-tests.sh
+	./contrib/emacs/test/run-ui-tests.sh
+
 bench-deps:
 	@echo "Running dependency benchmark..."
 	chmod +x tests/bench_deps.sh

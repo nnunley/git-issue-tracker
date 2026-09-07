@@ -580,11 +580,19 @@ for an id with completion otherwise."
 Its `transient-infix-value' is the pair of git arguments that writes
 the trailer, not the option string itself.")
 
-(cl-defmethod transient-infix-read ((obj magit-git-issue--trailer-option))
-  "Read an issue id for OBJ, or unset it when it already has one."
+(defun magit-git-issue--read-trailer-id (obj)
+  "Read an issue id for trailer option OBJ, or nil to unset it.
+An option that already carries an id reads as nil, so pressing its key
+a second time clears it.  Kept out of the `transient-infix-read' method
+because transient wraps that generic in an `:around' method that only
+works inside a live transient, and this is the part worth testing."
   (and (not (and (slot-boundp obj 'value) (oref obj value)))
        (git-issue-read-id
         (format "%s issue: " (capitalize (oref obj kind))))))
+
+(cl-defmethod transient-infix-read ((obj magit-git-issue--trailer-option))
+  "Read an issue id for OBJ, or unset it when it already has one."
+  (magit-git-issue--read-trailer-id obj))
 
 (cl-defmethod transient-infix-value ((obj magit-git-issue--trailer-option))
   "The git arguments OBJ contributes: (\"--trailer\" \"Key: #id\") or nil."

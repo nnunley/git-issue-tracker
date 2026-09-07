@@ -24,6 +24,14 @@
 
 (define-error 'git-issue-error "git-issue failed")
 
+(defconst git-issue-silent-failure-message
+  "git-issue failed without writing a diagnostic"
+  "Message of `git-issue-error' when the CLI fails and says nothing.
+`git issue ready' exits nonzero with both streams empty when no issue
+is ready, so callers that read that as an empty result rather than a
+failure test the signalled message against this constant.  The exit
+status is the second element of the error data in that case.")
+
 (defun git-issue-run (&rest args)
   "Run `git-issue-program' with --porcelain and ARGS in `default-directory'.
 Return standard output as a string.  On nonzero exit signal
@@ -43,10 +51,10 @@ and to a generic message when the CLI says nothing at all."
                             (insert-file-contents err-file)
                             (buffer-string)))))
                 (signal 'git-issue-error
-                        (list (cond ((not (string-empty-p err)) err)
-                                    ((not (string-empty-p out)) out)
-                                    (t (format "exited with status %s"
-                                               status)))))))))
+                        (cond ((not (string-empty-p err)) (list err))
+                              ((not (string-empty-p out)) (list out))
+                              (t (list git-issue-silent-failure-message
+                                       status))))))))
       (delete-file err-file))))
 
 ;;;; Parsing
@@ -146,9 +154,16 @@ A line beginning with one space continues the previous value."
    (apply #'git-issue-run "list" (and all '("--all")))))
 
 (defun git-issue-ready (&optional all)
-  "Ready issues, or across every registered repository when ALL."
-  (git-issue-parse-issue-lines
-   (apply #'git-issue-run "ready" (and all '("--all")))))
+  "Ready issues, or across every registered repository when ALL.
+`git issue ready' exits nonzero without printing anything when no
+issue is ready.  That is an empty result, not a failure, so it is
+returned as the empty list; every other failure still signals."
+  (condition-case err
+      (git-issue-parse-issue-lines
+       (apply #'git-issue-run "ready" (and all '("--all"))))
+    (git-issue-error
+     (unless (equal (cadr err) git-issue-silent-failure-message)
+       (signal (car err) (cdr err))))))
 
 (defun git-issue-show (id)
   "Detail of issue ID."

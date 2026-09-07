@@ -34,7 +34,28 @@
   (let ((git-issue-program "false")
         (default-directory (git-issue-test--scratch-repo)))
     (let ((err (should-error (git-issue-run "list") :type 'git-issue-error)))
-      (should (string-match-p "status 1" (cadr err))))))
+      (should (equal (cadr err) git-issue-silent-failure-message))
+      (should (equal (caddr err) 1)))))
+
+(ert-deftest git-issue-ready-is-empty-when-nothing-is-ready ()
+  ;; `git issue ready' exits 1 with both streams empty in that case; the
+  ;; magit status section must not report it as an error.
+  (let ((default-directory (git-issue-test--scratch-repo)))
+    (should (null (git-issue-ready)))
+    (let ((a (git-issue-create "alpha task")))
+      (should (equal (mapcar #'git-issue-issue-id (git-issue-ready)) (list a)))
+      (git-issue-close a)
+      (should (null (git-issue-ready))))))
+
+(ert-deftest git-issue-ready-still-signals-real-failures ()
+  (let ((git-issue-program "git-issue")
+        (default-directory (git-issue-test--scratch-repo)))
+    ;; An unknown flag is a real failure and must not be swallowed.
+    (should-error (git-issue-ready-test--bogus) :type 'git-issue-error)))
+
+(defun git-issue-ready-test--bogus ()
+  "Run `ready' with a flag it rejects."
+  (git-issue-run "ready" "--nonsense"))
 
 (ert-deftest git-issue-core-does-not-load-magit ()
   (should-not (featurep 'magit)))
