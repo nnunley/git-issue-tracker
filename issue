@@ -1,0 +1,11 @@
+id: b95de46
+v: 2
+title: test: UI suite hygiene follow-ups
+status: open
+priority: medium
+created: 2026-09-07T21:24:40Z
+updated: 2026-09-07T21:24:40Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: Whole-file regex for the no-duplication test; static magit cache key without restore-keys; redundant Set up Git step in the emacs-ui job; survives-failure test does not assert the error was reported; re-finish leg sets the callback variable by hand; set-role completion untested; core test helper does not isolate HOME.
