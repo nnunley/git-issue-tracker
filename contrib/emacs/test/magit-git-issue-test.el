@@ -75,18 +75,48 @@
 (ert-deftest magit-git-issue-requires-the-specified-features ()
   (should (featurep 'git-issue))
   (should (featurep 'magit))
-  (should (featurep 'transient))
-  (should (featurep 'with-editor)))
+  (should (featurep 'transient)))
+
+(ert-deftest magit-git-issue-edit-mode-follows-with-editor-keys ()
+  "The edit buffer follows magit's commit-buffer keys without with-editor.
+`with-editor' drives an external editor process; there is none here, so
+it is not a dependency and only the key conventions are shared."
+  (should (fboundp 'magit-git-issue-edit-mode))
+  (should (keymapp magit-git-issue-edit-mode-map))
+  (should (eq (lookup-key magit-git-issue-edit-mode-map (kbd "C-c C-c"))
+              #'magit-git-issue-edit-finish))
+  (should (eq (lookup-key magit-git-issue-edit-mode-map (kbd "C-c C-k"))
+              #'magit-git-issue-edit-abort)))
+
+(defun magit-git-issue-test--code-matches-p (regexp)
+  "Non-nil when REGEXP matches UI source outside a comment or string.
+Docstrings and comments legitimately name the things the UI must not
+call, so a whole-file regex would report them."
+  (with-temp-buffer
+    (insert-file-contents (locate-library "magit-git-issue.el" t))
+    (delay-mode-hooks (emacs-lisp-mode))
+    (goto-char (point-min))
+    (let ((found nil))
+      (while (and (not found) (re-search-forward regexp nil t))
+        (let ((beg (match-beginning 0))
+              (end (match-end 0))
+              (text (match-string 0)))
+          ;; `syntax-ppss' moves point, so drive the scan from END ourselves.
+          (let ((state (save-excursion (syntax-ppss beg))))
+            ;; nth 3 = inside a string (docstrings included), nth 4 = comment.
+            (unless (or (nth 3 state) (nth 4 state))
+              (setq found text)))
+          (goto-char end)))
+      found)))
 
 (ert-deftest magit-git-issue-does-not-duplicate-the-core ()
   "The UI file must not run processes or parse porcelain itself."
-  (let ((source (with-temp-buffer
-                  (insert-file-contents
-                   (locate-library "magit-git-issue.el" t))
-                  (buffer-string))))
-    (dolist (forbidden '("call-process" "start-process" "shell-command"
-                         "process-lines" "git-issue-parse"))
-      (should-not (string-match-p (regexp-quote forbidden) source)))))
+  (dolist (forbidden '("\\_<call-process\\_>"
+                       "\\_<start-process\\_>"
+                       "\\_<shell-command\\_>"
+                       "\\_<process-lines\\_>"
+                       "\\_<git-issue-+parse"))
+    (should-not (magit-git-issue-test--code-matches-p forbidden))))
 
 ;;;; Bullet 2: hooks and bindings, installed the removable way
 
@@ -207,6 +237,29 @@ the section announce a failure in every repository with nothing ready."
       (with-current-buffer (magit-status-setup-buffer default-directory)
         (goto-char (point-min))
         (should (search-forward "Recent commits" nil t))))))
+
+(ert-deftest magit-git-issue-status-section-survives-an-unrunnable-program ()
+  "A program that exists but cannot be run must not abort the refresh.
+`call-process' signals `permission-denied' for a non-executable file and
+other `file-error' subtypes for a directory or a bad interpreter line;
+catching only `file-missing' let those through."
+  (magit-git-issue-test--with-repo
+    (let ((unrunnable (make-temp-file "git-issue-not-executable"))
+          (said nil))
+      (unwind-protect
+          (let ((git-issue-program unrunnable))
+            (set-file-modes unrunnable #o644)
+            (should-not (file-executable-p unrunnable))
+            (cl-letf (((symbol-function 'message)
+                       (lambda (format-string &rest args)
+                         (when format-string
+                           (push (apply #'format format-string args) said)))))
+              (with-current-buffer (magit-status-setup-buffer default-directory)
+                (goto-char (point-min))
+                (should (search-forward "Recent commits" nil t))))
+            (should (seq-find (lambda (line) (string-prefix-p "git-issue:" line))
+                              said)))
+        (delete-file unrunnable)))))
 
 ;;;; Bullet 4: the list and ready buffers
 
@@ -488,6 +541,41 @@ the section announce a failure in every repository with nothing ready."
                                     (git-issue-show a))))
                        "one\ntwo"))
         (should-not (get-buffer "*git-issue edit*"))))))
+
+(ert-deftest magit-git-issue-a-second-composition-keeps-the-first ()
+  "Starting a second edit must not silently discard an unfinished one."
+  (magit-git-issue-test--with-repo
+    (let ((a (git-issue-create "alpha task"))
+          (b (git-issue-create "beta task")))
+      (with-current-buffer (magit-status-setup-buffer default-directory)
+        (cl-letf (((symbol-function 'git-issue-read-id) (lambda (&rest _) a)))
+          (magit-git-issue-comment))
+        (let ((first (current-buffer)))
+          (insert "text for alpha")
+          (cl-letf (((symbol-function 'git-issue-read-id) (lambda (&rest _) b)))
+            (magit-git-issue-comment))
+          (let ((second (current-buffer)))
+            (should-not (eq second first))
+            (should (buffer-live-p first))
+            (should (equal (with-current-buffer first
+                             (buffer-substring-no-properties (point-min)
+                                                             (point-max)))
+                           "text for alpha"))
+            (should (equal (with-current-buffer second
+                             (buffer-substring-no-properties (point-min)
+                                                             (point-max)))
+                           ""))
+            ;; Each finishes into its own issue.
+            (insert "text for beta")
+            (call-interactively (key-binding (kbd "C-c C-c")))
+            (with-current-buffer first
+              (call-interactively (key-binding (kbd "C-c C-c"))))
+            (should (equal (caddr (car (git-issue-detail-comments
+                                        (git-issue-show a))))
+                           "text for alpha"))
+            (should (equal (caddr (car (git-issue-detail-comments
+                                        (git-issue-show b))))
+                           "text for beta"))))))))
 
 (ert-deftest magit-git-issue-edit-buffer-aborts-without-acting ()
   (magit-git-issue-test--with-repo

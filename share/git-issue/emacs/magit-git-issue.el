@@ -1,6 +1,6 @@
 ;;; magit-git-issue.el --- Magit interface for git-issue  -*- lexical-binding: t; -*-
 
-;; Package-Requires: ((emacs "28.1") (magit "4.0") (transient "0.7") (with-editor "3.0"))
+;; Package-Requires: ((emacs "28.1") (magit "4.0") (transient "0.7"))
 ;; Keywords: tools, vc
 
 ;;; Commentary:
@@ -17,7 +17,6 @@
 
 ;;; Code:
 
-(require 'ansi-color)
 (require 'eieio)
 (require 'seq)
 (require 'subr-x)
@@ -26,7 +25,6 @@
 (require 'magit)
 (require 'git-commit)
 (require 'transient)
-(require 'with-editor)
 
 (defgroup magit-git-issue nil
   "Magit interface for git-issue."
@@ -60,10 +58,10 @@ closed."
 ;;;; Issue lines
 
 (defun magit-git-issue--error-message (err)
-  "The message carried by `git-issue-error' ERR, fit for the echo area.
-The CLI colours its diagnostics unconditionally, so the SGR escapes
-are stripped here rather than shown as mojibake."
-  (ansi-color-filter-apply (or (cadr err) "")))
+  "The message carried by `git-issue-error' ERR.
+`git-issue-run' guarantees it is plain text, escape sequences and all
+stripped, so it goes to the echo area as it is."
+  (or (cadr err) ""))
 
 (defun magit-git-issue--issues-for-section ()
   "The issues `magit-git-issue-status-section' selects."
@@ -115,8 +113,14 @@ echo area rather than aborting the whole status refresh."
           (magit-git-issue--insert-issues issues)
           (insert "\n")))
     (git-issue-error (message "git-issue: %s" (magit-git-issue--error-message err)))
-    ;; No git-issue on PATH at all: stay out of the status buffer's way.
-    (file-missing nil)))
+    ;; `call-process' signals a `file-error' subtype when the program
+    ;; cannot be run at all: `file-missing' when it is not on PATH,
+    ;; `permission-denied' when it is not executable, and a bare
+    ;; `file-error' for a directory or a broken interpreter line.  None of
+    ;; those may take the whole status refresh down with them.
+    (file-error
+     (message "git-issue: cannot run %s: %s"
+              git-issue-program (error-message-string err)))))
 
 ;; Added through `magit-add-section-hook' so `remove-hook' takes it back out.
 (magit-add-section-hook 'magit-status-sections-hook
@@ -413,10 +417,10 @@ carrying the CLI's message; success refreshes the magit buffers."
 ;;;; Multi-line input
 
 ;; The spec requires `C-c C-c' to finish and `C-c C-k' to abort, matching
-;; magit's commit buffer.  `with-editor-mode' itself drives an external
-;; editor process, which there is none of here -- the text goes straight
-;; into an argument -- so this is a small major mode using with-editor's
-;; key conventions rather than with-editor itself.
+;; magit's commit message buffer.  There is no editor process to drive
+;; here -- the text goes straight into an argument -- so this is a small
+;; major mode following those key conventions, and `with-editor' is not a
+;; dependency of this package.
 
 (defvar-local magit-git-issue--edit-callback nil
   "Function called with the buffer text when the edit buffer is finished.")
@@ -445,13 +449,17 @@ Type \\[magit-git-issue-edit-finish] to use the text, \
   "Pop to an edit buffer titled TITLE; call CALLBACK with its text.
 CALLBACK runs in the buffer that was current when this was called, so
 that `default-directory' and `magit-refresh' still mean the right
-thing."
-  (let ((buffer (get-buffer-create "*git-issue edit*"))
+thing.
+
+Each composition gets a buffer of its own: starting a second comment
+while a first is unfinished must not silently discard the first, and a
+rejected submission stays in its buffer until it is finished or
+aborted."
+  (let ((buffer (generate-new-buffer "*git-issue edit*"))
         (directory default-directory)
         (origin (current-buffer))
         (winconf (current-window-configuration)))
     (with-current-buffer buffer
-      (erase-buffer)
       (magit-git-issue-edit-mode)
       (setq default-directory directory)
       (setq magit-git-issue--edit-winconf winconf)
