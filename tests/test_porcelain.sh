@@ -311,6 +311,42 @@ eq "created issue is listed" "alpha task" "$("$GI" list --porcelain | awk -F'\t'
 eq "create with description works in porcelain" "1" "$("$GI" create "beta" --description="$(printf 'l1\nl2')" --porcelain 2>/dev/null | grep -cE '^[0-9a-f]{7}$')"
 eq "human create output unchanged" "1" "$("$GI" create "gamma" 2>/dev/null | grep -c 'Created issue #')"
 
+echo "Testing empty results exit 0 with empty stdout [R-plain-stdout]"
+# `ready' used to end its empty branch with a bare `[[ ... ]] && echo', whose
+# false test became the function's exit status under --porcelain, so an empty
+# result exited 1. Every read command must exit 0 and print nothing instead.
+empty_ok() { # empty_ok <label> <args...>
+    local label="$1"; shift
+    local out rc err_file="$WORK/emptyexit.err"
+    out=$("$GI" "$@" --porcelain 2>"$err_file") && rc=0 || rc=$?
+    eq "$label: exits 0" "0" "$rc"
+    eq "$label: nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+    eq "$label: nothing on stderr" "0" "$(wc -c <"$err_file" | tr -d ' ')"
+}
+
+fresh_repo emptyexit
+for cmd in list ready topo deps scan-commits; do
+    empty_ok "$cmd in an empty repository" $cmd
+done
+empty_ok "dep list in an empty repository" dep list
+
+fresh_repo closedexit
+closed_id=$("$GI" create "alpha task" --porcelain 2>/dev/null)
+"$GI" close "$closed_id" --porcelain >/dev/null 2>&1
+for cmd in ready topo deps scan-commits; do
+    empty_ok "$cmd with every issue closed" $cmd
+done
+# `list' still reports the closed issue, and still exits 0.
+out=$("$GI" list --porcelain 2>/dev/null) && rc=0 || rc=$?
+eq "list with every issue closed: exits 0" "0" "$rc"
+eq "list with every issue closed: still lists it" "1" \
+   "$(printf '%s\n' "$out" | grep -c "$closed_id")"
+
+# A filter that matches nothing is an empty result, not a failure.
+fresh_repo filterexit
+"$GI" create "alpha task" --porcelain >/dev/null 2>&1
+empty_ok "ready with a role nothing matches" ready --role=nobody-has-this-role
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]

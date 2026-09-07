@@ -2761,9 +2761,18 @@ list_ready_issues() {
         results="${results}${rank} ${line}"$'\n'
     done <<< "$all_tsv"
 
-    [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo -e "${BLUE}Ready to work on:${NC}"
+    # These must be `if ... fi', not `[[ ... ]] && echo': a bare && list as
+    # the last statement of a branch becomes the function's exit status, so
+    # under --porcelain (where the test is false) an empty result exited 1.
+    # draft-ndn-porcelain-output-00 R-plain-stdout requires exit 0 with no
+    # output for an empty result.
+    if [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        echo -e "${BLUE}Ready to work on:${NC}"
+    fi
     if [[ -z "$results" ]]; then
-        [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo "  (none)"
+        if [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+            echo "  (none)"
+        fi
     else
         local sorted
         sorted=$(echo "$results" | sort -n | sed 's/^[0-9] //' | grep -v '^$')
@@ -2773,6 +2782,7 @@ list_ready_issues() {
             echo "$sorted"
         fi
     fi
+    return 0
 }
 
 # Topologically sort non-done issues using POSIX tsort
