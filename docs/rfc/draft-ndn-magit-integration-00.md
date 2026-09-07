@@ -182,7 +182,7 @@ $ git init -q proj
 $ cd proj
 $ git commit -q --allow-empty -m init
 $ EL="$(dirname "$(dirname "$(readlink -f "$(command -v git-issue)")")")/share/git-issue/emacs"
-$ emacs -Q --batch -L "$EL" -l git-issue --eval '(let* ((default-directory "/tmp/gi-rfc/proj/") (a (git-issue-create "alpha task" "first line\nsecond line")) (b (git-issue-create "beta task"))) (git-issue-dep-add a "blocks" b) (git-issue-comment a "one\ntwo") (git-issue-close b) (princ (list (length (git-issue-open-ids)) (git-issue-issue-status (car (git-issue-list))) (git-issue-detail-description (git-issue-show a)) (length (git-issue-detail-comments (git-issue-show a))))))' 2>/dev/null
+$ emacs -Q --batch -L "$EL" -l git-issue --eval '(let* ((default-directory "/tmp/gi-rfc/proj/") (a (git-issue-create "alpha task" "first line\nsecond line")) (b (git-issue-create "beta task"))) (git-issue-dep-add a "blocks" b) (git-issue-comment a "one\ntwo") (git-issue-close b) (princ (list (length (git-issue-open-ids)) (git-issue-issue-status (car (git-issue-ready))) (git-issue-detail-description (git-issue-show a)) (length (git-issue-detail-comments (git-issue-show a))))))' 2>/dev/null
 (1 open first line
 second line 1)
 $ git issue list --porcelain | awk -F'\t' '$12=="beta task"{print $3}'
