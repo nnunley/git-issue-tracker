@@ -1,0 +1,11 @@
+id: edf52b8
+v: 2
+title: tracker: issue 1f5bbb6 has an empty title
+status: open
+priority: medium
+created: 2026-09-07T21:24:41Z
+updated: 2026-09-07T21:24:41Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: Found during the magit whole-branch review; pre-existing.
