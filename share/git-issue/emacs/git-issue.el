@@ -131,5 +131,75 @@ A line beginning with one space continues the previous value."
                              :description description
                              :comments (nreverse comments))))
 
+;;;; Commands
+
+(defun git-issue-list (&optional all)
+  "Issues of the current repository, or of every registered one when ALL."
+  (git-issue-parse-issue-lines
+   (apply #'git-issue-run "list" (and all '("--all")))))
+
+(defun git-issue-ready (&optional all)
+  "Ready issues, or across every registered repository when ALL."
+  (git-issue-parse-issue-lines
+   (apply #'git-issue-run "ready" (and all '("--all")))))
+
+(defun git-issue-show (id)
+  "Detail of issue ID."
+  (git-issue-parse-detail (git-issue-run "show" id)))
+
+(defun git-issue-show-issue (id)
+  "The `git-issue-issue' for ID from the list, or nil."
+  (seq-find (lambda (i) (equal (git-issue-issue-id i) id)) (git-issue-list)))
+
+(defun git-issue-deps (&optional id)
+  "Dependency edges, restricted to those leaving ID when given."
+  (git-issue-parse-edge-lines
+   (apply #'git-issue-run "deps" (and id (list id)))))
+
+(defun git-issue-create (title &optional description)
+  "Create an issue with TITLE and optional DESCRIPTION; return its id."
+  (string-trim
+   (apply #'git-issue-run "create" title
+          (and description (not (string-empty-p description))
+               (list (concat "--description=" description))))))
+
+(defun git-issue-start (id) "Set ID in progress." (git-issue-run "start" id) t)
+(defun git-issue-close (id) "Close ID." (git-issue-run "close" id) t)
+(defun git-issue-reopen (id) "Reopen ID." (git-issue-run "reopen" id) t)
+(defun git-issue-comment (id text) "Add comment TEXT to ID." (git-issue-run "comment" id text) t)
+(defun git-issue-update (id field value)
+  "Set FIELD of ID to VALUE."
+  (git-issue-run "update" id (format "--%s=%s" field value)) t)
+(defun git-issue-dep-add (from type to) "Add edge FROM TYPE TO." (git-issue-run "dep" "add" from type to) t)
+(defun git-issue-dep-rm (from type to) "Remove edge FROM TYPE TO." (git-issue-run "dep" "rm" from type to) t)
+(defun git-issue-link (id commit) "Link ID to COMMIT." (git-issue-run "link" id commit) t)
+
+(defun git-issue-open-ids ()
+  "Ids of issues whose status is not closed."
+  (mapcar #'git-issue-issue-id
+          (seq-remove (lambda (i) (equal (git-issue-issue-status i) "closed"))
+                      (git-issue-list))))
+
+(defun git-issue-read-id (prompt)
+  "Read an open issue id with PROMPT and completion."
+  (completing-read prompt (git-issue-open-ids) nil t))
+
+;;;; Trailers
+
+(defconst git-issue-trailer-keys
+  '(("issue" . "Issue") ("fixes" . "Fixes")
+    ("closes" . "Closes") ("related-to" . "Related-To"))
+  "Trailer kinds and the keys git-issue writes and scans.")
+
+(defun git-issue-format-trailer (kind id)
+  "The trailer line for KIND (issue, fixes, closes, related-to) and ID."
+  (let ((key (cdr (assoc kind git-issue-trailer-keys))))
+    (unless key (signal 'git-issue-error (list (format "unknown trailer kind: %s" kind))))
+    (format "%s: #%s" key id)))
+
+(defun git-issue-trailer-args (kind id)
+  "Arguments that make `git commit' add the KIND trailer for ID."
+  (list "--trailer" (git-issue-format-trailer kind id)))
+
 (provide 'git-issue)
 ;;; git-issue.el ends here

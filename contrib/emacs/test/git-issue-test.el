@@ -70,5 +70,46 @@
     (should (null (git-issue-detail-description d)))
     (should (null (git-issue-detail-comments d)))))
 
+(ert-deftest git-issue-commands-round-trip ()
+  (let* ((default-directory (git-issue-test--scratch-repo))
+         (a (git-issue-create "alpha task" "first line\nsecond line"))
+         (b (git-issue-create "beta task")))
+    (should (string-match-p "\\`[0-9a-f]\\{7\\}\\'" a))
+    (git-issue-dep-add a "blocks" b)
+    (git-issue-comment a "one\ntwo")
+    (should (equal (mapcar #'git-issue-issue-id (git-issue-ready)) (list a)))
+    (should (equal (git-issue-detail-description (git-issue-show a)) "first line\nsecond line"))
+    (should (equal (caddr (car (git-issue-detail-comments (git-issue-show a)))) "one\ntwo"))
+    (should (member (list a "blocks" b) (git-issue-deps)))
+    (git-issue-update b "priority" "high")
+    (should (equal (git-issue-issue-priority (git-issue-show-issue b)) "high"))
+    (git-issue-close b)
+    (should (equal (git-issue-open-ids) (list a)))
+    (git-issue-reopen b)
+    (should (= 2 (length (git-issue-open-ids))))
+    (git-issue-start a)
+    (should (equal (git-issue-issue-status (git-issue-show-issue a)) "in_progress"))
+    (git-issue-dep-rm a "blocks" b)
+    (should-not (member (list a "blocks" b) (git-issue-deps)))))
+
+(ert-deftest git-issue-link-records-commit ()
+  ;; `link_issue' in bin/git-issue stores the link as a comment
+  ;; "Linked to commit: <short-hash>" using `git rev-parse --short', not
+  ;; the full commit id, so assert on the short hash it actually records.
+  (let* ((default-directory (git-issue-test--scratch-repo))
+         (a (git-issue-create "alpha task"))
+         (head (string-trim (with-output-to-string
+                              (call-process "git" nil standard-output nil "rev-parse" "HEAD"))))
+         (short (string-trim (with-output-to-string
+                               (call-process "git" nil standard-output nil "rev-parse" "--short" "HEAD")))))
+    (git-issue-link a head)
+    (should (string-match-p (regexp-quote short) (git-issue-run "show" a)))))
+
+(ert-deftest git-issue-trailers ()
+  (should (equal (git-issue-format-trailer "fixes" "a1b2c3d") "Fixes: #a1b2c3d"))
+  (should (equal (git-issue-format-trailer "related-to" "a1b2c3d") "Related-To: #a1b2c3d"))
+  (should (equal (git-issue-trailer-args "closes" "a1b2c3d") '("--trailer" "Closes: #a1b2c3d")))
+  (should-error (git-issue-format-trailer "bogus" "a1b2c3d") :type 'git-issue-error))
+
 (provide 'git-issue-test)
 ;;; git-issue-test.el ends here
