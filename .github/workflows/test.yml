@@ -76,6 +76,12 @@ jobs:
     - name: Run install layout smoke test
       run: ./tests/test_install_layout.sh
 
+    - name: Install Emacs
+      run: sudo apt-get update && sudo apt-get install -y emacs-nox
+
+    - name: Run Elisp core tests
+      run: make test-emacs-core
+
     - name: Test in clean repository
       run: |
         mkdir -p /tmp/test-clean-repo
@@ -249,6 +255,9 @@ jobs:
 
     - name: Clone RFC tooling
       run: git clone --depth 1 https://github.com/nnunley/llm-rfc-skill /tmp/llm-rfc-skill
+
+    - name: Install Emacs (the magit RFC's core transcripts run emacs --batch)
+      run: sudo apt-get update && sudo apt-get install -y emacs-nox
 
     # The corpus exercises `git issue` itself, so this job must install the
     # subject under test. Without it the transcripts fail with "git: 'issue'
