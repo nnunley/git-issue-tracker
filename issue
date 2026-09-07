@@ -1,0 +1,11 @@
+id: 1aaafa1
+v: 2
+title: emacs: guard commands outside a repository
+status: open
+priority: medium
+created: 2026-09-07T21:24:40Z
+updated: 2026-09-07T21:24:40Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: git-issue-run outside any repository lets the CLI create a standalone tracker under ~/.local/share and ./.git-issue; add a magit-toplevel guard or document it.
