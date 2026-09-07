@@ -609,8 +609,12 @@ create_issue() {
         return 1
     fi
     
-    echo -e "${BLUE}Creating issue with hash ID: $id${NC}"
-    
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        : # records only
+    else
+        echo -e "${BLUE}Creating issue with hash ID: $id${NC}"
+    fi
+
     # Create issue data (only include non-empty fields)
     local issue_data="id: $id
 v: 2
@@ -630,8 +634,12 @@ description: $(gi_fold "$description")"
 
     write_issue_data "$id" "$issue_data"
 
-    echo -e "${GREEN}✓ Created issue #$id: $title${NC}"
-    echo -e "${GRAY}   Use this ID for future operations: $id${NC}"
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        printf '%s\n' "$id"
+    else
+        echo -e "${GREEN}✓ Created issue #$id: $title${NC}"
+        echo -e "${GRAY}   Use this ID for future operations: $id${NC}"
+    fi
 }
 
 # List all issues
@@ -3503,7 +3511,11 @@ author: $author
 assignee:
 hash_source: manual"
         write_issue_data "$manual_id" "$issue_data"
-        echo -e "${GREEN}✓ Created issue #$manual_id: $manual_title${NC}"
+        if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+            printf '%s\n' "$manual_id"
+        else
+            echo -e "${GREEN}✓ Created issue #$manual_id: $manual_title${NC}"
+        fi
         ;;
     list)
         list_issues

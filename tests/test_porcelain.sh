@@ -302,6 +302,15 @@ eq "dep list nosuch: nonzero exit" "1" "$([[ $rc -ne 0 ]] && echo 1 || echo 0)"
 eq "dep list nosuch: error mentions the id" "1" "$(printf '%s' "$err" | grep -c 'nosuch')"
 eq "dep list nosuch: nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
 
+echo "Testing create --porcelain [R-create-porcelain]"
+fresh_repo createp
+out=$("$GI" create "alpha task" --porcelain 2>/dev/null)
+eq "create prints the id alone" "1" "$(printf '%s\n' "$out" | grep -cE '^[0-9a-f]{7}$')"
+eq "create prints one line" "1" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+eq "created issue is listed" "alpha task" "$("$GI" list --porcelain | awk -F'\t' -v id="$out" '$2==id{print $12}')"
+eq "create with description works in porcelain" "1" "$("$GI" create "beta" --description="$(printf 'l1\nl2')" --porcelain 2>/dev/null | grep -cE '^[0-9a-f]{7}$')"
+eq "human create output unchanged" "1" "$("$GI" create "gamma" 2>/dev/null | grep -c 'Created issue #')"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]
