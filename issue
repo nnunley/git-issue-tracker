@@ -1,0 +1,11 @@
+id: 7aa2514
+v: 2
+title: emacs: anchor probe signals at load time
+status: open
+priority: medium
+created: 2026-09-07T21:24:40Z
+updated: 2026-09-07T21:24:40Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: magit-git-issue--anchor signals error at load when none of the probed magit-commit/magit-dispatch keys exist, making the file unloadable on a future magit instead of degrading to no commit options.
