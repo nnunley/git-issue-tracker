@@ -1,5 +1,6 @@
 ;;; git-issue-test.el --- ERT for the git-issue core  -*- lexical-binding: t; -*-
 (require 'ert)
+(require 'cl-lib)
 (require 'git-issue)
 
 (defun git-issue-test--scratch-repo ()
@@ -104,6 +105,26 @@
                                (call-process "git" nil standard-output nil "rev-parse" "--short" "HEAD")))))
     (git-issue-link a head)
     (should (string-match-p (regexp-quote short) (git-issue-run "show" a)))))
+
+(ert-deftest git-issue-repo-paths-parses-registry-lines ()
+  ;; `repo list' prints "<name> <path>" and appends " (missing)" when the
+  ;; path is gone; the marker must not end up in the parsed path.
+  (cl-letf (((symbol-function 'git-issue-run)
+             (lambda (&rest _)
+               "tracker /home/u/tracker\ngone /home/u/old repo (missing)\n")))
+    (should (equal (git-issue-repo-paths)
+                   '(("tracker" . "/home/u/tracker")
+                     ("gone" . "/home/u/old repo"))))))
+
+(ert-deftest git-issue-repo-paths-round-trips-through-the-cli ()
+  (let* ((home (file-name-as-directory (make-temp-file "git-issue-home" t)))
+         (process-environment (cons (concat "HOME=" home) process-environment))
+         (default-directory (git-issue-test--scratch-repo)))
+    (should (null (git-issue-repo-paths)))
+    (git-issue-run "repo" "add" "scratch" ".")
+    (let ((paths (git-issue-repo-paths)))
+      (should (equal (mapcar #'car paths) '("scratch")))
+      (should (file-directory-p (cdar paths))))))
 
 (ert-deftest git-issue-trailers ()
   (should (equal (git-issue-format-trailer "fixes" "a1b2c3d") "Fixes: #a1b2c3d"))

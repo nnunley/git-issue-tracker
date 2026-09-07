@@ -174,6 +174,22 @@ A line beginning with one space continues the previous value."
 (defun git-issue-dep-rm (from type to) "Remove edge FROM TYPE TO." (git-issue-run "dep" "rm" from type to) t)
 (defun git-issue-link (id commit) "Link ID to COMMIT." (git-issue-run "link" id commit) t)
 
+(defun git-issue-repo-paths ()
+  "Registered repositories as an alist of (NAME . PATH).
+Parses the `repo list' contract lines `<name> <path>', where a path
+that no longer exists is followed by the marker ` (missing)'.  The
+marker is dropped; the recorded path is returned either way."
+  (mapcar (lambda (line)
+            (let* ((space (string-search " " line))
+                   (name (if space (substring line 0 space) line))
+                   (rest (if space (substring line (1+ space)) "")))
+              (cons name
+                    (if (string-suffix-p " (missing)" rest)
+                        (substring rest 0 (- (length rest)
+                                             (length " (missing)")))
+                      rest))))
+          (git-issue--nonblank-lines (git-issue-run "repo" "list"))))
+
 (defun git-issue-open-ids ()
   "Ids of issues whose status is not closed."
   (mapcar #'git-issue-issue-id
