@@ -1,0 +1,11 @@
+id: 603e302
+v: 2
+title: emacs: header-line-format interpolates the title unescaped
+status: open
+priority: medium
+created: 2026-09-07T21:24:40Z
+updated: 2026-09-07T21:24:40Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: The detail buffer's header line concatenates the issue title into a mode-line construct, so %b/%f/%m in a title render as buffer name/file/mode. Wrap in (:eval ...) or escape %.
