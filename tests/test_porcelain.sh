@@ -311,6 +311,22 @@ eq "created issue is listed" "alpha task" "$("$GI" list --porcelain | awk -F'\t'
 eq "create with description works in porcelain" "1" "$("$GI" create "beta" --description="$(printf 'l1\nl2')" --porcelain 2>/dev/null | grep -cE '^[0-9a-f]{7}$')"
 eq "human create output unchanged" "1" "$("$GI" create "gamma" 2>/dev/null | grep -c 'Created issue #')"
 
+echo "Testing write-path errors go to stderr [R-plain-stdout]"
+# update, comment and link printed "Issue #<id> not found" on *stdout*, so a
+# consumer reading stdout as data got a colourised error record.
+fresh_repo writeerr
+for spec in "update:--priority=high" "comment:some text" "link:HEAD"; do
+    cmd="${spec%%:*}"; arg="${spec#*:}"
+    err_file="$WORK/writeerr.$cmd.err"
+    out=$("$GI" "$cmd" zzzzzzz "$arg" --porcelain 2>"$err_file") && rc=0 || rc=$?
+    err=$(cat "$err_file")
+    eq "$cmd on a bogus id: nonzero exit" "1" "$([[ $rc -ne 0 ]] && echo 1 || echo 0)"
+    eq "$cmd on a bogus id: nothing on stdout" "0" \
+       "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+    eq "$cmd on a bogus id: error on stderr" "1" \
+       "$(printf '%s' "$err" | grep -c 'not found')"
+done
+
 echo "Testing empty results exit 0 with empty stdout [R-plain-stdout]"
 # `ready' used to end its empty branch with a bare `[[ ... ]] && echo', whose
 # false test became the function's exit status under --porcelain, so an empty

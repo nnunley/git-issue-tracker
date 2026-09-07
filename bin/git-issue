@@ -807,7 +807,7 @@ update_issue() {
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     
     if ! read_issue_data "$id" >/dev/null 2>&1; then
-        echo -e "${RED}Issue #$id not found${NC}"
+        echo -e "${RED}Issue #$id not found${NC}" >&2
         return 1
     fi
     
@@ -1600,7 +1600,7 @@ add_comment() {
     local author=$(get_git_user)
     
     if ! read_issue_data "$id" >/dev/null 2>&1; then
-        echo -e "${RED}Issue #$id not found${NC}"
+        echo -e "${RED}Issue #$id not found${NC}" >&2
         return 1
     fi
     
@@ -1635,7 +1635,7 @@ link_issue() {
     local commit=$2
     
     if ! read_issue_data "$id" >/dev/null 2>&1; then
-        echo -e "${RED}Issue #$id not found${NC}"
+        echo -e "${RED}Issue #$id not found${NC}" >&2
         return 1
     fi
     
