@@ -21,6 +21,8 @@ install:
 	install -m 644 share/git-issue/statuses.beads $(SHAREDIR)/
 	install -d $(SHAREDIR)/awk
 	install -m 644 share/git-issue/awk/*.awk $(SHAREDIR)/awk/
+	install -d $(SHAREDIR)/emacs
+	install -m 644 share/git-issue/emacs/*.el $(SHAREDIR)/emacs/
 	install -d $(SHAREDIR)/hooks
 	install -m 755 hooks/post-merge $(SHAREDIR)/hooks/
 	install -m 755 hooks/pre-push $(SHAREDIR)/hooks/
@@ -101,12 +103,15 @@ test-porcelain: ## Run porcelain output tests
 	chmod +x tests/test_porcelain.sh
 	./tests/test_porcelain.sh
 
+test-emacs-core: ## Run the Elisp core ERT suite (Emacs only, no magit)
+	PATH="$(CURDIR)/bin:$$PATH" emacs -Q --batch -L share/git-issue/emacs -l ert -l contrib/emacs/test/git-issue-test.el -f ert-run-tests-batch-and-exit
+
 bench-deps:
 	@echo "Running dependency benchmark..."
 	chmod +x tests/bench_deps.sh
 	./tests/bench_deps.sh $(COUNT)
 
-test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-registry test-porcelain
+test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-registry test-porcelain test-emacs-core
 
 clean:
 	@echo "Cleaning up..."

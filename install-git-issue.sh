@@ -60,6 +60,9 @@ chmod +x "$INSTALL_DIR/gh-to-git-issue"
 mkdir -p "$INSTALL_DIR/../share/git-issue/awk"
 cp "$(dirname "$0")"/share/git-issue/awk/*.awk "$INSTALL_DIR/../share/git-issue/awk/"
 
+mkdir -p "$INSTALL_DIR/../share/git-issue/emacs"
+cp "$(dirname "$0")"/share/git-issue/emacs/*.el "$INSTALL_DIR/../share/git-issue/emacs/"
+
 # Install hook templates (setup-sync needs them)
 mkdir -p "$INSTALL_DIR/../share/git-issue/hooks"
 cp "$(dirname "$0")"/hooks/post-merge "$(dirname "$0")"/hooks/pre-push "$INSTALL_DIR/../share/git-issue/hooks/"
