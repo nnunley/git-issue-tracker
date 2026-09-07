@@ -185,8 +185,9 @@
         (should-not (oref section hidden))))))
 
 (ert-deftest magit-git-issue-status-section-is-quiet-with-no-ready-work ()
-  "`git issue ready' exits nonzero when nothing is ready.
-That is an empty section, not a failure to report in the echo area."
+  "No ready work is an empty section, not something to report.
+This caught `ready --porcelain' exiting 1 on an empty result, which made
+the section announce a failure in every repository with nothing ready."
   (magit-git-issue-test--with-repo
     (let ((a (git-issue-create "alpha task"))
           (said nil))

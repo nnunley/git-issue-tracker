@@ -27,10 +27,10 @@
 (defconst git-issue-silent-failure-message
   "git-issue failed without writing a diagnostic"
   "Message of `git-issue-error' when the CLI fails and says nothing.
-`git issue ready' exits nonzero with both streams empty when no issue
-is ready, so callers that read that as an empty result rather than a
-failure test the signalled message against this constant.  The exit
-status is the second element of the error data in that case.")
+A nonzero exit with both streams empty is a bug in the CLI -- every
+read command exits 0 on an empty result per R-plain-stdout -- so this
+gives such a failure a name rather than an empty message.  The exit
+status is the second element of the error data.")
 
 (defun git-issue-run (&rest args)
   "Run `git-issue-program' with --porcelain and ARGS in `default-directory'.
@@ -155,15 +155,10 @@ A line beginning with one space continues the previous value."
 
 (defun git-issue-ready (&optional all)
   "Ready issues, or across every registered repository when ALL.
-`git issue ready' exits nonzero without printing anything when no
-issue is ready.  That is an empty result, not a failure, so it is
-returned as the empty list; every other failure still signals."
-  (condition-case err
-      (git-issue-parse-issue-lines
-       (apply #'git-issue-run "ready" (and all '("--all"))))
-    (git-issue-error
-     (unless (equal (cadr err) git-issue-silent-failure-message)
-       (signal (car err) (cdr err))))))
+An empty result is the empty list: `git issue ready --porcelain' exits
+0 with no output when nothing is ready, per R-plain-stdout."
+  (git-issue-parse-issue-lines
+   (apply #'git-issue-run "ready" (and all '("--all")))))
 
 (defun git-issue-show (id)
   "Detail of issue ID."

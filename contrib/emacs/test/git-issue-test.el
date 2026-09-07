@@ -38,8 +38,9 @@
       (should (equal (caddr err) 1)))))
 
 (ert-deftest git-issue-ready-is-empty-when-nothing-is-ready ()
-  ;; `git issue ready' exits 1 with both streams empty in that case; the
-  ;; magit status section must not report it as an error.
+  ;; No workaround here on purpose: `ready --porcelain' exits 0 with no
+  ;; output when nothing is ready (R-plain-stdout), so this passes only
+  ;; while the CLI keeps that contract.  It regressed once.
   (let ((default-directory (git-issue-test--scratch-repo)))
     (should (null (git-issue-ready)))
     (let ((a (git-issue-create "alpha task")))
@@ -47,15 +48,11 @@
       (git-issue-close a)
       (should (null (git-issue-ready))))))
 
-(ert-deftest git-issue-ready-still-signals-real-failures ()
-  (let ((git-issue-program "git-issue")
-        (default-directory (git-issue-test--scratch-repo)))
-    ;; An unknown flag is a real failure and must not be swallowed.
-    (should-error (git-issue-ready-test--bogus) :type 'git-issue-error)))
-
-(defun git-issue-ready-test--bogus ()
-  "Run `ready' with a flag it rejects."
-  (git-issue-run "ready" "--nonsense"))
+(ert-deftest git-issue-ready-signals-real-failures ()
+  (let ((default-directory (git-issue-test--scratch-repo)))
+    ;; An unknown flag is a real failure and must still signal.
+    (should-error (git-issue-run "ready" "--nonsense")
+                  :type 'git-issue-error)))
 
 (ert-deftest git-issue-core-does-not-load-magit ()
   (should-not (featurep 'magit)))
