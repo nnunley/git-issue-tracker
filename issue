@@ -1,0 +1,11 @@
+id: e4f9122
+v: 2
+title: emacs: insert-trailer placement with # lines in the body
+status: open
+priority: medium
+created: 2026-09-07T21:24:40Z
+updated: 2026-09-07T21:24:40Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: git-issue-insert-trailer walks back to the earliest #-prefixed line, so a body containing a comment line misplaces the trailer; also no blank separator after a prose line shaped like a trailer. Scan for the last contiguous comment block instead.
