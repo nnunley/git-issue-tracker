@@ -27,19 +27,26 @@
 (defun git-issue-run (&rest args)
   "Run `git-issue-program' with --porcelain and ARGS in `default-directory'.
 Return standard output as a string.  On nonzero exit signal
-`git-issue-error' whose data is the trimmed standard error."
+`git-issue-error' whose data is the trimmed standard error, falling
+back to standard output for the subcommands that report failure there
+and to a generic message when the CLI says nothing at all."
   (let ((err-file (make-temp-file "git-issue-stderr")))
     (unwind-protect
         (with-temp-buffer
-          (let ((status (apply #'call-process git-issue-program nil
-                               (list t err-file) nil "--porcelain" args)))
+          (let* ((status (apply #'call-process git-issue-program nil
+                                (list t err-file) nil "--porcelain" args))
+                 (out (string-trim (buffer-string))))
             (if (eql status 0)
                 (buffer-string)
-              (signal 'git-issue-error
-                      (list (string-trim
-                             (with-temp-buffer
-                               (insert-file-contents err-file)
-                               (buffer-string))))))))
+              (let ((err (string-trim
+                          (with-temp-buffer
+                            (insert-file-contents err-file)
+                            (buffer-string)))))
+                (signal 'git-issue-error
+                        (list (cond ((not (string-empty-p err)) err)
+                                    ((not (string-empty-p out)) out)
+                                    (t (format "exited with status %s"
+                                               status)))))))))
       (delete-file err-file))))
 
 ;;;; Parsing

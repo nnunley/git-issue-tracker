@@ -22,6 +22,20 @@
     (let ((err (should-error (git-issue-run "show" "nosuch") :type 'git-issue-error)))
       (should (string-match-p "not found" (cadr err))))))
 
+(ert-deftest git-issue-run-falls-back-to-stdout ()
+  ;; `comment' reports "Issue #... not found" on stdout, not stderr, so
+  ;; without the fallback the signalled message would be empty.
+  (let ((default-directory (git-issue-test--scratch-repo)))
+    (let ((err (should-error (git-issue-run "comment" "zzzzzzz" "hi")
+                             :type 'git-issue-error)))
+      (should (string-match-p "not found" (cadr err))))))
+
+(ert-deftest git-issue-run-always-signals-something ()
+  (let ((git-issue-program "false")
+        (default-directory (git-issue-test--scratch-repo)))
+    (let ((err (should-error (git-issue-run "list") :type 'git-issue-error)))
+      (should (string-match-p "status 1" (cadr err))))))
+
 (ert-deftest git-issue-core-does-not-load-magit ()
   (should-not (featurep 'magit)))
 

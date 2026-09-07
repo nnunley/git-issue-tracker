@@ -457,8 +457,12 @@ thing."
       (setq magit-git-issue--edit-winconf winconf)
       (setq magit-git-issue--edit-callback
             (lambda (text)
-              (with-current-buffer (if (buffer-live-p origin) origin buffer)
-                (funcall callback text))))
+              (if (buffer-live-p origin)
+                  (with-current-buffer origin (funcall callback text))
+                ;; The buffer we were invoked from is gone; keep the
+                ;; repository the composition belongs to.
+                (let ((default-directory directory))
+                  (funcall callback text)))))
       (setq header-line-format
             (concat title
                     (substitute-command-keys
@@ -474,14 +478,16 @@ thing."
       (set-window-configuration winconf))))
 
 (defun magit-git-issue-edit-finish ()
-  "Finish the edit buffer and hand its text to the pending action."
+  "Finish the edit buffer and hand its text to the pending action.
+The action runs first and the buffer is only killed once it succeeds,
+so a comment the CLI rejects leaves the composed text in place to fix
+and retry, the way magit's commit buffer survives a failed commit."
   (interactive)
   (unless magit-git-issue--edit-callback
     (user-error "Not in a git-issue edit buffer"))
-  (let ((text (buffer-substring-no-properties (point-min) (point-max)))
-        (callback magit-git-issue--edit-callback))
-    (magit-git-issue--edit-quit)
-    (funcall callback text)))
+  (funcall magit-git-issue--edit-callback
+           (buffer-substring-no-properties (point-min) (point-max)))
+  (magit-git-issue--edit-quit))
 
 (defun magit-git-issue-edit-abort ()
   "Abort the edit buffer without running the pending action."
