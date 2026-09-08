@@ -97,6 +97,17 @@ its `%b' is.  Doubling every `%' makes the text stand for itself."
 stripped, so it goes to the echo area as it is."
   (or (cadr err) ""))
 
+(defmacro magit-git-issue--as-user-error (&rest body)
+  "Run BODY, reporting a `git-issue-error' from it as a `user-error'.
+The CLI\='s message is plain text by contract, so it reaches the echo
+area as it is instead of as a raw signal with a backtrace."
+  (declare (indent 0) (debug t))
+  `(condition-case magit-git-issue--err
+       (progn ,@body)
+     (git-issue-error
+      (user-error "git-issue: %s"
+                  (magit-git-issue--error-message magit-git-issue--err)))))
+
 (defun magit-git-issue--issues-for-section ()
   "The issues `magit-git-issue-status-section' selects."
   (pcase magit-git-issue-status-section
@@ -346,7 +357,8 @@ Called by `magit-refresh-buffer' through the name of the major mode."
 (defun magit-git-issue-show (id)
   "Show issue ID in a `magit-git-issue-show-mode' buffer."
   (interactive (progn (magit-git-issue--ensure-repository)
-                      (list (git-issue-read-id "Show issue: "))))
+                      (list (magit-git-issue--as-user-error
+                              (git-issue-read-id "Show issue: ")))))
   (magit-git-issue--ensure-repository)
   (magit-setup-buffer #'magit-git-issue-show-mode nil
     (magit-git-issue--show-id id)))
@@ -396,16 +408,22 @@ Used to offer completion for fields the CLI does not constrain."
 (defmacro magit-git-issue--define-action (name doc prompt &rest body)
   "Define interactive command NAME with docstring DOC.
 The issue at point, or one read with PROMPT, is bound to `id' while
-BODY runs.  A `git-issue-error' from BODY becomes a `user-error'
-carrying the CLI's message; success refreshes the magit buffers."
+BODY runs.  A `git-issue-error' becomes a `user-error' carrying the
+CLI\='s message; success refreshes the magit buffers.
+
+Reading the id is inside that handler, not before it: with no issue at
+point the id comes from `git-issue-read-id', which runs the CLI to
+build its completion table, and a failure there used to escape as a
+raw `git-issue-error' -- the one shape of this failure the user was
+never meant to see."
   (declare (indent 3) (doc-string 2))
   `(defun ,name ()
      ,doc
      (interactive)
-     (let ((id (magit-git-issue--id ,prompt)))
-       (condition-case err
-           (progn ,@body (magit-refresh))
-         (git-issue-error (user-error "git-issue: %s" (magit-git-issue--error-message err)))))))
+     (magit-git-issue--as-user-error
+       (let ((id (magit-git-issue--id ,prompt)))
+         ,@body
+         (magit-refresh)))))
 
 (magit-git-issue--define-action magit-git-issue-start
     "Move the issue at point into progress." "Start issue: "
@@ -557,15 +575,16 @@ and retry, the way magit's commit buffer survives a failed commit."
 (defun magit-git-issue-comment ()
   "Comment on the issue at point, composing the text in a buffer."
   (interactive)
-  (let ((id (magit-git-issue--id "Comment on issue: ")))
+  (let ((id (magit-git-issue--as-user-error
+              (magit-git-issue--id "Comment on issue: "))))
     (magit-git-issue--edit-text
      (format "Comment on #%s" id)
      (lambda (text)
        (when (string-blank-p text)
          (user-error "Empty comment; nothing added"))
-       (condition-case err
-           (progn (git-issue-comment id text) (magit-refresh))
-         (git-issue-error (user-error "git-issue: %s" (magit-git-issue--error-message err))))))))
+       (magit-git-issue--as-user-error
+         (git-issue-comment id text)
+         (magit-refresh))))))
 
 (defun magit-git-issue-create ()
   "Create an issue: the title in the minibuffer, the description in a buffer.
@@ -578,12 +597,11 @@ An empty description buffer creates the issue with a title only."
     (magit-git-issue--edit-text
      (format "Description for %S (leave empty to skip)" title)
      (lambda (text)
-       (condition-case err
-           (let ((id (git-issue-create
-                      title (and (not (string-blank-p text)) text))))
-             (message "Created issue #%s" id)
-             (magit-refresh))
-         (git-issue-error (user-error "git-issue: %s" (magit-git-issue--error-message err))))))))
+       (magit-git-issue--as-user-error
+         (let ((id (git-issue-create
+                    title (and (not (string-blank-p text)) text))))
+           (message "Created issue #%s" id)
+           (magit-refresh)))))))
 
 ;;;; The dispatch transient
 
@@ -801,7 +819,8 @@ anything else, which is what makes Git parse the line as a trailer."
      (magit-git-issue--ensure-repository)
      (list (completing-read "Trailer: " (mapcar #'car git-issue-trailer-keys)
                             nil t)
-           (git-issue-read-id "Issue: "))))
+           (magit-git-issue--as-user-error
+             (git-issue-read-id "Issue: ")))))
   (let* ((line (git-issue-format-trailer kind id))
          (comment-re (concat "^" (regexp-quote (or comment-start "#"))))
          (end (git-issue--message-end comment-re))

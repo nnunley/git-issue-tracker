@@ -625,6 +625,29 @@ about which entry to fix."
           ;; The CLI's SGR escapes must not reach the echo area.
           (should-not (string-match-p "\e\\[" (cadr err))))))))
 
+(ert-deftest magit-git-issue-actions-report-a-failure-while-prompting ()
+  "A CLI failure while building the completion table is a `user-error' too.
+With no issue at point the id comes from `git-issue-read-id', which
+runs the CLI; reading it outside the handler let that escape as a raw
+`git-issue-error'."
+  (magit-git-issue-test--with-repo
+    (git-issue-create "alpha task")
+    (with-current-buffer (magit-status-setup-buffer default-directory)
+      (goto-char (point-min))
+      (should-not (magit-git-issue-issue-at-point))
+      (cl-letf (((symbol-function 'git-issue-list)
+                 (lambda (&rest _)
+                   (signal 'git-issue-error (list "Error: registry is broken")))))
+        (dolist (command '(magit-git-issue-start
+                           magit-git-issue-close
+                           magit-git-issue-set-status
+                           magit-git-issue-comment))
+          (let ((err (should-error (funcall command) :type 'user-error)))
+            (should (string-match-p "registry is broken" (cadr err)))))
+        (let ((err (should-error (call-interactively #'magit-git-issue-show)
+                                 :type 'user-error)))
+          (should (string-match-p "registry is broken" (cadr err))))))))
+
 (ert-deftest magit-git-issue-set-priority-updates-the-issue ()
   (magit-git-issue-test--with-repo
     (let ((a (git-issue-create "alpha task")))
