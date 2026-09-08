@@ -157,6 +157,23 @@ git update-ref refs/notes/issue-aaa1111 "$(git commit-tree "$tree" -m legacy2 </
 eq "format 1 body ending in description: stays in the body" "old body"$'\n'"description: how to reproduce" "$(src 'get_description "$(read_issue_data aaa1111)"')"
 eq "format 1 description: line is not a trailing header" "" "$(src 'get_field_value "$(parse_front_matter "$(read_issue_data aaa1111)")" description')"
 eq "human show keeps the description: body line" "1" "$("$GI" show aaa1111 2>/dev/null | grep -c '^description: how to reproduce$')"
+# Same for a body ending in an "id:" line. front_matter.awk and
+# extract_issues.awk have always refused to read one as a trailing header
+# (every write path emits id first, so an id below the body is prose), but
+# body.awk excluded only "description:" and so silently dropped the line
+# from the body — the two parsers disagreed about the same note.
+blob=$(printf 'id: ddd4444\ntitle: legacy5\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\n\nold body\nid: eee5555\n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-ddd4444 "$(git commit-tree "$tree" -m legacy5 </dev/null)"
+eq "format 1 body ending in id: stays in the body" "old body"$'\n'"id: eee5555" \
+   "$(src 'get_description "$(read_issue_data ddd4444)"')"
+eq "format 1 id: line is not a trailing header" "ddd4444" \
+   "$(src 'get_field_value "$(parse_front_matter "$(read_issue_data ddd4444)")" id')"
+eq "the bogus id is not listed" "0" \
+   "$("$GI" list --porcelain | awk -F'\t' '$2=="eee5555"' | grep -c . || true)"
+eq "human show keeps the id: body line" "1" \
+   "$("$GI" show ddd4444 2>/dev/null | grep -c '^id: eee5555$')"
+
 # A prose line then "title: hijack" then "description: ...": the description
 # line breaks trailing-block contiguity, so the bogus title cannot win.
 blob=$(printf 'id: bbb2222\ntitle: legacy3\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\n\nold body\ntitle: hijack\ndescription: how to reproduce\n' | git hash-object -w --stdin)
