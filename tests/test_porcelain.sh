@@ -363,6 +363,23 @@ fresh_repo filterexit
 "$GI" create "alpha task" --porcelain >/dev/null 2>&1
 empty_ok "ready with a role nothing matches" ready --role=nobody-has-this-role
 
+echo "Testing --version"
+# The version query is answered in _gi_dispatch before storage detection, so
+# it must work with no repository in sight and must never create a store.
+fresh_repo versioncmd
+want="git-issue $(cat "$REPO_DIR/VERSION")"
+eq "--version prints the version" "$want" "$("$GI" --version)"
+eq "-V prints the same line"      "$want" "$("$GI" -V)"
+eq "version prints the same line" "$want" "$("$GI" version)"
+set +e; "$GI" --version >/dev/null 2>&1; rc=$?; set -e
+eq "--version exits 0" "0" "$rc"
+eq "--version is silent on stderr" "" "$("$GI" --version 2>&1 >/dev/null)"
+nogit="$WORK/not-a-repo"; rm -rf "$nogit"; mkdir -p "$nogit"; cd "$nogit"
+eq "--version works outside a git repository" "$want" "$("$GI" --version)"
+eq "--version created no store" "" "$(ls -A "$nogit")"
+eq "man page .TH agrees with VERSION" "1" \
+   "$(grep -c "\"$want\"" "$REPO_DIR/man/man1/git-issue.1" || true)"
+
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"
 [[ $FAIL -eq 0 ]]

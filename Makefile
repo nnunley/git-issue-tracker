@@ -117,6 +117,25 @@ bench-deps:
 
 test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-registry test-porcelain test-emacs-core
 
+# Single source of the release version: VERSION, the GIT_ISSUE_VERSION
+# constant in bin/git-issue, and every man page .TH line must agree.
+# Usage: make bump VERSION=1.0.0
+.PHONY: bump
+bump:
+	@test -n "$(VERSION)" || { echo "usage: make bump VERSION=x.y.z"; exit 1; }
+	@printf '%s\n' "$(VERSION)" > VERSION
+	@sed -e 's/^GIT_ISSUE_VERSION=".*"$$/GIT_ISSUE_VERSION="$(VERSION)"/' bin/git-issue > bin/git-issue.bump.tmp
+	@mv bin/git-issue.bump.tmp bin/git-issue
+	@chmod 755 bin/git-issue
+	@d=`date +%Y-%m-%d`; \
+	for m in man/man1/*.1 man/man8/*.8; do \
+		sed -e "s/^\(\.TH [^\"]*\)\"[^\"]*\" \"git-issue [^\"]*\"/\1\"$$d\" \"git-issue $(VERSION)\"/" "$$m" > "$$m.bump.tmp"; \
+		mv "$$m.bump.tmp" "$$m"; \
+	done
+	@echo "bumped to $(VERSION):"
+	@grep -h '^GIT_ISSUE_VERSION=' bin/git-issue
+	@head -1 man/man1/git-issue.1
+
 clean:
 	@echo "Cleaning up..."
 	find . -name "*.tmp" -delete

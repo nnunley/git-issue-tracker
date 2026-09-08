@@ -2,6 +2,10 @@
 # git-issue: Issue tracking using git notes (or XDG directories) and hash-based IDs
 # Supports both git repositories and standalone XDG directory storage
 
+# Release version. Kept in sync with ./VERSION and the man pages' .TH lines
+# by `make bump VERSION=x.y.z` — do not edit one without the others.
+GIT_ISSUE_VERSION="1.0.0-rc6"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -283,6 +287,7 @@ usage() {
     echo "  --repo <name>                           Run the command in a registered repository"
     echo "  --all                                   (list, ready) run across every registered repository"
     echo "  --porcelain[=v1]                        Stable machine-readable output (see docs/rfc)"
+    echo "  --version, -V                           Print the git-issue version and exit"
     echo ""
     echo "Examples:"
     echo "  git issue create 'Add user authentication' --description='Implement OAuth2 login'"
@@ -3416,6 +3421,16 @@ _gi_aggregate() {
 _gi_dispatch() {
     local -a rest=()
     local arg target="" all=0 want_target=0 porcelain=0 pv=""
+
+    # Version query: answered before any storage detection so it works
+    # outside a git repository and never creates an issue store.
+    case "${1:-}" in
+        --version|-V|version)
+            printf 'git-issue %s\n' "$GIT_ISSUE_VERSION"
+            return 0
+            ;;
+    esac
+
     for arg in "$@"; do
         if [[ $want_target -eq 1 ]]; then
             target="$arg"; want_target=0; continue
