@@ -84,6 +84,13 @@ nothing about which registry entry to fix.  Naming the entry does."
 
 ;;;; Issue lines
 
+(defun magit-git-issue--literal (string)
+  "STRING made safe to put in a mode-line construct.
+A header line is a mode-line construct, so `%' in it starts a format
+spec: an issue titled `50%b done' would render the buffer name where
+its `%b' is.  Doubling every `%' makes the text stand for itself."
+  (replace-regexp-in-string "%" "%%" string t t))
+
 (defun magit-git-issue--error-message (err)
   "The message carried by `git-issue-error' ERR.
 `git-issue-run' guarantees it is plain text, escape sequences and all
@@ -236,7 +243,8 @@ Called by `magit-refresh-buffer' through the name of the major mode."
   (let ((all magit-git-issue--list-all)
         (ready (eq magit-git-issue--list-command 'ready)))
     (magit-set-header-line-format
-     (format "git issue %s%s" (if ready "ready" "list") (if all " --all" "")))
+     (magit-git-issue--literal
+      (format "git issue %s%s" (if ready "ready" "list") (if all " --all" ""))))
     (magit-insert-section (git-issues)
       (magit-insert-heading
         (format "%s issues%s" (if ready "Ready" "All") (if all " (all repositories)" "")))
@@ -327,7 +335,8 @@ Type \\[magit-refresh] to refresh the buffer from the CLI.
   "Refresh a `magit-git-issue-show-mode' buffer.
 Called by `magit-refresh-buffer' through the name of the major mode."
   (let ((detail (git-issue-show magit-git-issue--show-id)))
-    (magit-set-header-line-format (format "issue %s" magit-git-issue--show-id))
+    (magit-set-header-line-format
+     (magit-git-issue--literal (format "issue %s" magit-git-issue--show-id)))
     (magit-insert-section (git-issue-detail magit-git-issue--show-id)
       (magit-git-issue--insert-headers detail)
       (magit-git-issue--insert-description detail)
@@ -514,7 +523,7 @@ aborted."
                 (let ((default-directory directory))
                   (funcall callback text)))))
       (setq header-line-format
-            (concat title
+            (concat (magit-git-issue--literal title)
                     (substitute-command-keys
                      "   \\[magit-git-issue-edit-finish] to finish, \
 \\[magit-git-issue-edit-abort] to abort"))))

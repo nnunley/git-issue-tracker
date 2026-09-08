@@ -750,6 +750,27 @@ about which entry to fix."
                                     (git-issue-show a))))
                        "carefully composed\ntext"))))))
 
+(ert-deftest magit-git-issue-literal-doubles-every-percent ()
+  (should (equal (magit-git-issue--literal "50%b done") "50%%b done"))
+  (should (equal (magit-git-issue--literal "100%% sure") "100%%%% sure"))
+  (should (equal (magit-git-issue--literal "plain") "plain")))
+
+(ert-deftest magit-git-issue-edit-buffer-header-renders-a-percent-verbatim ()
+  "A header line is a mode-line construct: `%b' in a title is not a spec.
+An issue titled `50%b done' rendered the buffer name where its `%b' was.
+`format-mode-line' returns the empty string in batch -- there is no
+redisplay to run -- so the construct itself is what is checked: `%b'
+appears only in its doubled, self-standing form."
+  (magit-git-issue-test--with-repo
+    (with-current-buffer (magit-status-setup-buffer default-directory)
+      (cl-letf (((symbol-function 'read-string) (lambda (&rest _) "50%b done")))
+        (magit-git-issue-create))
+      (should (eq major-mode 'magit-git-issue-edit-mode))
+      (should (stringp header-line-format))
+      (should (string-match-p (regexp-quote "50%%b done") header-line-format))
+      ;; The unescaped spec is nowhere in it.
+      (should-not (string-match-p "\\(\\`\\|[^%]\\)%b" header-line-format)))))
+
 (ert-deftest magit-git-issue-create-skips-an-empty-description ()
   (magit-git-issue-test--with-repo
     (with-current-buffer (magit-status-setup-buffer default-directory)
