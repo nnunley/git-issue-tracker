@@ -202,6 +202,56 @@ detected by looking at the layout afterwards."
     (should (eq 'magit-git-issue (car (car warnings))))
     (should (string-match-p "skipping" (cdr (car warnings))))))
 
+(ert-deftest magit-git-issue-add-suffixes-without-the-layout-accessor ()
+  "`transient--get-layout' is transient 0.9; the floor here is 0.7.
+Magit 4.0, which this package requires, itself requires transient
+0.7.4, so reading the layout has to be optional.  Without it the anchor
+`transient-get-suffix' finds is taken at its word, and with no anchor
+there is nowhere left to put anything -- which warns.  Calling it at
+all was a `void-function' at load time, the exact failure the
+degradation was for."
+  (let ((magit-git-issue--placement-warned nil)
+        (warned nil)
+        (appended nil))
+    (cl-letf (((symbol-function 'transient--get-layout) nil)
+              ((symbol-function 'transient-append-suffix)
+               (lambda (_prefix loc suffix) (push (cons loc suffix) appended)))
+              ((symbol-function 'display-warning)
+               (lambda (&rest _) (setq warned t))))
+      (should-not (fboundp 'transient--get-layout))
+      (should-not (magit-git-issue--layout-readable-p))
+      (should-not (magit-git-issue--suffix-count 'magit-git-issue-test--anchorless))
+      (should-not (magit-git-issue--last-suffix-location
+                   'magit-git-issue-test--anchorless))
+      ;; An anchor: `transient-get-suffix' works on old transient too.
+      (cl-letf (((symbol-function 'transient-get-suffix)
+                 (lambda (_prefix loc) (and (equal loc "q") 'a-suffix))))
+        (should (magit-git-issue--add-suffixes
+                 'magit-git-issue-test--anchorless '("z" "q")
+                 '(("A" "First" ignore)))))
+      (should (equal (mapcar #'car appended) '("q")))
+      (should-not warned)
+      ;; No anchor and no readable layout: nowhere to put them.
+      (setq appended nil)
+      (cl-letf (((symbol-function 'transient-get-suffix)
+                 (lambda (&rest _) (error "not found"))))
+        (should-not (magit-git-issue--add-suffixes
+                     'magit-git-issue-test--anchorless '("!" "Q")
+                     '(("B" "Second" ignore)))))
+      (should-not appended)
+      (should warned))))
+
+(ert-deftest magit-git-issue-declares-the-transient-its-magit-floor-implies ()
+  "The declared transient floor must not promise what magit 4.0 does not.
+Magit 4.0 requires transient 0.7.4, so anything newer used here has to
+be optional at run time rather than declared as a requirement."
+  (with-temp-buffer
+    (insert-file-contents (locate-library "magit-git-issue.el" t))
+    (goto-char (point-min))
+    (should (re-search-forward
+             "^;; Package-Requires:.*(transient \"\\([0-9.]+\\)\")" nil t))
+    (should (version< (match-string 1) "0.9"))))
+
 (ert-deftest magit-git-issue-add-suffixes-survives-a-signalling-transient ()
   "A `transient-append-suffix' that signals is a warning, not a failed load."
   (let ((magit-git-issue--placement-warned nil)

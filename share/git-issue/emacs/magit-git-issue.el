@@ -666,60 +666,86 @@ is neither."
            (magit-git-issue--walk-layout child function)))
         ((consp node) (funcall function node))))
 
+(defun magit-git-issue--layout-readable-p ()
+  "Non-nil when this transient exposes a prefix\='s layout by name.
+`transient--get-layout' is transient 0.9 and later.  The floor here is
+magit 4.0, which requires transient 0.7.4, so the layout is an optional
+extra: without it the anchor is all there is to go on, and neither the
+end-of-last-group fallback nor the placement check is available."
+  (fboundp 'transient--get-layout))
+
 (defun magit-git-issue--suffix-count (prefix)
-  "How many suffixes transient PREFIX's layout holds."
-  (let ((n 0))
-    (magit-git-issue--walk-layout (transient--get-layout prefix)
-                                  (lambda (_) (setq n (1+ n))))
-    n))
+  "How many suffixes transient PREFIX\='s layout holds.
+Nil when the layout cannot be read at all, which is not zero: the
+caller must not read it as \"nothing was placed\"."
+  (when (magit-git-issue--layout-readable-p)
+    (let ((n 0))
+      (magit-git-issue--walk-layout (transient--get-layout prefix)
+                                    (lambda (_) (setq n (1+ n))))
+      n)))
 
 (defun magit-git-issue--last-suffix-location (prefix)
-  "A coordination list naming the last suffix of PREFIX's last group.
+  "A coordination list naming the last suffix of PREFIX\='s last group.
 Transients nest groups to a depth this package must not assume --
 `transient-append-suffix' refuses to make a suffix the sibling of a
-group -- so the depth is measured off the layout rather than guessed."
-  (let ((node (transient--get-layout prefix))
-        (location nil))
-    (while (vectorp node)
-      (push -1 location)
-      (setq node (car (last (append (aref node 2) nil)))))
-    (and (consp node) location)))
+group -- so the depth is measured off the layout rather than guessed.
+Nil when the layout cannot be read."
+  (when (magit-git-issue--layout-readable-p)
+    (let ((node (transient--get-layout prefix))
+          (location nil))
+      (while (vectorp node)
+        (push -1 location)
+        (setq node (car (last (append (aref node 2) nil)))))
+      (and (consp node) location))))
+
+(defun magit-git-issue--report-placement (prefix placed)
+  "Warn once about PREFIX unless PLACED; return PLACED."
+  (unless (or placed magit-git-issue--placement-warned)
+    (setq magit-git-issue--placement-warned t)
+    (display-warning
+     'magit-git-issue
+     (format "Cannot place git-issue suffixes in `%s'; skipping them.  \
+The commands themselves still work." prefix)))
+  placed)
 
 (defun magit-git-issue--add-suffixes (prefix keys suffixes)
   "Add SUFFIXES to transient PREFIX, reading top to bottom in that order.
 They go after the first of KEYS that still names a suffix of PREFIX;
-failing that at the end of PREFIX's last group, which is where a
+failing that at the end of PREFIX\='s last group, which is where a
 transient this package does not recognise can still take them; failing
 that nowhere, with one `display-warning'.  Appending repeatedly after
 one fixed anchor reverses the order, so that path walks SUFFIXES
 backwards while the moving-end path walks it forwards.
 
-Placement is verified rather than assumed: `transient-append-suffix'
-reports a location it cannot use with a message and no error, and a
-menu entry that quietly went nowhere is exactly what the warning is
-for.  Everything goes through `transient-append-suffix', so
-`transient-remove-suffix' takes it back out again.
+Where the layout can be read, placement is verified rather than
+assumed: `transient-append-suffix' reports a location it cannot use
+with a message and no error, and a menu entry that quietly went
+nowhere is exactly what the warning is for.  Where it cannot -- see
+`magit-git-issue--layout-readable-p' -- an anchor that
+`transient-get-suffix' found is taken at its word.
+
+This runs at load time, so the whole of it is inside the handler: a
+transient that raises anywhere in here costs the suffixes and a
+warning, never the file.  Everything goes through
+`transient-append-suffix', so `transient-remove-suffix' takes it back
+out again.
 
 Return non-nil when the suffixes landed."
-  (let* ((anchor (magit-git-issue--anchor prefix keys))
-         (before (magit-git-issue--suffix-count prefix))
-         (location (or anchor (magit-git-issue--last-suffix-location prefix)))
-         (placed
-          (and location
-               (condition-case nil
-                   (progn
-                     (dolist (suffix (if anchor (reverse suffixes) suffixes))
-                       (transient-append-suffix prefix location suffix))
-                     (= (magit-git-issue--suffix-count prefix)
-                        (+ before (length suffixes))))
-                 (error nil)))))
-    (unless (or placed magit-git-issue--placement-warned)
-      (setq magit-git-issue--placement-warned t)
-      (display-warning
-       'magit-git-issue
-       (format "Cannot place git-issue suffixes in `%s'; skipping them.  \
-The commands themselves still work." prefix)))
-    placed))
+  (condition-case nil
+      (let* ((anchor (magit-git-issue--anchor prefix keys))
+             (before (magit-git-issue--suffix-count prefix))
+             (location (or anchor
+                           (magit-git-issue--last-suffix-location prefix)))
+             (placed nil))
+        (when location
+          (dolist (suffix (if anchor (reverse suffixes) suffixes))
+            (transient-append-suffix prefix location suffix))
+          (setq placed
+                (or (null before)
+                    (eql (magit-git-issue--suffix-count prefix)
+                         (+ before (length suffixes))))))
+        (magit-git-issue--report-placement prefix placed))
+    (error (magit-git-issue--report-placement prefix nil))))
 
 ;; Appended, not redefined, so `transient-remove-suffix' undoes it.
 (magit-git-issue--add-suffixes 'magit-dispatch '("!" "Q" "z")
