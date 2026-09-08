@@ -561,16 +561,87 @@ for an id with completion otherwise."
     ("RET" "Show"    magit-git-issue-show)]])
 
 (defun magit-git-issue--anchor (prefix keys)
-  "The first of KEYS that names an existing suffix of transient PREFIX."
-  (or (seq-find (lambda (key)
-                  (ignore-errors (transient-get-suffix prefix key)))
-                keys)
-      (error "magit-git-issue: no anchor in `%s' among %S" prefix keys)))
+  "The first of KEYS that names an existing suffix of transient PREFIX.
+Nil when none of them does.  Magit is free to rename or drop any of
+its keys, and losing an anchor may cost this package a menu entry but
+must never make the file unloadable, so this reports rather than
+signals."
+  (seq-find (lambda (key)
+              (ignore-errors (transient-get-suffix prefix key)))
+            keys))
+
+(defvar magit-git-issue--placement-warned nil
+  "Non-nil once the transient-placement warning has been shown.
+One warning is enough: the cause is the same magit for every suffix.")
+
+(defun magit-git-issue--walk-layout (node function)
+  "Call FUNCTION on every suffix under layout NODE.
+A group is a vector whose third slot holds its children; a suffix is a
+list.  Anything else -- a description string, an included prefix --
+is neither."
+  (cond ((vectorp node)
+         (dolist (child (append (aref node 2) nil))
+           (magit-git-issue--walk-layout child function)))
+        ((consp node) (funcall function node))))
+
+(defun magit-git-issue--suffix-count (prefix)
+  "How many suffixes transient PREFIX's layout holds."
+  (let ((n 0))
+    (magit-git-issue--walk-layout (transient--get-layout prefix)
+                                  (lambda (_) (setq n (1+ n))))
+    n))
+
+(defun magit-git-issue--last-suffix-location (prefix)
+  "A coordination list naming the last suffix of PREFIX's last group.
+Transients nest groups to a depth this package must not assume --
+`transient-append-suffix' refuses to make a suffix the sibling of a
+group -- so the depth is measured off the layout rather than guessed."
+  (let ((node (transient--get-layout prefix))
+        (location nil))
+    (while (vectorp node)
+      (push -1 location)
+      (setq node (car (last (append (aref node 2) nil)))))
+    (and (consp node) location)))
+
+(defun magit-git-issue--add-suffixes (prefix keys suffixes)
+  "Add SUFFIXES to transient PREFIX, reading top to bottom in that order.
+They go after the first of KEYS that still names a suffix of PREFIX;
+failing that at the end of PREFIX's last group, which is where a
+transient this package does not recognise can still take them; failing
+that nowhere, with one `display-warning'.  Appending repeatedly after
+one fixed anchor reverses the order, so that path walks SUFFIXES
+backwards while the moving-end path walks it forwards.
+
+Placement is verified rather than assumed: `transient-append-suffix'
+reports a location it cannot use with a message and no error, and a
+menu entry that quietly went nowhere is exactly what the warning is
+for.  Everything goes through `transient-append-suffix', so
+`transient-remove-suffix' takes it back out again.
+
+Return non-nil when the suffixes landed."
+  (let* ((anchor (magit-git-issue--anchor prefix keys))
+         (before (magit-git-issue--suffix-count prefix))
+         (location (or anchor (magit-git-issue--last-suffix-location prefix)))
+         (placed
+          (and location
+               (condition-case nil
+                   (progn
+                     (dolist (suffix (if anchor (reverse suffixes) suffixes))
+                       (transient-append-suffix prefix location suffix))
+                     (= (magit-git-issue--suffix-count prefix)
+                        (+ before (length suffixes))))
+                 (error nil)))))
+    (unless (or placed magit-git-issue--placement-warned)
+      (setq magit-git-issue--placement-warned t)
+      (display-warning
+       'magit-git-issue
+       (format "Cannot place git-issue suffixes in `%s'; skipping them.  \
+The commands themselves still work." prefix)))
+    placed))
 
 ;; Appended, not redefined, so `transient-remove-suffix' undoes it.
-(transient-append-suffix 'magit-dispatch
-  (magit-git-issue--anchor 'magit-dispatch '("!" "Q" "z"))
-  '("x" "Issues" magit-git-issue-dispatch))
+(magit-git-issue--add-suffixes 'magit-dispatch '("!" "Q" "z")
+                               '(("x" "Issues" magit-git-issue-dispatch)))
 
 ;; `x' is `magit-reset-quickly' in `magit-mode-map'; the spec puts the
 ;; issue transient on it in the status buffer, where reset-quickly stays
@@ -629,11 +700,10 @@ works inside a live transient, and this is the part worth testing."
   :key "-i"
   :argument "--issue=")
 
-;; Inserted in reverse so they read fixes, closes, issue top to bottom.
-(let ((anchor (magit-git-issue--anchor 'magit-commit '("-C" "-R" "-n" "-a"))))
-  (transient-append-suffix 'magit-commit anchor '(magit-git-issue:--issue))
-  (transient-append-suffix 'magit-commit anchor '(magit-git-issue:--closes))
-  (transient-append-suffix 'magit-commit anchor '(magit-git-issue:--fixes)))
+(magit-git-issue--add-suffixes 'magit-commit '("-C" "-R" "-n" "-a")
+                               '((magit-git-issue:--fixes)
+                                 (magit-git-issue:--closes)
+                                 (magit-git-issue:--issue)))
 
 ;;;###autoload
 (defun git-issue-insert-trailer (kind id)

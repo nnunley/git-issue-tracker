@@ -143,6 +143,78 @@ call, so a whole-file regex would report them."
                          :command)
               'magit-git-issue-dispatch)))
 
+(transient-define-prefix magit-git-issue-test--anchorless ()
+  "A transient with none of the keys this package probes for."
+  [["Only group"
+    ("q" "Quit" ignore)]])
+
+(ert-deftest magit-git-issue-anchor-reports-a-miss-instead-of-signalling ()
+  "A magit that renamed every probed key costs an anchor, not the load."
+  (should (magit-git-issue--anchor 'magit-git-issue-test--anchorless '("z" "q")))
+  (should-not (magit-git-issue--anchor 'magit-git-issue-test--anchorless
+                                       '("!" "Q" "z"))))
+
+(defun magit-git-issue-test--suffix-keys (prefix)
+  "The :key of every suffix in PREFIX's layout, in layout order."
+  (let (keys)
+    (magit-git-issue--walk-layout
+     (transient--get-layout prefix)
+     (lambda (suffix) (push (plist-get (cdr suffix) :key) keys)))
+    (nreverse keys)))
+
+(ert-deftest magit-git-issue-add-suffixes-falls-back-to-the-last-group ()
+  "With no anchor the suffixes still land, at the end of the last group."
+  (should (magit-git-issue--add-suffixes
+           'magit-git-issue-test--anchorless '("!" "Q" "z")
+           '(("A" "First" ignore) ("B" "Second" ignore))))
+  (should (transient-get-suffix 'magit-git-issue-test--anchorless "A"))
+  (should (transient-get-suffix 'magit-git-issue-test--anchorless "B"))
+  ;; In the order given, reading top to bottom.
+  (should (equal (magit-git-issue-test--suffix-keys
+                  'magit-git-issue-test--anchorless)
+                 '("q" "A" "B"))))
+
+(ert-deftest magit-git-issue-add-suffixes-warns-once-and-skips ()
+  "A transient this package cannot place anything in warns; it does not fail.
+`transient-append-suffix' reports an unusable location with a message
+and no error, so a placement that quietly went nowhere has to be
+detected by looking at the layout afterwards."
+  (let ((magit-git-issue--placement-warned nil)
+        (warnings nil)
+        (before (magit-git-issue-test--suffix-keys
+                 'magit-git-issue-test--anchorless)))
+    (cl-letf (((symbol-function 'transient-append-suffix) #'ignore)
+              ((symbol-function 'display-warning)
+               (lambda (type message &rest _)
+                 (push (cons type (format "%s" message)) warnings))))
+      ;; No anchor, and appending places nothing: returns quietly nil.
+      (should-not (magit-git-issue--add-suffixes
+                   'magit-git-issue-test--anchorless '("!" "Q")
+                   '(("C" "Third" ignore))))
+      ;; A second failure does not warn again.
+      (should-not (magit-git-issue--add-suffixes
+                   'magit-git-issue-test--anchorless '("!" "Q")
+                   '(("D" "Fourth" ignore)))))
+    (should (equal (magit-git-issue-test--suffix-keys
+                    'magit-git-issue-test--anchorless)
+                   before))
+    (should (= 1 (length warnings)))
+    (should (eq 'magit-git-issue (car (car warnings))))
+    (should (string-match-p "skipping" (cdr (car warnings))))))
+
+(ert-deftest magit-git-issue-add-suffixes-survives-a-signalling-transient ()
+  "A `transient-append-suffix' that signals is a warning, not a failed load."
+  (let ((magit-git-issue--placement-warned nil)
+        (warned nil))
+    (cl-letf (((symbol-function 'transient-append-suffix)
+               (lambda (&rest _) (error "no such place")))
+              ((symbol-function 'display-warning)
+               (lambda (&rest _) (setq warned t))))
+      (should-not (magit-git-issue--add-suffixes
+                   'magit-git-issue-test--anchorless '("!" "Q")
+                   '(("E" "Fifth" ignore)))))
+    (should warned)))
+
 ;;;; Bullet 3: the status buffer section
 
 (ert-deftest magit-git-issue-status-section-defaults-to-ready ()
