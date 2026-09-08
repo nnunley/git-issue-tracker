@@ -1,10 +1,10 @@
 id: 7aa2514
 v: 2
 title: emacs: anchor probe signals at load time
-status: open
+status: closed
 priority: medium
 created: 2026-09-07T21:24:40Z
-updated: 2026-09-07T21:24:40Z
+updated: 2026-09-08T04:40:51Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
