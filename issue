@@ -9,3 +9,6 @@ author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
 description: get_description passes through command substitution and loses trailing empty continuation lines; an empty comment text or a description whose first line is empty yields a 'key: ' line with a trailing space. Both are cosmetic and untested. Found in Task 8 and Task 10 reviews.
+
+## Comments
+[2026-09-08T04:11:07Z] Norman Nunley, Jr: Closed as by-design for the second half: 'key: ' with a trailing space for an empty comment text or an empty first description line is the intended encoding — the grammar's value is possibly-empty after '<key>: ', so a consumer splitting on the first ': ' gets an empty string either way, and emitting a bare 'key:' would need a second parse rule for no gain. Pinned by tests in tests/test_porcelain.sh (6d81359). The first half (leading prose in a legacy comments section) is fixed in the same commit.
