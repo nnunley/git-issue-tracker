@@ -9,3 +9,6 @@ author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
 description: About 20 ${RED} diagnostics in bin/git-issue still go to stdout instead of stderr (e.g. link_issue's 'Invalid commit'). The not-found errors of update/comment/link were fixed in f1f5a6e; sweep the rest so porcelain consumers never see coloured errors on stdout.
+
+## Comments
+[2026-09-08T03:44:26Z] Norman Nunley, Jr: Triage 2026-09-07: release blocker for the announced 1.0.
