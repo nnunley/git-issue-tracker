@@ -8,6 +8,7 @@ TMP=$(mktemp -d); WORK=$(mktemp -d); trap 'rm -rf "$TMP" "$WORK"' EXIT
 
 make -C "$REPO_DIR" install PREFIX=/usr DESTDIR="$TMP" >/dev/null
 [[ -f "$TMP/usr/share/git-issue/awk/extract_issues.awk" ]] || { echo "FAIL: awk dir not installed"; exit 1; }
+[[ -f "$TMP/usr/share/git-issue/emacs/git-issue.el" ]] || { echo "FAIL: emacs dir not installed"; exit 1; }
 [[ -L "$TMP/usr/bin/git-issue-status" ]] || { echo "FAIL: status symlink not installed"; exit 1; }
 
 cd "$WORK" && git init -q && git config user.name T && git config user.email t@t.co
@@ -41,6 +42,7 @@ INST=$(mktemp -d)
     || { echo "FAIL: install-git-issue.sh exited nonzero"; exit 1; }
 [[ -f "$INST/bin/git-issue" ]] || { echo "FAIL: installer did not ship git-issue"; exit 1; }
 [[ -f "$INST/share/git-issue/awk/extract_issues.awk" ]] || { echo "FAIL: installer did not ship awk programs"; exit 1; }
+[[ -f "$INST/share/git-issue/emacs/git-issue.el" ]] || { echo "FAIL: installer did not ship emacs package"; exit 1; }
 [[ -f "$INST/share/git-issue/hooks/pre-push" ]] || { echo "FAIL: installer did not ship hook templates"; exit 1; }
 rm -rf "$INST"
 

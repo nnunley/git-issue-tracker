@@ -21,6 +21,7 @@ class GitIssue < Formula
     (share/"git-issue").install "share/git-issue/statuses.default"
     (share/"git-issue").install "share/git-issue/statuses.beads"
     (share/"git-issue/awk").install Dir["share/git-issue/awk/*.awk"]
+    (share/"git-issue/emacs").install Dir["share/git-issue/emacs/*.el"]
     (share/"git-issue/hooks").install "hooks/post-merge"
     (share/"git-issue/hooks").install "hooks/pre-push"
 

@@ -609,8 +609,12 @@ create_issue() {
         return 1
     fi
     
-    echo -e "${BLUE}Creating issue with hash ID: $id${NC}"
-    
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        : # records only
+    else
+        echo -e "${BLUE}Creating issue with hash ID: $id${NC}"
+    fi
+
     # Create issue data (only include non-empty fields)
     local issue_data="id: $id
 v: 2
@@ -630,8 +634,12 @@ description: $(gi_fold "$description")"
 
     write_issue_data "$id" "$issue_data"
 
-    echo -e "${GREEN}✓ Created issue #$id: $title${NC}"
-    echo -e "${GRAY}   Use this ID for future operations: $id${NC}"
+    if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        printf '%s\n' "$id"
+    else
+        echo -e "${GREEN}✓ Created issue #$id: $title${NC}"
+        echo -e "${GRAY}   Use this ID for future operations: $id${NC}"
+    fi
 }
 
 # List all issues
@@ -799,7 +807,7 @@ update_issue() {
     local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     
     if ! read_issue_data "$id" >/dev/null 2>&1; then
-        echo -e "${RED}Issue #$id not found${NC}"
+        echo -e "${RED}Issue #$id not found${NC}" >&2
         return 1
     fi
     
@@ -1592,7 +1600,7 @@ add_comment() {
     local author=$(get_git_user)
     
     if ! read_issue_data "$id" >/dev/null 2>&1; then
-        echo -e "${RED}Issue #$id not found${NC}"
+        echo -e "${RED}Issue #$id not found${NC}" >&2
         return 1
     fi
     
@@ -1627,7 +1635,7 @@ link_issue() {
     local commit=$2
     
     if ! read_issue_data "$id" >/dev/null 2>&1; then
-        echo -e "${RED}Issue #$id not found${NC}"
+        echo -e "${RED}Issue #$id not found${NC}" >&2
         return 1
     fi
     
@@ -2753,9 +2761,18 @@ list_ready_issues() {
         results="${results}${rank} ${line}"$'\n'
     done <<< "$all_tsv"
 
-    [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo -e "${BLUE}Ready to work on:${NC}"
+    # These must be `if ... fi', not `[[ ... ]] && echo': a bare && list as
+    # the last statement of a branch becomes the function's exit status, so
+    # under --porcelain (where the test is false) an empty result exited 1.
+    # draft-ndn-porcelain-output-00 R-plain-stdout requires exit 0 with no
+    # output for an empty result.
+    if [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+        echo -e "${BLUE}Ready to work on:${NC}"
+    fi
     if [[ -z "$results" ]]; then
-        [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]] && echo "  (none)"
+        if [[ -z "${GIT_ISSUE_NO_HEADER:-}" && -z "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+            echo "  (none)"
+        fi
     else
         local sorted
         sorted=$(echo "$results" | sort -n | sed 's/^[0-9] //' | grep -v '^$')
@@ -2765,6 +2782,7 @@ list_ready_issues() {
             echo "$sorted"
         fi
     fi
+    return 0
 }
 
 # Topologically sort non-done issues using POSIX tsort
@@ -3503,7 +3521,11 @@ author: $author
 assignee:
 hash_source: manual"
         write_issue_data "$manual_id" "$issue_data"
-        echo -e "${GREEN}✓ Created issue #$manual_id: $manual_title${NC}"
+        if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+            printf '%s\n' "$manual_id"
+        else
+            echo -e "${GREEN}✓ Created issue #$manual_id: $manual_title${NC}"
+        fi
         ;;
     list)
         list_issues

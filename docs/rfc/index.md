@@ -11,3 +11,4 @@ lock — concurrent publishes conflict here and merge resolution decides).
 
 - draft-ndn-multi-project-registry-02 — Multi-Project Registry for git-issue
 - draft-ndn-porcelain-output-00 — Porcelain Output for git-issue Read Commands
+- draft-ndn-magit-integration-00 — Emacs and Magit Integration for git-issue

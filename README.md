@@ -15,6 +15,11 @@ A lightweight, git notes-based issue tracking CLI that integrates seamlessly wit
 - ✅ **Dependency graph** - blocking, cycle detection, topological sort, Graphviz export
 - ✅ **Comprehensive testing** - unit, integration, and CI/CD tests
 
+> **Guides:** the [User Guide](docs/user-guide.md) walks through daily
+> use, dependencies, syncing, multiple repositories, and scripting; the
+> [Emacs guide](docs/emacs-guide.md) covers the magit integration. The
+> sections below are a reference.
+
 ## 🚀 Quick Start
 
 ### Installation
@@ -264,6 +269,44 @@ The full specification, including the edge and reference line shapes
 and the storage grammar, is
 [`docs/rfc/draft-ndn-porcelain-output-00.md`](docs/rfc/draft-ndn-porcelain-output-00.md).
 
+## Emacs and Magit
+
+The installer ships two Elisp files to `<prefix>/share/git-issue/emacs`,
+alongside the awk and hook directories. Add that directory to your
+`load-path`:
+
+```elisp
+(add-to-list 'load-path "<prefix>/share/git-issue/emacs")
+(require 'magit-git-issue)
+```
+
+`git-issue.el` is the magit-free core: it runs `git issue --porcelain`
+and parses the result into Lisp structs, and loads in a plain Emacs with
+no other packages. Any Elisp — not only magit — can `(require 'git-issue)`
+alone to read and write issues.
+
+`magit-git-issue.el` adds the rest, once magit and transient are
+available:
+
+- An issues section in the status buffer, whose contents are set by
+  `magit-git-issue-status-section` (`ready`, the default, or `open`).
+- `x` opens `magit-git-issue-dispatch`, a transient bound both in
+  `magit-dispatch` and in the status buffer, with actions for every issue
+  command — start, close, reopen, comment, set status/priority/assignee/role,
+  add or remove a dependency, link to a commit, and open the list, ready,
+  and show buffers.
+- `magit-git-issue-list` and `magit-git-issue-ready` open a buffer of
+  issues; a prefix argument (`C-u`) asks for `--all`, listing every
+  registered repository with each line prefixed by its repo name.
+- `RET` on an issue line opens a detail buffer; `g` refreshes it.
+- The commit transient gains `-x`/`--fixes=`, `-X`/`--closes=`, and
+  `-i`/`--issue=`, each completing over open issue ids and passed to
+  `git commit --trailer`. `C-c C-x` in a commit message buffer runs
+  `git-issue-insert-trailer` to add a trailer interactively.
+- Composing a comment or a new issue's description happens in a small
+  buffer finished with `C-c C-c` or aborted with `C-c C-k`, the same
+  convention as magit's own commit buffer.
+
 ## 🔗 Git Integration
 
 git-issue creates bidirectional links between issues and commits:
@@ -423,6 +466,9 @@ git issue export --github a064d35 | gh issue create --body-file -
 
 ## 📚 Documentation
 
+- [User Guide](docs/user-guide.md) - Task-oriented walkthrough of the command line
+- [Emacs Guide](docs/emacs-guide.md) - Setup, keys, and workflows for the magit integration
+- [RFCs](docs/rfc/index.md) - The contracts: multi-project registry, porcelain output, magit integration
 - [Git Notes Workflow](docs/GIT_NOTES_WORKFLOW.md) - Understanding git notes integration
 - [Issue-Commit Linking](docs/ISSUE_COMMIT_LINKING.md) - Bidirectional linking system
 - [Demo](examples/hash-issue-demo.md) - Complete usage examples

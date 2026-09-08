@@ -17,6 +17,9 @@ class GitIssueLocal < Formula
     # Install awk programs
     (share/"git-issue/awk").install Dir["#{source_dir}/share/git-issue/awk/*.awk"]
 
+    # Install emacs package
+    (share/"git-issue/emacs").install Dir["#{source_dir}/share/git-issue/emacs/*.el"]
+
     # Install hooks for setup-sync
     (share/"git-issue/hooks").install "#{source_dir}/hooks/post-merge"
     (share/"git-issue/hooks").install "#{source_dir}/hooks/pre-push"

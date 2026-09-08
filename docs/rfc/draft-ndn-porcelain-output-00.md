@@ -117,10 +117,12 @@ the contract.
 $ git init -q proj
 $ cd proj
 $ git commit -q --allow-empty -m init
-$ git issue list --porcelain | wc -c | tr -d ' '
-0
-$ git issue ready --porcelain | wc -c | tr -d ' '
-0
+$ git issue list --porcelain
+$ git issue ready --porcelain
+$ git issue create "closed task" >/dev/null 2>&1
+$ git issue close "$(git issue list --porcelain | cut -f2)" >/dev/null 2>&1
+$ git issue ready --porcelain
+$ git issue topo --porcelain
 $ git issue create "alpha task" >/dev/null 2>&1
 $ git issue list --porcelain | grep -c "$(printf '\033')"
 0

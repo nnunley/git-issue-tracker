@@ -385,6 +385,30 @@ depends_on	Inverse of blocks	Yes
 parent_of	Epic/subtask grouping	Yes
 relates_to	Soft link	No
 .TE
+.SH EMACS
+The installer places
+.B git\-issue.el
+and
+.B magit\-git\-issue.el
+in
+.IR $(prefix)/share/git\-issue/emacs .
+Add that directory to
+.B load\-path
+and
+.RI ( require\ \(aqgit\-issue )
+to parse porcelain output from Elisp without magit, or
+.RI ( require\ \(aqmagit\-git\-issue )
+for a status\-buffer issues section, list and ready buffers, a detail
+buffer, and a transient bound to
+.B x
+in
+.B magit\-dispatch
+and the status buffer, plus commit trailer options.
+See the
+.B "Emacs and Magit"
+section of
+.B README.md
+for the full command and key reference.
 .SH EXAMPLES
 .nf
 # Create an issue
@@ -443,6 +467,15 @@ Overrides the project-level file for this clone only.
 .B .git/git\-issue/statuses.bash
 Compiled statuses.
 Auto-generated; never needs manual editing.
+.TP
+.I $(prefix)/share/git\-issue/emacs
+The Elisp package:
+.B git\-issue.el
+(core, magit\-free) and
+.B magit\-git\-issue.el
+(magit interface).
+See
+.BR EMACS .
 .SH SEE ALSO
 .BR git\-issue (8),
 .BR git\-issue\-status (1),
