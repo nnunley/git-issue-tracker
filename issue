@@ -2,9 +2,9 @@ id: 7db594a
 v: 2
 title: perf: note_format runs sed three times per note; _gi_to_format_2 parses front matter twice
 status: open
-priority: medium
+priority: low
 created: 2026-09-06T21:11:18Z
-updated: 2026-09-06T21:11:18Z
+updated: 2026-09-08T03:44:28Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
