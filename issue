@@ -2,9 +2,9 @@ id: 040108f
 v: 2
 title: porcelain: legacy comments section drops lines before the first [ record
 status: open
-priority: medium
+priority: low
 created: 2026-09-06T21:11:17Z
-updated: 2026-09-06T21:11:17Z
+updated: 2026-09-08T03:44:27Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
