@@ -1,13 +1,12 @@
 id: bc4e044
+v: 2
 title: Implement git issue import --beads
-description: Import Beads JSONL files. Parse each line as JSON, map fields to git-issue format. Handle: Beads hierarchical IDs (bd-a3f8.1.2) mapped to parent_of relationships, priority int->string, status vocabulary, dependency array to dep add calls. Support --dry-run flag. Deduplicate by external_ref or content_hash.
 status: open
-priority: medium
+priority: low
 created: 2026-02-28T22:12:23Z
-updated: 2026-03-03T04:33:22Z
+updated: 2026-09-08T03:44:27Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
 depends_on: 38ad0f1,59f1c56,2ce45cf,6b20c83
 blocks: 10a45d6
----
