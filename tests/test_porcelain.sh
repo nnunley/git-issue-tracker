@@ -193,6 +193,38 @@ eq "fold then unfold is the identity for legacy comments" \
    "[2026-01-01T00:00:00Z] conformance: first"$'\n'""$'\n'"second"$'\n'"  indented" \
    "$(src 'parse_comments "$(read_issue_data ccc3333)"')"
 
+# A hand-edited format-1 ## Comments section that opens with prose, before
+# any "[ts] author:" record. comments.awk required a started record, so the
+# prose was dropped on read and on upgrade. It now starts a record of its
+# own, printed verbatim with no invented prefix; a blank line ahead of the
+# first record is a separator and is still dropped.
+blob=$(printf 'id: fff6666\ntitle: legacy6\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\n\nbody\n\n## Comments\n\nloose prose\nsecond loose line\n[2026-01-01T00:00:00Z] conformance: one\n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-fff6666 "$(git commit-tree "$tree" -m legacy6 </dev/null)"
+eq "leading prose becomes a verbatim record with continuations" \
+   "loose prose"$'\n'" second loose line"$'\n'"[2026-01-01T00:00:00Z] conformance: one" \
+   "$(src 'parse_comment_records "$(read_issue_data fff6666)"')"
+eq "leading prose survives unfolding" \
+   "loose prose"$'\n'"second loose line"$'\n'"[2026-01-01T00:00:00Z] conformance: one" \
+   "$(src 'parse_comments "$(read_issue_data fff6666)"')"
+eq "leading prose survives an upgrading write" "1" \
+   "$(cd "$WORK/readers" && "$GI" update fff6666 --priority=high >/dev/null 2>&1; git cat-file -p refs/notes/issue-fff6666:issue | grep -c '^loose prose$')"
+
+# Cosmetic, and deliberate: an empty comment text or a description whose
+# first line is empty yields "<key>: " with a trailing space, not a blank
+# line. The grammar's value is possibly-empty after "<key>: ", so a consumer
+# splitting on the first ": " gets an empty string either way; emitting a
+# bare "key:" instead would need a second parse rule for no reason.
+blob=$(printf 'id: 9990000\nv: 2\ntitle: spacey\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\ndescription: \n body text\n\n## Comments\n[2026-01-01T00:00:00Z] conformance: \n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-9990000 "$(git commit-tree "$tree" -m spacey </dev/null)"
+eq "empty first description line keeps the trailing space" "description: " \
+   "$("$GI" show 9990000 --porcelain | grep '^description:')"
+eq "empty comment text keeps the trailing space" "comment: [2026-01-01T00:00:00Z] conformance: " \
+   "$("$GI" show 9990000 --porcelain | grep '^comment:')"
+eq "neither is a blank line" "0" \
+   "$("$GI" show 9990000 --porcelain | grep -c '^$')"
+
 echo "Testing format-2 writes [R-format-marker] [R-store-continuation] [R-field-normalize]"
 fresh_repo writes
 "$GI" create "alpha task" --description="$(printf 'first line\n## Comments')" >/dev/null 2>&1
