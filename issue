@@ -1,4 +1,5 @@
 id: 606e606
+v: 2
 title: Enforce strict commit-object field format for issue blobs
 status: open
 priority: medium
@@ -8,5 +9,7 @@ author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
 relates_to: 9fb1122
+description: Design says issue blobs are commit-object style: known lowercase headers, blank line, body (AGENTS.md; git-trailer conventions reserved for commit linking per PRD_GIT_TRAILERS_INTEGRATION.md). d8185f2 loosened parsing to tolerate split front matter, which leaves an ambiguity: a body ending in header-lookalike lines (status:/title:) can override displayed fields. Decide: repair split blobs via migrate-format and drop trailing-header tolerance, so parsers enforce strict headers-then-body.
 
-Design says issue blobs are commit-object style: known lowercase headers, blank line, body (AGENTS.md; git-trailer conventions reserved for commit linking per PRD_GIT_TRAILERS_INTEGRATION.md). d8185f2 loosened parsing to tolerate split front matter, which leaves an ambiguity: a body ending in header-lookalike lines (status:/title:) can override displayed fields. Decide: repair split blobs via migrate-format and drop trailing-header tolerance, so parsers enforce strict headers-then-body.
+## Comments
+[2026-09-08T03:44:25Z] Norman Nunley, Jr: Triage 2026-09-07: superseded by draft-ndn-porcelain-output-00 format 2. New writes store the description as a header with continuation lines under a v: 2 marker, so body lines can no longer masquerade as headers; format-1 tolerance remains by design (R-legacy-read).
