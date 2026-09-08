@@ -1,10 +1,10 @@
 id: e4f9122
 v: 2
 title: emacs: insert-trailer placement with # lines in the body
-status: open
+status: closed
 priority: medium
 created: 2026-09-07T21:24:40Z
-updated: 2026-09-07T21:24:40Z
+updated: 2026-09-08T04:46:01Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
