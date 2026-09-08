@@ -363,6 +363,20 @@ fresh_repo filterexit
 "$GI" create "alpha task" --porcelain >/dev/null 2>&1
 empty_ok "ready with a role nothing matches" ready --role=nobody-has-this-role
 
+echo "Testing ids are unique across repositories"
+# generate_issue_id hashed only (title, author, second-granularity timestamp),
+# so the same title created in two fresh repositories inside one second got
+# the same id — and the in-repo collision retry cannot see the other repo.
+ids=""
+for n in 1 2 3 4 5; do
+    fresh_repo "iduniq$n" >/dev/null
+    ids="$ids$("$GI" create "same title everywhere" --porcelain 2>/dev/null)"$'\n'
+done
+eq "five repos, five distinct ids" "5" \
+   "$(printf '%s' "$ids" | sort -u | grep -c .)"
+eq "ids are still 7 hex characters" "5" \
+   "$(printf '%s' "$ids" | grep -cE '^[0-9a-f]{7}$')"
+
 echo "Testing every diagnostic goes to stderr [R-plain-stdout]"
 # A consumer reading stdout as data must never see a diagnostic there, in
 # either mode: the human mode's banner and coloured errors used to land on

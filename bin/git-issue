@@ -460,11 +460,20 @@ generate_issue_id() {
     local author="$2"
     local timestamp="$3"
     
-    # Create deterministic content for hashing
+    # Per-call entropy. (title, author, second-granularity timestamp) is not
+    # unique: two repositories creating the same title in the same second got
+    # the same id, and the in-repo collision retry cannot see another repo.
+    # The PID plus a random word makes the hash input unique per process and
+    # per call — /dev/urandom when readable, $RANDOM otherwise.
+    local nonce
+    nonce=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+    [[ -n "$nonce" ]] || nonce="${RANDOM}${RANDOM}${RANDOM}"
+
     local content="issue: $title
 author: $author
-created: $timestamp"
-    
+created: $timestamp
+nonce: $$-$nonce"
+
     # Generate git-style hash
     local hash=$(echo "$content" | git hash-object --stdin)
     
