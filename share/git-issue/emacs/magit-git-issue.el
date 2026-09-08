@@ -68,6 +68,20 @@ So every entry point here checks first."
   (unless (magit-toplevel)
     (user-error "Not inside a git repository")))
 
+(defun magit-git-issue--ensure-registered-paths ()
+  "Signal a `user-error' when a registered repository's path is gone.
+`git issue list --all' skips such an entry with a warning and exits
+nonzero, so the sweep reports itself as a plain CLI failure and says
+nothing about which registry entry to fix.  Naming the entry does."
+  (when-let* ((gone (seq-filter (lambda (entry)
+                                  (git-issue-repo-path-missing-p (cdr entry)))
+                                (git-issue-repo-paths))))
+    (user-error "Registered repository `%s' no longer exists at %s%s"
+                (car (car gone)) (cdr (car gone))
+                (if (cdr gone)
+                    (format " (and %d more)" (length (cdr gone)))
+                  ""))))
+
 ;;;; Issue lines
 
 (defun magit-git-issue--error-message (err)
@@ -152,12 +166,19 @@ echo area rather than aborting the whole status refresh."
 
 (defun magit-git-issue--repo-directory (issue)
   "The registered directory ISSUE lives in, or nil when it names no repo.
-Signals a `user-error' when the repo column names a repository that
-`git issue repo list' does not know."
+Signals a `user-error' naming the repository when the repo column names
+one `git issue repo list' does not know, and one naming the repository
+and the path when the registry says the path is gone.  Without the
+second check the dead path reaches `magit-setup-buffer' and comes back
+as magit's generic outside-a-repository error, which says nothing about
+which registry entry to fix."
   (when-let* ((name (git-issue-issue-repo issue)))
     (let ((path (cdr (assoc name (git-issue-repo-paths)))))
       (unless path
         (user-error "Repository `%s' is not registered" name))
+      (when (git-issue-repo-path-missing-p path)
+        (user-error "Repository `%s' is registered at %s, which no longer exists"
+                    name path))
       (file-name-as-directory path))))
 
 (defun magit-git-issue-visit ()
@@ -226,6 +247,8 @@ Called by `magit-refresh-buffer' through the name of the major mode."
 (defun magit-git-issue--setup-list-buffer (command all)
   "Open a list buffer for COMMAND (`list' or `ready'), across ALL repos."
   (magit-git-issue--ensure-repository)
+  (when all
+    (magit-git-issue--ensure-registered-paths))
   (magit-setup-buffer #'magit-git-issue-list-mode nil
     (magit-git-issue--list-command command)
     (magit-git-issue--list-all (and all t))))

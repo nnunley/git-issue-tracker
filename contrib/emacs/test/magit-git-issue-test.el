@@ -451,6 +451,42 @@ catching only `file-missing' let those through."
           (goto-char (point-min))
           (should (search-forward a nil t)))))))
 
+(ert-deftest magit-git-issue-visit-names-a-registered-path-that-is-gone ()
+  "A registry entry whose directory is gone is named, not passed to magit.
+Without the check the dead path reaches `magit-setup-buffer' and comes
+back as magit's generic outside-a-repository error, which says nothing
+about which entry to fix."
+  (skip-unless (magit-git-issue-test--isolated-p))
+  (magit-git-issue-test--with-repo
+    (let ((registered default-directory))
+      (git-issue-create "vanishing task")
+      (git-issue-run "repo" "add" "vanished" ".")
+      (unwind-protect
+          (let ((default-directory (magit-git-issue-test--repo)))
+            (with-current-buffer (magit-git-issue-list t)
+              (magit-git-issue-test--goto "vanishing task")
+              ;; The registered directory goes away behind the buffer's back.
+              (delete-directory registered t)
+              (should (git-issue-repo-path-missing-p
+                       (cdr (assoc "vanished" (git-issue-repo-paths)))))
+              (let ((err (should-error (magit-git-issue-visit) :type 'user-error)))
+                (should (string-match-p "vanished" (cadr err)))
+                (should (string-match-p
+                         (regexp-quote (directory-file-name registered))
+                         (cadr err))))
+              ;; `--all' names it too, rather than reporting the sweep's
+              ;; nonzero exit as a bare CLI failure.
+              (let ((err (should-error (magit-git-issue-list t) :type 'user-error)))
+                (should (string-match-p "vanished" (cadr err))))))
+        ;; One registry is shared by the whole run: leave no dead entry
+        ;; behind for the other `--all' tests.  `default-directory' is the
+        ;; directory this test deleted, so the process needs another one.
+        (let ((default-directory temporary-file-directory))
+          (ignore-errors (git-issue-run "repo" "rm" "vanished")))
+        (should-not (assoc "vanished" (let ((default-directory
+                                             temporary-file-directory))
+                                        (git-issue-repo-paths))))))))
+
 (ert-deftest magit-git-issue-list-mode-visits-on-ret ()
   (magit-git-issue-test--with-repo
     (git-issue-create "alpha task")

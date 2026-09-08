@@ -161,9 +161,16 @@
   (cl-letf (((symbol-function 'git-issue-run)
              (lambda (&rest _)
                "tracker /home/u/tracker\ngone /home/u/old repo (missing)\n")))
-    (should (equal (git-issue-repo-paths)
-                   '(("tracker" . "/home/u/tracker")
-                     ("gone" . "/home/u/old repo"))))))
+    (let ((paths (git-issue-repo-paths)))
+      ;; `equal' ignores text properties, so the alist shape callers rely
+      ;; on is exactly what it was.
+      (should (equal paths
+                     '(("tracker" . "/home/u/tracker")
+                       ("gone" . "/home/u/old repo"))))
+      ;; What the marker said is still readable, for callers that have to
+      ;; tell a dead entry from a live one.
+      (should-not (git-issue-repo-path-missing-p (cdr (assoc "tracker" paths))))
+      (should (git-issue-repo-path-missing-p (cdr (assoc "gone" paths)))))))
 
 (ert-deftest git-issue-repo-paths-round-trips-through-the-cli ()
   (let* ((home (file-name-as-directory (make-temp-file "git-issue-home" t)))
