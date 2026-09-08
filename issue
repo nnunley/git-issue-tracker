@@ -1,10 +1,10 @@
 id: f6f581b
 v: 2
 title: emacs: README should say x shadows magit-reset-quickly and how to unhook
-status: open
+status: closed
 priority: medium
 created: 2026-09-07T21:24:40Z
-updated: 2026-09-07T21:24:40Z
+updated: 2026-09-08T03:44:25Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
