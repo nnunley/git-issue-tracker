@@ -9,3 +9,6 @@ author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
 description: git-issue --version is an unknown command (exit 1 + usage). Discovered in rc5 clean-install testing; the version string seen earlier came from brew list, not the tool. Needs a version source that works across brew/make/tarball installs (e.g. bake at release time or read VERSION from share).
+
+## Comments
+[2026-09-08T03:44:26Z] Norman Nunley, Jr: Triage 2026-09-07: release blocker for the announced 1.0.
