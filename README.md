@@ -15,6 +15,11 @@ A lightweight, git notes-based issue tracking CLI that integrates seamlessly wit
 - ✅ **Dependency graph** - blocking, cycle detection, topological sort, Graphviz export
 - ✅ **Comprehensive testing** - unit, integration, and CI/CD tests
 
+> **Guides:** the [User Guide](docs/user-guide.md) walks through daily
+> use, dependencies, syncing, multiple repositories, and scripting; the
+> [Emacs guide](docs/emacs-guide.md) covers the magit integration. The
+> sections below are a reference.
+
 ## 🚀 Quick Start
 
 ### Installation
@@ -461,6 +466,9 @@ git issue export --github a064d35 | gh issue create --body-file -
 
 ## 📚 Documentation
 
+- [User Guide](docs/user-guide.md) - Task-oriented walkthrough of the command line
+- [Emacs Guide](docs/emacs-guide.md) - Setup, keys, and workflows for the magit integration
+- [RFCs](docs/rfc/index.md) - The contracts: multi-project registry, porcelain output, magit integration
 - [Git Notes Workflow](docs/GIT_NOTES_WORKFLOW.md) - Understanding git notes integration
 - [Issue-Commit Linking](docs/ISSUE_COMMIT_LINKING.md) - Bidirectional linking system
 - [Demo](examples/hash-issue-demo.md) - Complete usage examples
