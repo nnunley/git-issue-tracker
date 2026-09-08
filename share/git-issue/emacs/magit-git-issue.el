@@ -55,6 +55,19 @@ closed."
   "Face for the title of an issue that is blocked."
   :group 'magit-git-issue)
 
+;;;; Guards
+
+(defun magit-git-issue--ensure-repository ()
+  "Signal a `user-error' unless `default-directory' is inside a repository.
+Run outside one the CLI does not fail: it falls back to a standalone
+tracker under `~/.local/share/git-issue' and a `.git-issue' directory
+beside it.  That is a supported way to use the CLI and the core layer
+leaves it alone, but from a magit command it is never what was meant --
+it silently creates a tracker in a place no repository will ever show.
+So every entry point here checks first."
+  (unless (magit-toplevel)
+    (user-error "Not inside a git repository")))
+
 ;;;; Issue lines
 
 (defun magit-git-issue--error-message (err)
@@ -105,6 +118,7 @@ repository name when WITH-REPO is non-nil and ISSUE carries one."
 Which issues it lists is the user option
 `magit-git-issue-status-section'.  A failing CLI is reported in the
 echo area rather than aborting the whole status refresh."
+  (magit-git-issue--ensure-repository)
   (condition-case err
       (when-let* ((issues (magit-git-issue--issues-for-section)))
         (magit-insert-section (git-issues)
@@ -151,6 +165,7 @@ Signals a `user-error' when the repo column names a repository that
 When the line carries a repository name, the detail buffer runs with
 `default-directory' set to that repository's registered path."
   (interactive)
+  (magit-git-issue--ensure-repository)
   (let ((issue (magit-git-issue-issue-at-point)))
     (unless issue
       (user-error "No issue at point"))
@@ -210,6 +225,7 @@ Called by `magit-refresh-buffer' through the name of the major mode."
 
 (defun magit-git-issue--setup-list-buffer (command all)
   "Open a list buffer for COMMAND (`list' or `ready'), across ALL repos."
+  (magit-git-issue--ensure-repository)
   (magit-setup-buffer #'magit-git-issue-list-mode nil
     (magit-git-issue--list-command command)
     (magit-git-issue--list-all (and all t))))
@@ -297,7 +313,9 @@ Called by `magit-refresh-buffer' through the name of the major mode."
 ;;;###autoload
 (defun magit-git-issue-show (id)
   "Show issue ID in a `magit-git-issue-show-mode' buffer."
-  (interactive (list (git-issue-read-id "Show issue: ")))
+  (interactive (progn (magit-git-issue--ensure-repository)
+                      (list (git-issue-read-id "Show issue: "))))
+  (magit-git-issue--ensure-repository)
   (magit-setup-buffer #'magit-git-issue-show-mode nil
     (magit-git-issue--show-id id)))
 
@@ -337,6 +355,7 @@ Used to offer completion for fields the CLI does not constrain."
 
 (defun magit-git-issue--id (&optional prompt)
   "The id of the issue at point, else one read with PROMPT."
+  (magit-git-issue--ensure-repository)
   (let ((issue (magit-git-issue-issue-at-point)))
     (if issue
         (git-issue-issue-id issue)
@@ -520,6 +539,7 @@ and retry, the way magit's commit buffer survives a failed commit."
   "Create an issue: the title in the minibuffer, the description in a buffer.
 An empty description buffer creates the issue with a title only."
   (interactive)
+  (magit-git-issue--ensure-repository)
   (let ((title (read-string "Title: ")))
     (when (string-blank-p title)
       (user-error "An issue needs a title"))
@@ -713,9 +733,11 @@ begins, so the trailer lands there and not after the comments.  A
 blank line is opened first unless the message already ends in a
 trailer, which is what makes Git parse the line as one."
   (interactive
-   (list (completing-read "Trailer: " (mapcar #'car git-issue-trailer-keys)
-                          nil t)
-         (git-issue-read-id "Issue: ")))
+   (progn
+     (magit-git-issue--ensure-repository)
+     (list (completing-read "Trailer: " (mapcar #'car git-issue-trailer-keys)
+                            nil t)
+           (git-issue-read-id "Issue: "))))
   (let ((line (git-issue-format-trailer kind id))
         (comment-re (concat "^" (regexp-quote (or comment-start "#")))))
     (save-excursion

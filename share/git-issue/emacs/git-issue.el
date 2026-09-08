@@ -8,6 +8,13 @@
 ;; Runs `git-issue --porcelain', parses every porcelain shape of
 ;; draft-ndn-porcelain-output-00 into Lisp data, and offers one function
 ;; per CLI command.  Nothing here requires magit.
+;;
+;; Nothing here requires a repository either.  Run outside one, the CLI
+;; falls back to a standalone tracker under `~/.local/share/git-issue',
+;; and that is a supported way to use it, so this layer passes the
+;; caller's `default-directory' through without judging it.  A user
+;; interface that only means the repository -- `magit-git-issue' is one
+;; -- has to make that check itself, before it calls in here.
 
 ;;; Code:
 

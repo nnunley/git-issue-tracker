@@ -215,6 +215,33 @@ detected by looking at the layout afterwards."
                    '(("E" "Fifth" ignore)))))
     (should warned)))
 
+;;;; Outside a repository
+
+(ert-deftest magit-git-issue-commands-refuse-to-run-outside-a-repository ()
+  "Outside a repository the CLI would build a standalone tracker.
+It writes one under `~/.local/share/git-issue' and a `.git-issue'
+directory beside it.  From magit that is never what was meant, so every
+entry point stops first -- and nothing is created."
+  (skip-unless (magit-git-issue-test--isolated-p))
+  (let* ((plain (file-name-as-directory (make-temp-file "not-a-repo" t)))
+         (data (expand-file-name "git-issue" (getenv "XDG_DATA_HOME")))
+         (default-directory plain))
+    (should-not (magit-toplevel))
+    (dolist (command '(magit-git-issue-insert-issues
+                       magit-git-issue-list
+                       magit-git-issue-ready
+                       magit-git-issue-create
+                       magit-git-issue-start
+                       magit-git-issue-set-status))
+      (let ((err (should-error (funcall command) :type 'user-error)))
+        (should (string-match-p "Not inside a git repository" (cadr err)))))
+    (let ((err (should-error (call-interactively #'magit-git-issue-show)
+                             :type 'user-error)))
+      (should (string-match-p "Not inside a git repository" (cadr err))))
+    ;; The point of the guard: no tracker anywhere.
+    (should-not (file-exists-p data))
+    (should-not (file-exists-p (expand-file-name ".git-issue" plain)))))
+
 ;;;; Bullet 3: the status buffer section
 
 (ert-deftest magit-git-issue-status-section-defaults-to-ready ()
