@@ -9,3 +9,6 @@ author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
 description: Document that x in the status buffer shadows magit-reset-quickly (X still resets) and how to remove the section hook and the dispatch suffix.
+
+## Comments
+[2026-09-08T03:44:25Z] Norman Nunley, Jr: Triage 2026-09-07: docs/emacs-guide.md Setup documents the x shadowing, X for reset, and how to rebind and unhook.
