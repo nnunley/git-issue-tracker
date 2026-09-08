@@ -1,10 +1,10 @@
 id: 0f29e29
 v: 2
 title: emacs: registry path that no longer exists gives magit's generic error
-status: open
+status: closed
 priority: low
 created: 2026-09-07T21:24:40Z
-updated: 2026-09-08T03:44:29Z
+updated: 2026-09-08T04:50:42Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
