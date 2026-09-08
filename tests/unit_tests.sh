@@ -44,19 +44,19 @@ test_generate_issue_id() {
     local author="Test User"
     local timestamp="2025-07-12T10:00:00Z"
 
-    # Compute expected hash using real git
-    local content="issue: $title
-author: $author
-created: $timestamp"
-    local expected_hash
-    expected_hash=$(echo "$content" | git hash-object --stdin)
-    expected_hash="${expected_hash:0:7}"
-
     local id
     id=$(generate_issue_id "$title" "$author" "$timestamp")
 
     assert_equals "7" "${#id}" "Generated ID should be 7 characters"
-    assert_equals "$expected_hash" "$id" "ID should match expected hash (first 7 chars)"
+    assert_equals "$id" "$(printf '%s' "$id" | tr -cd '0-9a-f')" "ID should be lowercase hex"
+
+    # The id is deliberately NOT a function of (title, author, timestamp):
+    # that triple collided across repositories creating the same title in
+    # the same second. Identical inputs must yield distinct ids.
+    local ids
+    ids=$(for _ in 1 2 3 4 5; do generate_issue_id "$title" "$author" "$timestamp"; done)
+    assert_equals "5" "$(printf '%s\n' "$ids" | sort -u | wc -l | tr -d ' ')" \
+        "Five ids from identical inputs should all differ"
 }
 
 test_get_issue_ref() {

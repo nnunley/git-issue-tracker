@@ -8,6 +8,13 @@
 ;; Runs `git-issue --porcelain', parses every porcelain shape of
 ;; draft-ndn-porcelain-output-00 into Lisp data, and offers one function
 ;; per CLI command.  Nothing here requires magit.
+;;
+;; Nothing here requires a repository either.  Run outside one, the CLI
+;; falls back to a standalone tracker under `~/.local/share/git-issue',
+;; and that is a supported way to use it, so this layer passes the
+;; caller's `default-directory' through without judging it.  A user
+;; interface that only means the repository -- `magit-git-issue' is one
+;; -- has to make that check itself, before it calls in here.
 
 ;;; Code:
 
@@ -206,20 +213,38 @@ An empty result is the empty list: `git issue ready --porcelain' exits
 (defun git-issue-dep-rm (from type to) "Remove edge FROM TYPE TO." (git-issue-run "dep" "rm" from type to) t)
 (defun git-issue-link (id commit) "Link ID to COMMIT." (git-issue-run "link" id commit) t)
 
+(defconst git-issue--missing-marker " (missing)"
+  "What `repo list' appends to a path that no longer exists.")
+
+(defun git-issue-repo-path-missing-p (path)
+  "Non-nil when PATH came out of `git-issue-repo-paths' marked missing.
+The registry knows a path is gone -- `repo list' says so -- and callers
+that only get the path back cannot tell, which is how a dead entry ends
+up reported as some unrelated failure further down."
+  (and (stringp path)
+       (not (string-empty-p path))
+       (get-text-property 0 'git-issue-missing path)))
+
 (defun git-issue-repo-paths ()
   "Registered repositories as an alist of (NAME . PATH).
 Parses the `repo list' contract lines `<name> <path>', where a path
 that no longer exists is followed by the marker ` (missing)'.  The
-marker is dropped; the recorded path is returned either way."
+marker is dropped and the recorded path is returned either way, so
+`(cdr (assoc NAME ...))' is always the path; what the marker said is
+kept as a `git-issue-missing' text property, which `equal' ignores and
+`git-issue-repo-path-missing-p' reads."
   (mapcar (lambda (line)
             (let* ((space (string-search " " line))
                    (name (if space (substring line 0 space) line))
-                   (rest (if space (substring line (1+ space)) "")))
-              (cons name
-                    (if (string-suffix-p " (missing)" rest)
-                        (substring rest 0 (- (length rest)
-                                             (length " (missing)")))
-                      rest))))
+                   (rest (if space (substring line (1+ space)) ""))
+                   (missing (string-suffix-p git-issue--missing-marker rest))
+                   (path (if missing
+                             (substring rest 0 (- (length rest)
+                                                  (length git-issue--missing-marker)))
+                           rest)))
+              (when (and missing (not (string-empty-p path)))
+                (setq path (propertize path 'git-issue-missing t)))
+              (cons name path)))
           (git-issue--nonblank-lines (git-issue-run "repo" "list"))))
 
 (defun git-issue-open-ids ()

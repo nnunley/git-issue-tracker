@@ -157,6 +157,23 @@ git update-ref refs/notes/issue-aaa1111 "$(git commit-tree "$tree" -m legacy2 </
 eq "format 1 body ending in description: stays in the body" "old body"$'\n'"description: how to reproduce" "$(src 'get_description "$(read_issue_data aaa1111)"')"
 eq "format 1 description: line is not a trailing header" "" "$(src 'get_field_value "$(parse_front_matter "$(read_issue_data aaa1111)")" description')"
 eq "human show keeps the description: body line" "1" "$("$GI" show aaa1111 2>/dev/null | grep -c '^description: how to reproduce$')"
+# Same for a body ending in an "id:" line. front_matter.awk and
+# extract_issues.awk have always refused to read one as a trailing header
+# (every write path emits id first, so an id below the body is prose), but
+# body.awk excluded only "description:" and so silently dropped the line
+# from the body — the two parsers disagreed about the same note.
+blob=$(printf 'id: ddd4444\ntitle: legacy5\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\n\nold body\nid: eee5555\n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-ddd4444 "$(git commit-tree "$tree" -m legacy5 </dev/null)"
+eq "format 1 body ending in id: stays in the body" "old body"$'\n'"id: eee5555" \
+   "$(src 'get_description "$(read_issue_data ddd4444)"')"
+eq "format 1 id: line is not a trailing header" "ddd4444" \
+   "$(src 'get_field_value "$(parse_front_matter "$(read_issue_data ddd4444)")" id')"
+eq "the bogus id is not listed" "0" \
+   "$("$GI" list --porcelain | awk -F'\t' '$2=="eee5555"' | grep -c . || true)"
+eq "human show keeps the id: body line" "1" \
+   "$("$GI" show ddd4444 2>/dev/null | grep -c '^id: eee5555$')"
+
 # A prose line then "title: hijack" then "description: ...": the description
 # line breaks trailing-block contiguity, so the bogus title cannot win.
 blob=$(printf 'id: bbb2222\ntitle: legacy3\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\n\nold body\ntitle: hijack\ndescription: how to reproduce\n' | git hash-object -w --stdin)
@@ -175,6 +192,38 @@ eq "format 1 blank line folds to a lone-space continuation" \
 eq "fold then unfold is the identity for legacy comments" \
    "[2026-01-01T00:00:00Z] conformance: first"$'\n'""$'\n'"second"$'\n'"  indented" \
    "$(src 'parse_comments "$(read_issue_data ccc3333)"')"
+
+# A hand-edited format-1 ## Comments section that opens with prose, before
+# any "[ts] author:" record. comments.awk required a started record, so the
+# prose was dropped on read and on upgrade. It now starts a record of its
+# own, printed verbatim with no invented prefix; a blank line ahead of the
+# first record is a separator and is still dropped.
+blob=$(printf 'id: fff6666\ntitle: legacy6\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\n\nbody\n\n## Comments\n\nloose prose\nsecond loose line\n[2026-01-01T00:00:00Z] conformance: one\n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-fff6666 "$(git commit-tree "$tree" -m legacy6 </dev/null)"
+eq "leading prose becomes a verbatim record with continuations" \
+   "loose prose"$'\n'" second loose line"$'\n'"[2026-01-01T00:00:00Z] conformance: one" \
+   "$(src 'parse_comment_records "$(read_issue_data fff6666)"')"
+eq "leading prose survives unfolding" \
+   "loose prose"$'\n'"second loose line"$'\n'"[2026-01-01T00:00:00Z] conformance: one" \
+   "$(src 'parse_comments "$(read_issue_data fff6666)"')"
+eq "leading prose survives an upgrading write" "1" \
+   "$(cd "$WORK/readers" && "$GI" update fff6666 --priority=high >/dev/null 2>&1; git cat-file -p refs/notes/issue-fff6666:issue | grep -c '^loose prose$')"
+
+# Cosmetic, and deliberate: an empty comment text or a description whose
+# first line is empty yields "<key>: " with a trailing space, not a blank
+# line. The grammar's value is possibly-empty after "<key>: ", so a consumer
+# splitting on the first ": " gets an empty string either way; emitting a
+# bare "key:" instead would need a second parse rule for no reason.
+blob=$(printf 'id: 9990000\nv: 2\ntitle: spacey\nstatus: open\npriority: medium\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\nauthor: conformance\ndescription: \n body text\n\n## Comments\n[2026-01-01T00:00:00Z] conformance: \n' | git hash-object -w --stdin)
+tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+git update-ref refs/notes/issue-9990000 "$(git commit-tree "$tree" -m spacey </dev/null)"
+eq "empty first description line keeps the trailing space" "description: " \
+   "$("$GI" show 9990000 --porcelain | grep '^description:')"
+eq "empty comment text keeps the trailing space" "comment: [2026-01-01T00:00:00Z] conformance: " \
+   "$("$GI" show 9990000 --porcelain | grep '^comment:')"
+eq "neither is a blank line" "0" \
+   "$("$GI" show 9990000 --porcelain | grep -c '^$')"
 
 echo "Testing format-2 writes [R-format-marker] [R-store-continuation] [R-field-normalize]"
 fresh_repo writes
@@ -228,6 +277,81 @@ eq "dep rm dropped the edge" "0" "$(gnote | grep -c '^blocks: ')"
 eq "description survives all three rewrites" "see below"$'\n'"status: unclear" \
    "$(src "get_description \"\$(read_issue_data $g)\"")"
 eq "real status still readable" "closed" "$("$GI" list --porcelain | awk -F'\t' -v g="$g" '$2==g{print $3}')"
+
+echo "Testing each continuation guard is load-bearing [R-store-continuation]"
+# The block above only fails when all five "/^ / { print; next }" guards are
+# gone: it drives three commands over one note, and the surviving guards on
+# the other paths repair what the mutated one broke. One scenario per rewrite
+# path instead, each on a fresh note, so removing any single guard fails a
+# test. The probe is a description whose continuation line reads
+# "updated: ...": every one of the five programs has an $1 == "updated:" rule
+# that claims that line the moment the guard stops consuming it, which both
+# destroys the description line and leaves a second updated: header behind.
+guard_probe() { # guard_probe <repo-name>: fresh repo + probe issue, id in $p.
+    # Not a command substitution: fresh_repo cds, and a subshell's cd is lost.
+    fresh_repo "$1" >/dev/null
+    p=$("$GI" create "probe" --description="$(printf 'see below\nupdated: 1999-01-01T00:00:00Z')" \
+        --porcelain 2>/dev/null)
+}
+gnote_of() { git cat-file -p "refs/notes/issue-$1:issue"; }
+guard_intact() { # guard_intact <label> <id> [<continuation must survive: 1|0>]
+    eq "$1: exactly one updated: header" "1" "$(gnote_of "$2" | grep -c '^updated:')"
+    if [[ "${3:-1}" == "1" ]]; then
+        eq "$1: lookalike continuation survives" "1" \
+           "$(gnote_of "$2" | grep -c '^ updated: 1999-01-01T00:00:00Z$')"
+    fi
+}
+
+# Guard 1 — update_issue, description branch: the timestamp rewriter that runs
+# over the parsed front matter before upgrade_note.awk.
+guard_probe guard1
+"$GI" update "$p" --description="replacement" >/dev/null 2>&1
+# The old description is gone by design here, so the tell is the stray header.
+guard_intact "guard 1 (update --description)" "$p" 0
+eq "guard 1: the replacement is the whole description" "replacement" \
+   "$(src "get_description \"\$(read_issue_data $p)\"")"
+
+# Guard 2 — update_issue, plain header field branch.
+guard_probe guard2
+"$GI" update "$p" --priority=high >/dev/null 2>&1
+guard_intact "guard 2 (update --priority)" "$p"
+eq "guard 2: the real header was rewritten" "1" "$(gnote_of "$p" | grep -c '^priority: high$')"
+
+# Guard 3 — add_to_field.
+guard_probe guard3
+o=$("$GI" create "other" --porcelain 2>/dev/null)
+"$GI" dep add "$p" blocks "$o" >/dev/null 2>&1
+guard_intact "guard 3 (dep add)" "$p"
+eq "guard 3: the edge was written" "1" "$(gnote_of "$p" | grep -c "^blocks: $o\$")"
+
+# Guard 4 — remove_from_field, the branch that drops the field entirely.
+guard_probe guard4
+o=$("$GI" create "other" --porcelain 2>/dev/null)
+"$GI" dep add "$p" blocks "$o" >/dev/null 2>&1
+"$GI" dep rm "$p" blocks "$o" >/dev/null 2>&1
+guard_intact "guard 4 (dep rm, last edge)" "$p"
+eq "guard 4: the field is gone" "0" "$(gnote_of "$p" | grep -c '^blocks:')"
+
+# Guard 5 — remove_from_field, the branch that writes the filtered list back.
+guard_probe guard5
+o1=$("$GI" create "other one" --porcelain 2>/dev/null)
+o2=$("$GI" create "other two" --porcelain 2>/dev/null)
+"$GI" dep add "$p" blocks "$o1" >/dev/null 2>&1
+"$GI" dep add "$p" blocks "$o2" >/dev/null 2>&1
+"$GI" dep rm "$p" blocks "$o1" >/dev/null 2>&1
+guard_intact "guard 5 (dep rm, one of two edges)" "$p"
+eq "guard 5: the surviving edge is the other one" "1" "$(gnote_of "$p" | grep -c "^blocks: $o2\$")"
+
+# Rebuild the state the fixed-point section below inherits (the scenarios
+# above left the shell in guard5's repository).
+fresh_repo guards >/dev/null
+"$GI" create "guard task" --description="$(printf 'see below\nstatus: unclear')" >/dev/null 2>&1
+"$GI" create "other task" >/dev/null 2>&1
+g=$("$GI" list --porcelain | awk -F'\t' '$12=="guard task"{print $2}')
+o=$("$GI" list --porcelain | awk -F'\t' '$12=="other task"{print $2}')
+"$GI" update "$g" --status=closed >/dev/null 2>&1
+"$GI" dep add "$g" blocks "$o" >/dev/null 2>&1
+"$GI" dep rm "$g" blocks "$o" >/dev/null 2>&1
 
 echo "Testing format-2 canonicalization is a fixed point [R-format-marker]"
 # A second write that changes nothing material must reproduce the same blob,
@@ -362,6 +486,113 @@ eq "list with every issue closed: still lists it" "1" \
 fresh_repo filterexit
 "$GI" create "alpha task" --porcelain >/dev/null 2>&1
 empty_ok "ready with a role nothing matches" ready --role=nobody-has-this-role
+
+echo "Testing ids are unique across repositories"
+# generate_issue_id hashed only (title, author, second-granularity timestamp),
+# so the same title created in two fresh repositories inside one second got
+# the same id — and the in-repo collision retry cannot see the other repo.
+ids=""
+for n in 1 2 3 4 5; do
+    fresh_repo "iduniq$n" >/dev/null
+    ids="$ids$("$GI" create "same title everywhere" --porcelain 2>/dev/null)"$'\n'
+done
+eq "five repos, five distinct ids" "5" \
+   "$(printf '%s' "$ids" | sort -u | grep -c .)"
+eq "ids are still 7 hex characters" "5" \
+   "$(printf '%s' "$ids" | grep -cE '^[0-9a-f]{7}$')"
+
+echo "Testing every diagnostic goes to stderr [R-plain-stdout]"
+# A consumer reading stdout as data must never see a diagnostic there, in
+# either mode: the human mode's banner and coloured errors used to land on
+# stdout for validation failures (invalid status/priority/field/commit) as
+# well as for not-found ids.
+fresh_repo diagerr
+real=$("$GI" create "alpha task" --porcelain 2>/dev/null)
+diag_err() { # diag_err <label> <expected fragment> <args...>
+    local label="$1" want="$2"; shift 2
+    local mode out rc err_file="$WORK/diagerr.err"
+    for mode in plain porcelain; do
+        if [[ "$mode" == porcelain ]]; then
+            out=$("$GI" "$@" --porcelain 2>"$err_file") && rc=0 || rc=$?
+        else
+            out=$("$GI" "$@" 2>"$err_file") && rc=0 || rc=$?
+        fi
+        eq "$label ($mode): nonzero exit" "1" "$([[ $rc -ne 0 ]] && echo 1 || echo 0)"
+        eq "$label ($mode): nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+        eq "$label ($mode): diagnostic on stderr" "1" \
+           "$(grep -c -- "$want" "$err_file" || true)"
+    done
+}
+diag_err "show on a bogus id"    "not found"        show zzzzzzz
+diag_err "update on a bogus id"  "not found"        update zzzzzzz --status=open
+diag_err "link on a bogus id"    "not found"        link zzzzzzz HEAD
+diag_err "dep add self"          "self-dependency"  dep add zzzzzzz blocks zzzzzzz
+diag_err "update invalid status" "Invalid status"   update "$real" --status=not-a-status
+diag_err "link invalid commit"   "Invalid commit"   link "$real" not-a-commit
+# Usage printed *because of* an error is a diagnostic, so it goes to stderr
+# too. `git issue commit --help' is the other half of that: asked for, it is
+# output, and it stays on stdout.
+out=$("$GI" setup-sync bogus 2>/dev/null) && rc=0 || rc=$?
+eq "setup-sync usage: nonzero exit" "1" "$([[ $rc -ne 0 ]] && echo 1 || echo 0)"
+eq "setup-sync usage: nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+eq "setup-sync usage: usage on stderr" "1" \
+   "$("$GI" setup-sync bogus 2>&1 >/dev/null | grep -c '^Usage: git issue setup-sync' || true)"
+
+out=$("$GI" commit --no-such-option 2>/dev/null) && rc=0 || rc=$?
+eq "commit unknown option: nonzero exit" "1" "$([[ $rc -ne 0 ]] && echo 1 || echo 0)"
+eq "commit unknown option: nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+eq "commit unknown option: usage on stderr" "1" \
+   "$("$GI" commit --no-such-option 2>&1 >/dev/null | grep -c '^Usage: git issue commit' || true)"
+eq "commit --help: usage stays on stdout" "1" \
+   "$("$GI" commit --help 2>/dev/null | grep -c '^Usage: git issue commit' || true)"
+
+# The collision-retry notice comes from inside create_issue's loop, which only
+# runs when `generate_issue_id' hands back an id that already exists. That is
+# unreachable from the command line, but bin/git-issue dispatches only when it
+# is run directly, so sourcing it and stubbing `issue_exists' to claim one
+# collision reaches the loop. `create --porcelain' writes the new id to stdout,
+# so the notice landing there would be read as data.
+fresh_repo collision
+collision_out="$WORK/collision.out"
+collision_err="$WORK/collision.err"
+GI="$GI" bash -c '
+    set +e
+    export GIT_ISSUE_PORCELAIN=1
+    # shellcheck disable=SC1090
+    source "$GI"
+    calls=0
+    issue_exists() { calls=$((calls + 1)); [[ $calls -le 1 ]]; }
+    create_issue "collision probe" ""
+' >"$collision_out" 2>"$collision_err"
+eq "collision retry: notice on stderr" "1" \
+   "$(grep -c 'Hash collision detected' "$collision_err" || true)"
+eq "collision retry: nothing but the id on stdout" "1" \
+   "$(grep -cE '^[0-9a-f]{7}$' "$collision_out" || true)"
+eq "collision retry: no notice on stdout" "0" \
+   "$(grep -c 'Hash collision' "$collision_out" || true)"
+
+# The unknown-command branch prints its usage as part of the error.
+out=$("$GI" no-such-command 2>/dev/null) && rc=0 || rc=$?
+eq "unknown command: nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+eq "unknown command: usage on stderr" "1" \
+   "$("$GI" no-such-command 2>&1 >/dev/null | grep -c '^Usage: git issue' || true)"
+
+echo "Testing --version"
+# The version query is answered in _gi_dispatch before storage detection, so
+# it must work with no repository in sight and must never create a store.
+fresh_repo versioncmd
+want="git-issue $(cat "$REPO_DIR/VERSION")"
+eq "--version prints the version" "$want" "$("$GI" --version)"
+eq "-V prints the same line"      "$want" "$("$GI" -V)"
+eq "version prints the same line" "$want" "$("$GI" version)"
+set +e; "$GI" --version >/dev/null 2>&1; rc=$?; set -e
+eq "--version exits 0" "0" "$rc"
+eq "--version is silent on stderr" "" "$("$GI" --version 2>&1 >/dev/null)"
+nogit="$WORK/not-a-repo"; rm -rf "$nogit"; mkdir -p "$nogit"; cd "$nogit"
+eq "--version works outside a git repository" "$want" "$("$GI" --version)"
+eq "--version created no store" "" "$(ls -A "$nogit")"
+eq "man page .TH agrees with VERSION" "1" \
+   "$(grep -c "\"$want\"" "$REPO_DIR/man/man1/git-issue.1" || true)"
 
 echo ""
 echo "PASS=$PASS FAIL=$FAIL"

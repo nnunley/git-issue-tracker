@@ -2,6 +2,10 @@
 # git-issue: Issue tracking using git notes (or XDG directories) and hash-based IDs
 # Supports both git repositories and standalone XDG directory storage
 
+# Release version. Kept in sync with ./VERSION and the man pages' .TH lines
+# by `make bump VERSION=x.y.z` — do not edit one without the others.
+GIT_ISSUE_VERSION="1.0.0-rc6"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -283,6 +287,7 @@ usage() {
     echo "  --repo <name>                           Run the command in a registered repository"
     echo "  --all                                   (list, ready) run across every registered repository"
     echo "  --porcelain[=v1]                        Stable machine-readable output (see docs/rfc)"
+    echo "  --version, -V                           Print the git-issue version and exit"
     echo ""
     echo "Examples:"
     echo "  git issue create 'Add user authentication' --description='Implement OAuth2 login'"
@@ -328,13 +333,19 @@ read_issue_data() {
 }
 
 # Note format: 2 when line 2 is the marker "v: 2", else 1 (R-format-marker).
+# Bash string ops, not `sed -n 2p`: this runs once per note on the show and
+# write paths, and a subshell plus a sed process cost far more than the two
+# expansions below. A note with fewer than two lines has no marker.
 note_format() {
-    local data="$1"
-    if [[ "$(printf '%s\n' "$data" | sed -n '2p')" == "v: 2" ]]; then
-        echo 2
-    else
-        echo 1
+    local data="$1" rest
+    if [[ "$data" == *$'\n'* ]]; then
+        rest="${data#*$'\n'}"
+        if [[ "${rest%%$'\n'*}" == "v: 2" ]]; then
+            echo 2
+            return 0
+        fi
     fi
+    echo 1
 }
 
 # Batch-read all issue data using git cat-file --batch (3 git processes total
@@ -455,11 +466,20 @@ generate_issue_id() {
     local author="$2"
     local timestamp="$3"
     
-    # Create deterministic content for hashing
+    # Per-call entropy. (title, author, second-granularity timestamp) is not
+    # unique: two repositories creating the same title in the same second got
+    # the same id, and the in-repo collision retry cannot see another repo.
+    # The PID plus a random word makes the hash input unique per process and
+    # per call — /dev/urandom when readable, $RANDOM otherwise.
+    local nonce
+    nonce=$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+    [[ -n "$nonce" ]] || nonce="${RANDOM}${RANDOM}${RANDOM}"
+
     local content="issue: $title
 author: $author
-created: $timestamp"
-    
+created: $timestamp
+nonce: $$-$nonce"
+
     # Generate git-style hash
     local hash=$(echo "$content" | git hash-object --stdin)
     
@@ -485,19 +505,24 @@ parse_front_matter() {
 
 # Parse body from issue data (between first blank line and trailing headers / ## Comments)
 # Excludes both the trailing header block and any stray lines after it.
+# The optional second argument is the note's format, for callers that have
+# already computed it; omitted, it is computed here as before.
 parse_body() {
     local data="$1"
-    [[ "$(note_format "$data")" == "2" ]] && return 0
+    local fmt="${2:-$(note_format "$data")}"
+    [[ "$fmt" == "2" ]] && return 0
     echo "$data" | awk -f "$(require_awk_file body.awk)" -v FIELDS="$KNOWN_HEADER_FIELDS"
 }
 
-# Description for either note format, newlines preserved.
+# Description for either note format, newlines preserved. Optional second and
+# third arguments are the format and the already-parsed front matter.
 get_description() {
     local data="$1"
-    if [[ "$(note_format "$data")" == "2" ]]; then
-        get_field_raw "$(parse_front_matter "$data")" "description"
+    local fmt="${2:-$(note_format "$data")}"
+    if [[ "$fmt" == "2" ]]; then
+        get_field_raw "${3-$(parse_front_matter "$data")}" "description"
     else
-        parse_body "$data"
+        parse_body "$data" "$fmt"
     fi
 }
 
@@ -505,7 +530,8 @@ get_description() {
 # first line "[ts] author: text", continuation lines prefixed by one space.
 parse_comment_records() {
     local data="$1"
-    printf '%s\n' "$data" | awk -f "$(require_awk_file comments.awk)" -v FORMAT="$(note_format "$data")"
+    local fmt="${2:-$(note_format "$data")}"
+    printf '%s\n' "$data" | awk -f "$(require_awk_file comments.awk)" -v FORMAT="$fmt"
 }
 
 # Comments for human display: records with continuation unfolded.
@@ -543,10 +569,14 @@ gi_single_line() {
 # comments become folded records under "## Comments".
 _gi_to_format_2() {
     local data="$1"
-    local front_matter description comments headers
+    local front_matter description comments headers fmt
+    # Compute the format once and hand the parsed front matter down: this
+    # used to parse the front matter twice (once here, once inside
+    # get_description for a format-2 note) and detect the format three times.
+    fmt=$(note_format "$data")
     front_matter=$(parse_front_matter "$data")
-    description=$(get_description "$data")
-    comments=$(parse_comment_records "$data")
+    description=$(get_description "$data" "$fmt" "$front_matter")
+    comments=$(parse_comment_records "$data" "$fmt")
     headers=$(printf '%s\n' "$front_matter" | awk -f "$(require_awk_file upgrade_note.awk)")
 
     local out="$headers"
@@ -597,7 +627,9 @@ create_issue() {
     # Check for conflicts (rare but possible)
     local attempts=0
     while issue_exists "$id" && [[ $attempts -lt 100 ]]; do
-        echo "⚠️  Hash collision detected for $id, regenerating..."
+        # stderr: `create --porcelain' writes the new id to stdout, and a
+        # notice mixed in there would be read as data.
+        echo "⚠️  Hash collision detected for $id, regenerating..." >&2
         # Add microsecond precision to avoid collision
         timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
         id=$(generate_issue_id "$title" "$author" "$timestamp")
@@ -605,7 +637,7 @@ create_issue() {
     done
     
     if [[ $attempts -ge 100 ]]; then
-        echo -e "${RED}Unable to generate unique ID after 100 attempts${NC}"
+        echo -e "${RED}Unable to generate unique ID after 100 attempts${NC}" >&2
         return 1
     fi
     
@@ -693,7 +725,8 @@ _PORCELAIN_SHOW_FIELDS="id title status priority created updated author assignee
 
 _porcelain_show() {
     local data="$1"
-    local front_matter
+    local front_matter fmt
+    fmt=$(note_format "$data")
     front_matter=$(parse_front_matter "$data")
     local f v
     for f in $_PORCELAIN_SHOW_FIELDS; do
@@ -706,11 +739,11 @@ _porcelain_show() {
         [[ -n "$v" ]] && printf '%s: %s\n' "$f" "$v"
     done
     local description
-    description=$(get_description "$data")
+    description=$(get_description "$data" "$fmt" "$front_matter")
     if [[ -n "$description" ]]; then
         printf 'description: %s\n' "$(gi_fold "$description")"
     fi
-    parse_comment_records "$data" | sed -E '/^\[/s/^/comment: /'
+    parse_comment_records "$data" "$fmt" | sed -E '/^\[/s/^/comment: /'
 }
 
 # Show issue details
@@ -732,12 +765,13 @@ show_issue() {
         _porcelain_show "$data"
         return 0
     fi
+    local fmt=$(note_format "$data")
     local front_matter=$(parse_front_matter "$data")
-    local comments=$(parse_comments "$data")
+    local comments=$(parse_comment_records "$data" "$fmt" | sed 's/^ //')
 
     # Extract fields
     local title=$(get_field_value "$front_matter" "title")
-    local description=$(get_description "$data")
+    local description=$(get_description "$data" "$fmt" "$front_matter")
     local github_id=$(get_field_value "$front_matter" "github_id")
     local github_url=$(get_field_value "$front_matter" "github_url")
     local jira_id=$(get_field_value "$front_matter" "jira_id")
@@ -815,15 +849,15 @@ update_issue() {
     case "$field" in
         status)
             if [[ ! " ${STATUSES[*]} " =~ " ${value} " ]]; then
-                echo -e "${RED}Invalid status: $value${NC}"
-                echo "Valid statuses: ${STATUSES[*]}"
+                echo -e "${RED}Invalid status: $value${NC}" >&2
+                echo "Valid statuses: ${STATUSES[*]}" >&2
                 return 1
             fi
             ;;
         priority)
             if [[ ! " ${PRIORITIES[*]} " =~ " ${value} " ]]; then
-                echo -e "${RED}Invalid priority: $value${NC}"
-                echo "Valid priorities: ${PRIORITIES[*]}"
+                echo -e "${RED}Invalid priority: $value${NC}" >&2
+                echo "Valid priorities: ${PRIORITIES[*]}" >&2
                 return 1
             fi
             ;;
@@ -840,8 +874,8 @@ update_issue() {
             # Accept comma-separated issue IDs
             ;;
         *)
-            echo -e "${RED}Invalid field: $field${NC}"
-            echo "Valid fields: status, priority, assignee, role, description, blocks, depends_on, parent_of, relates_to"
+            echo -e "${RED}Invalid field: $field${NC}" >&2
+            echo "Valid fields: status, priority, assignee, role, description, blocks, depends_on, parent_of, relates_to" >&2
             return 1
             ;;
     esac
@@ -1147,7 +1181,7 @@ setup_sync() {
     local action="${1:-enable}"
     
     if [[ "$STORAGE_TYPE" == "xdg" ]]; then
-        echo -e "${YELLOW}⚠️  Auto-sync is only available in git repositories, not XDG mode${NC}"
+        echo -e "${YELLOW}⚠️  Auto-sync is only available in git repositories, not XDG mode${NC}" >&2
         return 1
     fi
     
@@ -1162,12 +1196,16 @@ setup_sync() {
             setup_sync_status
             ;;
         *)
-            echo "Usage: git issue setup-sync [enable|disable|status]"
-            echo ""
-            echo "Commands:"
-            echo "  enable   Install git hooks for automatic notes sync"
-            echo "  disable  Remove git hooks and disable auto-sync"
-            echo "  status   Show current sync configuration"
+            # This branch is a usage *error* (it returns 1), so the usage
+            # goes to stderr with it -- R-plain-stdout.
+            {
+                echo "Usage: git issue setup-sync [enable|disable|status]"
+                echo ""
+                echo "Commands:"
+                echo "  enable   Install git hooks for automatic notes sync"
+                echo "  disable  Remove git hooks and disable auto-sync"
+                echo "  status   Show current sync configuration"
+            } >&2
             return 1
             ;;
     esac
@@ -1199,8 +1237,8 @@ setup_sync_enable() {
     echo -e "${BLUE}🔧 Setting up automatic git notes synchronization...${NC}"
 
     if [[ -z "$hooks_source" ]]; then
-        echo -e "${RED}❌ Could not find hook templates in any known location${NC}"
-        echo -e "${YELLOW}   Searched: relative to script, Homebrew share, /usr/local/share${NC}"
+        echo -e "${RED}❌ Could not find hook templates in any known location${NC}" >&2
+        echo -e "${YELLOW}   Searched: relative to script, Homebrew share, /usr/local/share${NC}" >&2
         return 1
     fi
 
@@ -1209,7 +1247,7 @@ setup_sync_enable() {
 
     # Install post-merge hook
     if [[ -f "$hooks_dir/post-merge" ]]; then
-        echo -e "${YELLOW}⚠️  Existing post-merge hook found, backing up to post-merge.backup${NC}"
+        echo -e "${YELLOW}⚠️  Existing post-merge hook found, backing up to post-merge.backup${NC}" >&2
         mv "$hooks_dir/post-merge" "$hooks_dir/post-merge.backup"
     fi
 
@@ -1218,13 +1256,13 @@ setup_sync_enable() {
         chmod +x "$hooks_dir/post-merge"
         echo -e "${GREEN}✓ Installed post-merge hook (auto-fetch notes)${NC}"
     else
-        echo -e "${RED}❌ Could not find post-merge hook template in $hooks_source${NC}"
+        echo -e "${RED}❌ Could not find post-merge hook template in $hooks_source${NC}" >&2
         return 1
     fi
 
     # Install pre-push hook
     if [[ -f "$hooks_dir/pre-push" ]]; then
-        echo -e "${YELLOW}⚠️  Existing pre-push hook found, backing up to pre-push.backup${NC}"
+        echo -e "${YELLOW}⚠️  Existing pre-push hook found, backing up to pre-push.backup${NC}" >&2
         mv "$hooks_dir/pre-push" "$hooks_dir/pre-push.backup"
     fi
 
@@ -1233,7 +1271,7 @@ setup_sync_enable() {
         chmod +x "$hooks_dir/pre-push"
         echo -e "${GREEN}✓ Installed pre-push hook (auto-push notes)${NC}"
     else
-        echo -e "${RED}❌ Could not find pre-push hook template in $hooks_source${NC}"
+        echo -e "${RED}❌ Could not find pre-push hook template in $hooks_source${NC}" >&2
         return 1
     fi
     
@@ -1641,7 +1679,7 @@ link_issue() {
     
     # Validate commit
     if ! git rev-parse "$commit" >/dev/null 2>&1; then
-        echo -e "${RED}Invalid commit: $commit${NC}"
+        echo -e "${RED}Invalid commit: $commit${NC}" >&2
         return 1
     fi
     
@@ -1802,11 +1840,31 @@ get_related_commits() {
 }
 
 # Handle git issue commit command with trailers
+_gi_commit_usage() {
+    echo "Usage: git issue commit [OPTIONS]"
+    echo ""
+    echo "Add issue trailers to git commits for standardized issue tracking"
+    echo ""
+    echo "Options:"
+    echo "  --issue <id>      Link commit to issue (default)"
+    echo "  --fixes <id>      Mark issue as fixed by this commit"
+    echo "  --closes <id>     Mark issue as closed by this commit"
+    echo "  --related-to <id> Reference related issue"
+    echo "  --commit <hash>   Target commit (default: HEAD)"
+    echo "  --help, -h        Show this help"
+    echo ""
+    echo "Examples:"
+    echo "  git issue commit --fixes a1b2c3d"
+    echo "  git issue commit --issue b2c3d4e --commit abc1234"
+    echo "  git issue commit --closes c3d4e5f"
+}
+
 handle_commit_with_trailers() {
     local issue_id=""
     local trailer_type="issue"
     local commit="HEAD"
     local show_help=false
+    local help_requested=false
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -1837,6 +1895,7 @@ handle_commit_with_trailers() {
                 ;;
             --help|-h)
                 show_help=true
+                help_requested=true
                 shift
                 ;;
             *)
@@ -1848,22 +1907,14 @@ handle_commit_with_trailers() {
     done
     
     if [[ "$show_help" == true ]] || [[ -z "$issue_id" ]]; then
-        echo "Usage: git issue commit [OPTIONS]"
-        echo ""
-        echo "Add issue trailers to git commits for standardized issue tracking"
-        echo ""
-        echo "Options:"
-        echo "  --issue <id>      Link commit to issue (default)"
-        echo "  --fixes <id>      Mark issue as fixed by this commit"
-        echo "  --closes <id>     Mark issue as closed by this commit" 
-        echo "  --related-to <id> Reference related issue"
-        echo "  --commit <hash>   Target commit (default: HEAD)"
-        echo "  --help, -h        Show this help"
-        echo ""
-        echo "Examples:"
-        echo "  git issue commit --fixes a1b2c3d"
-        echo "  git issue commit --issue b2c3d4e --commit abc1234"
-        echo "  git issue commit --closes c3d4e5f"
+        # An asked-for help text is output; the same text after an unknown
+        # option or a missing id is a diagnostic, and a diagnostic may not
+        # touch stdout (R-plain-stdout).
+        if [[ "$help_requested" == true ]]; then
+            _gi_commit_usage
+        else
+            _gi_commit_usage >&2
+        fi
         return 1
     fi
     
@@ -3416,6 +3467,16 @@ _gi_aggregate() {
 _gi_dispatch() {
     local -a rest=()
     local arg target="" all=0 want_target=0 porcelain=0 pv=""
+
+    # Version query: answered before any storage detection so it works
+    # outside a git repository and never creates an issue store.
+    case "${1:-}" in
+        --version|-V|version)
+            printf 'git-issue %s\n' "$GIT_ISSUE_VERSION"
+            return 0
+            ;;
+    esac
+
     for arg in "$@"; do
         if [[ $want_target -eq 1 ]]; then
             target="$arg"; want_target=0; continue
@@ -3486,25 +3547,25 @@ main() {
     case "$1" in
     create)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'create' requires title${NC}"
-            echo "Usage: git issue create 'Title' [--description='Description']"
+            echo -e "${RED}Error: 'create' requires title${NC}" >&2
+            echo "Usage: git issue create 'Title' [--description='Description']" >&2
             exit 1
         fi
         create_issue_with_flags "${@:2}"
         ;;
     add)
         # Legacy support - redirect to create
-        echo -e "${YELLOW}Note: 'add' is deprecated, use 'create' for auto-generated hash IDs${NC}"
+        echo -e "${YELLOW}Note: 'add' is deprecated, use 'create' for auto-generated hash IDs${NC}" >&2
         if [ $# -lt 3 ]; then
-            echo -e "${RED}Error: 'add' requires id and title${NC}"
-            usage
+            echo -e "${RED}Error: 'add' requires id and title${NC}" >&2
+            usage >&2
             exit 1
         fi
         # Manual ID creation (legacy)
         manual_id="$2"
         manual_title=$(gi_single_line "${*:3}")
         if issue_exists "$manual_id"; then
-            echo -e "${RED}Issue #$manual_id already exists${NC}"
+            echo -e "${RED}Issue #$manual_id already exists${NC}" >&2
             exit 1
         fi
         # Create with manual ID
@@ -3532,8 +3593,8 @@ hash_source: manual"
         ;;
     show)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'show' requires issue id${NC}"
-            usage
+            echo -e "${RED}Error: 'show' requires issue id${NC}" >&2
+            usage >&2
             exit 1
         fi
         
@@ -3566,48 +3627,48 @@ hash_source: manual"
         ;;
     update)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'update' requires issue id and flags${NC}"
-            echo "Usage: git issue update <id> [--status=<s>] [--priority=<p>] [--assignee=<a>] [--role=<r>]"
+            echo -e "${RED}Error: 'update' requires issue id and flags${NC}" >&2
+            echo "Usage: git issue update <id> [--status=<s>] [--priority=<p>] [--assignee=<a>] [--role=<r>]" >&2
             exit 1
         fi
         update_issue_with_flags "${@:2}"
         ;;
     start)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'start' requires issue id${NC}"
-            echo "Usage: git issue start <id>"
+            echo -e "${RED}Error: 'start' requires issue id${NC}" >&2
+            echo "Usage: git issue start <id>" >&2
             exit 1
         fi
         update_issue_with_flags "$2" "--status=in_progress"
         ;;
     close)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'close' requires issue id${NC}"
-            echo "Usage: git issue close <id>"
+            echo -e "${RED}Error: 'close' requires issue id${NC}" >&2
+            echo "Usage: git issue close <id>" >&2
             exit 1
         fi
         update_issue_with_flags "$2" "--status=closed"
         ;;
     reopen)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'reopen' requires issue id${NC}"
-            echo "Usage: git issue reopen <id>"
+            echo -e "${RED}Error: 'reopen' requires issue id${NC}" >&2
+            echo "Usage: git issue reopen <id>" >&2
             exit 1
         fi
         update_issue_with_flags "$2" "--status=open"
         ;;
     comment)
         if [ $# -lt 3 ]; then
-            echo -e "${RED}Error: 'comment' requires id and text${NC}"
-            usage
+            echo -e "${RED}Error: 'comment' requires id and text${NC}" >&2
+            usage >&2
             exit 1
         fi
         add_comment "$2" "${@:3}"
         ;;
     link)
         if [ $# -lt 3 ]; then
-            echo -e "${RED}Error: 'link' requires id and commit${NC}"
-            usage
+            echo -e "${RED}Error: 'link' requires id and commit${NC}" >&2
+            usage >&2
             exit 1
         fi
         link_issue "$2" "$3"
@@ -3641,8 +3702,8 @@ hash_source: manual"
         ;;
     queue)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'queue' requires a role name${NC}"
-            echo "Usage: git issue queue <role> [--limit=<n>]"
+            echo -e "${RED}Error: 'queue' requires a role name${NC}" >&2
+            echo "Usage: git issue queue <role> [--limit=<n>]" >&2
             exit 1
         fi
         queue_role="$2"
@@ -3669,13 +3730,13 @@ hash_source: manual"
         usage
         ;;
     "")
-        usage
+        usage >&2
         exit 1
         ;;
     *)
         echo -e "${RED}Error: Unknown command '$1'${NC}" >&2
-        echo ""
-        usage
+        echo "" >&2
+        usage >&2
         exit 1
         ;;
     esac

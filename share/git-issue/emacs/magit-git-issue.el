@@ -55,13 +55,58 @@ closed."
   "Face for the title of an issue that is blocked."
   :group 'magit-git-issue)
 
+;;;; Guards
+
+(defun magit-git-issue--ensure-repository ()
+  "Signal a `user-error' unless `default-directory' is inside a repository.
+Run outside one the CLI does not fail: it falls back to a standalone
+tracker under `~/.local/share/git-issue' and a `.git-issue' directory
+beside it.  That is a supported way to use the CLI and the core layer
+leaves it alone, but from a magit command it is never what was meant --
+it silently creates a tracker in a place no repository will ever show.
+So every entry point here checks first."
+  (unless (magit-toplevel)
+    (user-error "Not inside a git repository")))
+
+(defun magit-git-issue--ensure-registered-paths ()
+  "Signal a `user-error' when a registered repository's path is gone.
+`git issue list --all' skips such an entry with a warning and exits
+nonzero, so the sweep reports itself as a plain CLI failure and says
+nothing about which registry entry to fix.  Naming the entry does."
+  (when-let* ((gone (seq-filter (lambda (entry)
+                                  (git-issue-repo-path-missing-p (cdr entry)))
+                                (git-issue-repo-paths))))
+    (user-error "Registered repository `%s' no longer exists at %s%s"
+                (car (car gone)) (cdr (car gone))
+                (if (cdr gone)
+                    (format " (and %d more)" (length (cdr gone)))
+                  ""))))
+
 ;;;; Issue lines
+
+(defun magit-git-issue--literal (string)
+  "STRING made safe to put in a mode-line construct.
+A header line is a mode-line construct, so `%' in it starts a format
+spec: an issue titled `50%b done' would render the buffer name where
+its `%b' is.  Doubling every `%' makes the text stand for itself."
+  (replace-regexp-in-string "%" "%%" string t t))
 
 (defun magit-git-issue--error-message (err)
   "The message carried by `git-issue-error' ERR.
 `git-issue-run' guarantees it is plain text, escape sequences and all
 stripped, so it goes to the echo area as it is."
   (or (cadr err) ""))
+
+(defmacro magit-git-issue--as-user-error (&rest body)
+  "Run BODY, reporting a `git-issue-error' from it as a `user-error'.
+The CLI\='s message is plain text by contract, so it reaches the echo
+area as it is instead of as a raw signal with a backtrace."
+  (declare (indent 0) (debug t))
+  `(condition-case magit-git-issue--err
+       (progn ,@body)
+     (git-issue-error
+      (user-error "git-issue: %s"
+                  (magit-git-issue--error-message magit-git-issue--err)))))
 
 (defun magit-git-issue--issues-for-section ()
   "The issues `magit-git-issue-status-section' selects."
@@ -105,6 +150,7 @@ repository name when WITH-REPO is non-nil and ISSUE carries one."
 Which issues it lists is the user option
 `magit-git-issue-status-section'.  A failing CLI is reported in the
 echo area rather than aborting the whole status refresh."
+  (magit-git-issue--ensure-repository)
   (condition-case err
       (when-let* ((issues (magit-git-issue--issues-for-section)))
         (magit-insert-section (git-issues)
@@ -138,12 +184,19 @@ echo area rather than aborting the whole status refresh."
 
 (defun magit-git-issue--repo-directory (issue)
   "The registered directory ISSUE lives in, or nil when it names no repo.
-Signals a `user-error' when the repo column names a repository that
-`git issue repo list' does not know."
+Signals a `user-error' naming the repository when the repo column names
+one `git issue repo list' does not know, and one naming the repository
+and the path when the registry says the path is gone.  Without the
+second check the dead path reaches `magit-setup-buffer' and comes back
+as magit's generic outside-a-repository error, which says nothing about
+which registry entry to fix."
   (when-let* ((name (git-issue-issue-repo issue)))
     (let ((path (cdr (assoc name (git-issue-repo-paths)))))
       (unless path
         (user-error "Repository `%s' is not registered" name))
+      (when (git-issue-repo-path-missing-p path)
+        (user-error "Repository `%s' is registered at %s, which no longer exists"
+                    name path))
       (file-name-as-directory path))))
 
 (defun magit-git-issue-visit ()
@@ -151,6 +204,7 @@ Signals a `user-error' when the repo column names a repository that
 When the line carries a repository name, the detail buffer runs with
 `default-directory' set to that repository's registered path."
   (interactive)
+  (magit-git-issue--ensure-repository)
   (let ((issue (magit-git-issue-issue-at-point)))
     (unless issue
       (user-error "No issue at point"))
@@ -200,7 +254,8 @@ Called by `magit-refresh-buffer' through the name of the major mode."
   (let ((all magit-git-issue--list-all)
         (ready (eq magit-git-issue--list-command 'ready)))
     (magit-set-header-line-format
-     (format "git issue %s%s" (if ready "ready" "list") (if all " --all" "")))
+     (magit-git-issue--literal
+      (format "git issue %s%s" (if ready "ready" "list") (if all " --all" ""))))
     (magit-insert-section (git-issues)
       (magit-insert-heading
         (format "%s issues%s" (if ready "Ready" "All") (if all " (all repositories)" "")))
@@ -210,6 +265,9 @@ Called by `magit-refresh-buffer' through the name of the major mode."
 
 (defun magit-git-issue--setup-list-buffer (command all)
   "Open a list buffer for COMMAND (`list' or `ready'), across ALL repos."
+  (magit-git-issue--ensure-repository)
+  (when all
+    (magit-git-issue--ensure-registered-paths))
   (magit-setup-buffer #'magit-git-issue-list-mode nil
     (magit-git-issue--list-command command)
     (magit-git-issue--list-all (and all t))))
@@ -288,7 +346,8 @@ Type \\[magit-refresh] to refresh the buffer from the CLI.
   "Refresh a `magit-git-issue-show-mode' buffer.
 Called by `magit-refresh-buffer' through the name of the major mode."
   (let ((detail (git-issue-show magit-git-issue--show-id)))
-    (magit-set-header-line-format (format "issue %s" magit-git-issue--show-id))
+    (magit-set-header-line-format
+     (magit-git-issue--literal (format "issue %s" magit-git-issue--show-id)))
     (magit-insert-section (git-issue-detail magit-git-issue--show-id)
       (magit-git-issue--insert-headers detail)
       (magit-git-issue--insert-description detail)
@@ -297,7 +356,10 @@ Called by `magit-refresh-buffer' through the name of the major mode."
 ;;;###autoload
 (defun magit-git-issue-show (id)
   "Show issue ID in a `magit-git-issue-show-mode' buffer."
-  (interactive (list (git-issue-read-id "Show issue: ")))
+  (interactive (progn (magit-git-issue--ensure-repository)
+                      (list (magit-git-issue--as-user-error
+                              (git-issue-read-id "Show issue: ")))))
+  (magit-git-issue--ensure-repository)
   (magit-setup-buffer #'magit-git-issue-show-mode nil
     (magit-git-issue--show-id id)))
 
@@ -326,6 +388,17 @@ these as completions without requiring a match."
   :type '(repeat string)
   :group 'magit-git-issue)
 
+(defun magit-git-issue--status-choices ()
+  "The statuses the set-status prompt offers.
+`magit-git-issue-statuses' names the shipped status machine, but a
+repository can define its own in `.git-issue/statuses' -- and then its
+own vocabulary is the one worth completing.  So the option is unioned
+with the statuses this repository\='s issues actually carry, and the
+prompt still does not require a match."
+  (delete-dups
+   (append magit-git-issue-statuses
+           (magit-git-issue--field-values #'git-issue-issue-status))))
+
 (defun magit-git-issue--field-values (accessor)
   "Distinct non-empty values of ACCESSOR across the issues of this repo.
 Used to offer completion for fields the CLI does not constrain."
@@ -337,6 +410,7 @@ Used to offer completion for fields the CLI does not constrain."
 
 (defun magit-git-issue--id (&optional prompt)
   "The id of the issue at point, else one read with PROMPT."
+  (magit-git-issue--ensure-repository)
   (let ((issue (magit-git-issue-issue-at-point)))
     (if issue
         (git-issue-issue-id issue)
@@ -345,16 +419,22 @@ Used to offer completion for fields the CLI does not constrain."
 (defmacro magit-git-issue--define-action (name doc prompt &rest body)
   "Define interactive command NAME with docstring DOC.
 The issue at point, or one read with PROMPT, is bound to `id' while
-BODY runs.  A `git-issue-error' from BODY becomes a `user-error'
-carrying the CLI's message; success refreshes the magit buffers."
+BODY runs.  A `git-issue-error' becomes a `user-error' carrying the
+CLI\='s message; success refreshes the magit buffers.
+
+Reading the id is inside that handler, not before it: with no issue at
+point the id comes from `git-issue-read-id', which runs the CLI to
+build its completion table, and a failure there used to escape as a
+raw `git-issue-error' -- the one shape of this failure the user was
+never meant to see."
   (declare (indent 3) (doc-string 2))
   `(defun ,name ()
      ,doc
      (interactive)
-     (let ((id (magit-git-issue--id ,prompt)))
-       (condition-case err
-           (progn ,@body (magit-refresh))
-         (git-issue-error (user-error "git-issue: %s" (magit-git-issue--error-message err)))))))
+     (magit-git-issue--as-user-error
+       (let ((id (magit-git-issue--id ,prompt)))
+         ,@body
+         (magit-refresh)))))
 
 (magit-git-issue--define-action magit-git-issue-start
     "Move the issue at point into progress." "Start issue: "
@@ -373,7 +453,8 @@ carrying the CLI's message; success refreshes the magit buffers."
 (magit-git-issue--define-action magit-git-issue-set-status
     "Set the status of the issue at point." "Set status of issue: "
   (git-issue-update id "status"
-                    (completing-read "Status: " magit-git-issue-statuses)))
+                    (completing-read "Status: "
+                                     (magit-git-issue--status-choices))))
 
 (magit-git-issue--define-action magit-git-issue-set-priority
     "Set the priority of the issue at point." "Set priority of issue: "
@@ -472,7 +553,7 @@ aborted."
                 (let ((default-directory directory))
                   (funcall callback text)))))
       (setq header-line-format
-            (concat title
+            (concat (magit-git-issue--literal title)
                     (substitute-command-keys
                      "   \\[magit-git-issue-edit-finish] to finish, \
 \\[magit-git-issue-edit-abort] to abort"))))
@@ -506,32 +587,33 @@ and retry, the way magit's commit buffer survives a failed commit."
 (defun magit-git-issue-comment ()
   "Comment on the issue at point, composing the text in a buffer."
   (interactive)
-  (let ((id (magit-git-issue--id "Comment on issue: ")))
+  (let ((id (magit-git-issue--as-user-error
+              (magit-git-issue--id "Comment on issue: "))))
     (magit-git-issue--edit-text
      (format "Comment on #%s" id)
      (lambda (text)
        (when (string-blank-p text)
          (user-error "Empty comment; nothing added"))
-       (condition-case err
-           (progn (git-issue-comment id text) (magit-refresh))
-         (git-issue-error (user-error "git-issue: %s" (magit-git-issue--error-message err))))))))
+       (magit-git-issue--as-user-error
+         (git-issue-comment id text)
+         (magit-refresh))))))
 
 (defun magit-git-issue-create ()
   "Create an issue: the title in the minibuffer, the description in a buffer.
 An empty description buffer creates the issue with a title only."
   (interactive)
+  (magit-git-issue--ensure-repository)
   (let ((title (read-string "Title: ")))
     (when (string-blank-p title)
       (user-error "An issue needs a title"))
     (magit-git-issue--edit-text
      (format "Description for %S (leave empty to skip)" title)
      (lambda (text)
-       (condition-case err
-           (let ((id (git-issue-create
-                      title (and (not (string-blank-p text)) text))))
-             (message "Created issue #%s" id)
-             (magit-refresh))
-         (git-issue-error (user-error "git-issue: %s" (magit-git-issue--error-message err))))))))
+       (magit-git-issue--as-user-error
+         (let ((id (git-issue-create
+                    title (and (not (string-blank-p text)) text))))
+           (message "Created issue #%s" id)
+           (magit-refresh)))))))
 
 ;;;; The dispatch transient
 
@@ -561,16 +643,113 @@ for an id with completion otherwise."
     ("RET" "Show"    magit-git-issue-show)]])
 
 (defun magit-git-issue--anchor (prefix keys)
-  "The first of KEYS that names an existing suffix of transient PREFIX."
-  (or (seq-find (lambda (key)
-                  (ignore-errors (transient-get-suffix prefix key)))
-                keys)
-      (error "magit-git-issue: no anchor in `%s' among %S" prefix keys)))
+  "The first of KEYS that names an existing suffix of transient PREFIX.
+Nil when none of them does.  Magit is free to rename or drop any of
+its keys, and losing an anchor may cost this package a menu entry but
+must never make the file unloadable, so this reports rather than
+signals."
+  (seq-find (lambda (key)
+              (ignore-errors (transient-get-suffix prefix key)))
+            keys))
+
+(defvar magit-git-issue--placement-warned nil
+  "Non-nil once the transient-placement warning has been shown.
+One warning is enough: the cause is the same magit for every suffix.")
+
+(defun magit-git-issue--walk-layout (node function)
+  "Call FUNCTION on every suffix under layout NODE.
+A group is a vector whose third slot holds its children; a suffix is a
+list.  Anything else -- a description string, an included prefix --
+is neither."
+  (cond ((vectorp node)
+         (dolist (child (append (aref node 2) nil))
+           (magit-git-issue--walk-layout child function)))
+        ((consp node) (funcall function node))))
+
+(defun magit-git-issue--layout-readable-p ()
+  "Non-nil when this transient exposes a prefix\='s layout by name.
+`transient--get-layout' is transient 0.9 and later.  The floor here is
+magit 4.0, which requires transient 0.7.4, so the layout is an optional
+extra: without it the anchor is all there is to go on, and neither the
+end-of-last-group fallback nor the placement check is available."
+  (fboundp 'transient--get-layout))
+
+(defun magit-git-issue--suffix-count (prefix)
+  "How many suffixes transient PREFIX\='s layout holds.
+Nil when the layout cannot be read at all, which is not zero: the
+caller must not read it as \"nothing was placed\"."
+  (when (magit-git-issue--layout-readable-p)
+    (let ((n 0))
+      (magit-git-issue--walk-layout (transient--get-layout prefix)
+                                    (lambda (_) (setq n (1+ n))))
+      n)))
+
+(defun magit-git-issue--last-suffix-location (prefix)
+  "A coordination list naming the last suffix of PREFIX\='s last group.
+Transients nest groups to a depth this package must not assume --
+`transient-append-suffix' refuses to make a suffix the sibling of a
+group -- so the depth is measured off the layout rather than guessed.
+Nil when the layout cannot be read."
+  (when (magit-git-issue--layout-readable-p)
+    (let ((node (transient--get-layout prefix))
+          (location nil))
+      (while (vectorp node)
+        (push -1 location)
+        (setq node (car (last (append (aref node 2) nil)))))
+      (and (consp node) location))))
+
+(defun magit-git-issue--report-placement (prefix placed)
+  "Warn once about PREFIX unless PLACED; return PLACED."
+  (unless (or placed magit-git-issue--placement-warned)
+    (setq magit-git-issue--placement-warned t)
+    (display-warning
+     'magit-git-issue
+     (format "Cannot place git-issue suffixes in `%s'; skipping them.  \
+The commands themselves still work." prefix)))
+  placed)
+
+(defun magit-git-issue--add-suffixes (prefix keys suffixes)
+  "Add SUFFIXES to transient PREFIX, reading top to bottom in that order.
+They go after the first of KEYS that still names a suffix of PREFIX;
+failing that at the end of PREFIX\='s last group, which is where a
+transient this package does not recognise can still take them; failing
+that nowhere, with one `display-warning'.  Appending repeatedly after
+one fixed anchor reverses the order, so that path walks SUFFIXES
+backwards while the moving-end path walks it forwards.
+
+Where the layout can be read, placement is verified rather than
+assumed: `transient-append-suffix' reports a location it cannot use
+with a message and no error, and a menu entry that quietly went
+nowhere is exactly what the warning is for.  Where it cannot -- see
+`magit-git-issue--layout-readable-p' -- an anchor that
+`transient-get-suffix' found is taken at its word.
+
+This runs at load time, so the whole of it is inside the handler: a
+transient that raises anywhere in here costs the suffixes and a
+warning, never the file.  Everything goes through
+`transient-append-suffix', so `transient-remove-suffix' takes it back
+out again.
+
+Return non-nil when the suffixes landed."
+  (condition-case nil
+      (let* ((anchor (magit-git-issue--anchor prefix keys))
+             (before (magit-git-issue--suffix-count prefix))
+             (location (or anchor
+                           (magit-git-issue--last-suffix-location prefix)))
+             (placed nil))
+        (when location
+          (dolist (suffix (if anchor (reverse suffixes) suffixes))
+            (transient-append-suffix prefix location suffix))
+          (setq placed
+                (or (null before)
+                    (eql (magit-git-issue--suffix-count prefix)
+                         (+ before (length suffixes))))))
+        (magit-git-issue--report-placement prefix placed))
+    (error (magit-git-issue--report-placement prefix nil))))
 
 ;; Appended, not redefined, so `transient-remove-suffix' undoes it.
-(transient-append-suffix 'magit-dispatch
-  (magit-git-issue--anchor 'magit-dispatch '("!" "Q" "z"))
-  '("x" "Issues" magit-git-issue-dispatch))
+(magit-git-issue--add-suffixes 'magit-dispatch '("!" "Q" "z")
+                               '(("x" "Issues" magit-git-issue-dispatch)))
 
 ;; `x' is `magit-reset-quickly' in `magit-mode-map'; the spec puts the
 ;; issue transient on it in the status buffer, where reset-quickly stays
@@ -629,45 +808,77 @@ works inside a live transient, and this is the part worth testing."
   :key "-i"
   :argument "--issue=")
 
-;; Inserted in reverse so they read fixes, closes, issue top to bottom.
-(let ((anchor (magit-git-issue--anchor 'magit-commit '("-C" "-R" "-n" "-a"))))
-  (transient-append-suffix 'magit-commit anchor '(magit-git-issue:--issue))
-  (transient-append-suffix 'magit-commit anchor '(magit-git-issue:--closes))
-  (transient-append-suffix 'magit-commit anchor '(magit-git-issue:--fixes)))
+(magit-git-issue--add-suffixes 'magit-commit '("-C" "-R" "-n" "-a")
+                               '((magit-git-issue:--fixes)
+                                 (magit-git-issue:--closes)
+                                 (magit-git-issue:--issue)))
+
+(defconst git-issue--trailer-line-regexp "\\`[A-Za-z][A-Za-z-]*: "
+  "What a line has to look like for Git to read it as a trailer.")
+
+(defun git-issue--trailer-paragraph-p (text)
+  "Non-nil when every line of paragraph TEXT is trailer-shaped.
+Git reads the last paragraph of a message as trailers only when the
+paragraph as a whole is trailers, so one prose line shaped like a
+trailer -- `Note: see below' -- does not make the paragraph one, and a
+new trailer has to open a paragraph of its own after it."
+  (let ((lines (split-string (or text "") "\n" t "[ \t]+")))
+    (and lines
+         (seq-every-p (lambda (line)
+                        (string-match-p git-issue--trailer-line-regexp line))
+                      lines))))
+
+(defun git-issue--message-end (comment-re)
+  "Where the commit message ends and the block Git strips begins.
+Scans back from `point-max' over the last contiguous run of blank
+lines and lines matching COMMENT-RE.  Only that run is the trailing
+comment block: a comment line in the middle of the body -- a `# Design'
+heading, say -- is message, and the trailer goes after it, not before."
+  (save-excursion
+    (goto-char (point-max))
+    (let ((end (point-max)))
+      (while (and (not (bobp))
+                  (progn
+                    (forward-line -1)
+                    (or (looking-at-p "[ \t]*$") (looking-at-p comment-re))))
+        (setq end (point)))
+      end)))
 
 ;;;###autoload
 (defun git-issue-insert-trailer (kind id)
   "Insert the KIND trailer for issue ID at the end of the commit message.
-The message ends where the trailing comment block that Git strips
-begins, so the trailer lands there and not after the comments.  A
-blank line is opened first unless the message already ends in a
-trailer, which is what makes Git parse the line as one."
+The message ends where the *last* run of blank and comment lines
+begins, so the trailer lands before the block Git strips and after a
+comment line the body happens to contain.  It stacks directly under an
+existing trailer paragraph and opens a paragraph of its own after
+anything else, which is what makes Git parse the line as a trailer."
   (interactive
-   (list (completing-read "Trailer: " (mapcar #'car git-issue-trailer-keys)
-                          nil t)
-         (git-issue-read-id "Issue: ")))
-  (let ((line (git-issue-format-trailer kind id))
-        (comment-re (concat "^" (regexp-quote (or comment-start "#")))))
+   (progn
+     (magit-git-issue--ensure-repository)
+     (list (completing-read "Trailer: " (mapcar #'car git-issue-trailer-keys)
+                            nil t)
+           (magit-git-issue--as-user-error
+             (git-issue-read-id "Issue: ")))))
+  (let* ((line (git-issue-format-trailer kind id))
+         (comment-re (concat "^" (regexp-quote (or comment-start "#"))))
+         (end (git-issue--message-end comment-re))
+         (message-text (buffer-substring-no-properties (point-min) end))
+         (paragraph (car (last (split-string message-text "\n[ \t]*\n")))))
     (save-excursion
-      ;; Skip any leading comment block; the message starts after it.
-      (goto-char (point-min))
-      (while (and (not (eobp)) (looking-at-p comment-re))
-        (forward-line))
-      (let ((body-start (point)))
-        ;; Walk back to the first line of the trailing comment block.
-        (goto-char (point-max))
-        (while (re-search-backward comment-re body-start t))
-        (skip-chars-backward "\n" body-start)
-        (cond
-          ((= (point) body-start))      ; empty message: no leading blank
-          ((save-excursion
-             (beginning-of-line)
-             (looking-at-p "[A-Za-z][A-Za-z-]*: "))
-           (insert "\n"))               ; stack under the existing trailers
-          (t (insert "\n\n")))
-        (insert line)
-        (unless (and (not (eobp)) (eq (char-after) ?\n))
-          (insert "\n"))))))
+      (goto-char end)
+      ;; A message that does not end in a newline needs one before a line
+      ;; of its own can follow.
+      (when (and (> end (point-min)) (not (eq (char-before end) ?\n)))
+        (insert "\n"))
+      ;; Git reads the last paragraph as trailers only when the whole
+      ;; paragraph is trailer-shaped, so a trailer stacks directly under
+      ;; one and opens a paragraph of its own after anything else --
+      ;; prose that merely looks like a trailer ("Note: see below")
+      ;; included.  An empty message needs no separator at all.
+      (when (and (> end (point-min))
+                 (not (git-issue--trailer-paragraph-p paragraph)))
+        (insert "\n"))
+      (insert line "\n"))))
 
 (define-key git-commit-mode-map (kbd "C-c C-x") #'git-issue-insert-trailer)
 

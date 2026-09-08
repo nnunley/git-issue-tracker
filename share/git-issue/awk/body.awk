@@ -1,9 +1,14 @@
 # Required: -v FIELDS=<pipe-separated known field names>
 BEGIN {
     known_re = "^(" FIELDS "):"
-    # A "description:" line below the body is prose, not a trailing header:
-    # description is only ever a format-2 top-block header (see front_matter.awk).
-    not_trailing_re = "^description:"
+    # Never a trailing header: "id" is always written first, and
+    # "description" is a format-2 top-block header only. Either one below the
+    # body is body prose, so it must not anchor or extend a trailing block.
+    # Must stay identical to front_matter.awk's not_trailing_re (and match
+    # what extract_issues.awk drops in emit()): if the parsers disagree, one
+    # puts a line in the body that another reads as a header, and the same
+    # note means two different things.
+    not_trailing_re = "^(id|description):"
 }
 { lines[++n] = $0 }
 END {

@@ -108,21 +108,28 @@ jobs:
     - name: Install Emacs
       run: sudo apt-get update && sudo apt-get install -y emacs-nox
 
-    # The suite creates scratch repositories and commits in them.
-    - name: Set up Git
-      run: |
-        git config --global user.name "Test User"
-        git config --global user.email "test@example.com"
-        git config --global init.defaultBranch main
+    # No "Set up Git" step here on purpose: run-ui-tests.sh redirects HOME
+    # and writes its own global user.name, user.email and init.defaultBranch
+    # into that isolated HOME, so anything configured before it is discarded.
 
     # Keeps the NonGNU ELPA download out of every run. The runner points
     # `user-emacs-directory' at this path; HOME is redirected separately so
     # the registry tests never touch a real ~/.gitconfig.
+    #
+    # The key is static, so the cache is written once and then only read:
+    # magit is fetched from NonGNU ELPA, which serves whatever is current,
+    # and a key that moved with the lockfile would refetch on every magit
+    # release. Bump the -vN suffix to pick up a newer magit deliberately.
+    # restore-keys lets a bumped key start from the previous cache instead
+    # of an empty directory, so the bump costs one download, not a cold
+    # cache on every subsequent run.
     - name: Cache magit
       uses: actions/cache@v4
       with:
         path: ~/.cache/git-issue-emacs
         key: magit-${{ runner.os }}-v1
+        restore-keys: |
+          magit-${{ runner.os }}-
 
     - name: Run UI tests
       run: GIT_ISSUE_EMACS_SCRATCH=$HOME/.cache/git-issue-emacs make test-emacs-ui

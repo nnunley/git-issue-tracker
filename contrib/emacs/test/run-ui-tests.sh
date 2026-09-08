@@ -27,6 +27,10 @@ trap cleanup EXIT
 export PATH="$ROOT/bin:$PATH"
 export HOME="$WORK"
 export XDG_CONFIG_HOME="$WORK/.config"
+# The CLI puts a standalone (repository-less) tracker under XDG_DATA_HOME,
+# defaulting to ~/Library/Application Support on macOS. Pin it so the test
+# that asserts no such tracker was created knows where to look.
+export XDG_DATA_HOME="$WORK/.local/share"
 export GIT_CONFIG_NOSYSTEM=1
 # Read by the suite: the registry tests refuse to run unless HOME is isolated.
 export GIT_ISSUE_UI_TEST_ISOLATED=1
