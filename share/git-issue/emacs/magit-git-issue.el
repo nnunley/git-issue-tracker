@@ -725,41 +725,71 @@ works inside a live transient, and this is the part worth testing."
                                  (magit-git-issue:--closes)
                                  (magit-git-issue:--issue)))
 
+(defconst git-issue--trailer-line-regexp "\\`[A-Za-z][A-Za-z-]*: "
+  "What a line has to look like for Git to read it as a trailer.")
+
+(defun git-issue--trailer-paragraph-p (text)
+  "Non-nil when every line of paragraph TEXT is trailer-shaped.
+Git reads the last paragraph of a message as trailers only when the
+paragraph as a whole is trailers, so one prose line shaped like a
+trailer -- `Note: see below' -- does not make the paragraph one, and a
+new trailer has to open a paragraph of its own after it."
+  (let ((lines (split-string (or text "") "\n" t "[ \t]+")))
+    (and lines
+         (seq-every-p (lambda (line)
+                        (string-match-p git-issue--trailer-line-regexp line))
+                      lines))))
+
+(defun git-issue--message-end (comment-re)
+  "Where the commit message ends and the block Git strips begins.
+Scans back from `point-max' over the last contiguous run of blank
+lines and lines matching COMMENT-RE.  Only that run is the trailing
+comment block: a comment line in the middle of the body -- a `# Design'
+heading, say -- is message, and the trailer goes after it, not before."
+  (save-excursion
+    (goto-char (point-max))
+    (let ((end (point-max)))
+      (while (and (not (bobp))
+                  (progn
+                    (forward-line -1)
+                    (or (looking-at-p "[ \t]*$") (looking-at-p comment-re))))
+        (setq end (point)))
+      end)))
+
 ;;;###autoload
 (defun git-issue-insert-trailer (kind id)
   "Insert the KIND trailer for issue ID at the end of the commit message.
-The message ends where the trailing comment block that Git strips
-begins, so the trailer lands there and not after the comments.  A
-blank line is opened first unless the message already ends in a
-trailer, which is what makes Git parse the line as one."
+The message ends where the *last* run of blank and comment lines
+begins, so the trailer lands before the block Git strips and after a
+comment line the body happens to contain.  It stacks directly under an
+existing trailer paragraph and opens a paragraph of its own after
+anything else, which is what makes Git parse the line as a trailer."
   (interactive
    (progn
      (magit-git-issue--ensure-repository)
      (list (completing-read "Trailer: " (mapcar #'car git-issue-trailer-keys)
                             nil t)
            (git-issue-read-id "Issue: "))))
-  (let ((line (git-issue-format-trailer kind id))
-        (comment-re (concat "^" (regexp-quote (or comment-start "#")))))
+  (let* ((line (git-issue-format-trailer kind id))
+         (comment-re (concat "^" (regexp-quote (or comment-start "#"))))
+         (end (git-issue--message-end comment-re))
+         (message-text (buffer-substring-no-properties (point-min) end))
+         (paragraph (car (last (split-string message-text "\n[ \t]*\n")))))
     (save-excursion
-      ;; Skip any leading comment block; the message starts after it.
-      (goto-char (point-min))
-      (while (and (not (eobp)) (looking-at-p comment-re))
-        (forward-line))
-      (let ((body-start (point)))
-        ;; Walk back to the first line of the trailing comment block.
-        (goto-char (point-max))
-        (while (re-search-backward comment-re body-start t))
-        (skip-chars-backward "\n" body-start)
-        (cond
-          ((= (point) body-start))      ; empty message: no leading blank
-          ((save-excursion
-             (beginning-of-line)
-             (looking-at-p "[A-Za-z][A-Za-z-]*: "))
-           (insert "\n"))               ; stack under the existing trailers
-          (t (insert "\n\n")))
-        (insert line)
-        (unless (and (not (eobp)) (eq (char-after) ?\n))
-          (insert "\n"))))))
+      (goto-char end)
+      ;; A message that does not end in a newline needs one before a line
+      ;; of its own can follow.
+      (when (and (> end (point-min)) (not (eq (char-before end) ?\n)))
+        (insert "\n"))
+      ;; Git reads the last paragraph as trailers only when the whole
+      ;; paragraph is trailer-shaped, so a trailer stacks directly under
+      ;; one and opens a paragraph of its own after anything else --
+      ;; prose that merely looks like a trailer ("Note: see below")
+      ;; included.  An empty message needs no separator at all.
+      (when (and (> end (point-min))
+                 (not (git-issue--trailer-paragraph-p paragraph)))
+        (insert "\n"))
+      (insert line "\n"))))
 
 (define-key git-commit-mode-map (kbd "C-c C-x") #'git-issue-insert-trailer)
 

@@ -806,6 +806,50 @@ catching only `file-missing' let those through."
     ;; and still before the comment block git strips
     (should (search-forward "# Please enter" nil t))))
 
+(defun magit-git-issue-test--trailer-into (message kind id)
+  "MESSAGE with the KIND trailer for ID inserted, as a string."
+  (with-temp-buffer
+    (setq-local comment-start "#")
+    (insert message)
+    (git-issue-insert-trailer kind id)
+    (buffer-substring-no-properties (point-min) (point-max))))
+
+(ert-deftest magit-git-issue-insert-trailer-ignores-a-comment-in-the-body ()
+  "Only the *last* run of comment lines is the block Git strips.
+Walking back to the earliest `#' line put the trailer above a `# Design'
+heading the body happened to contain."
+  (should (equal (magit-git-issue-test--trailer-into
+                  "subject\n\n# Design\nkeep the parser out of the UI\n\n\
+# Please enter the commit message for your changes.\n"
+                  "fixes" "a1b2c3d")
+                 "subject\n\n# Design\nkeep the parser out of the UI\n\n\
+Fixes: #a1b2c3d\n\n# Please enter the commit message for your changes.\n")))
+
+(ert-deftest magit-git-issue-insert-trailer-separates-prose-shaped-like-one ()
+  "A prose line that merely looks like a trailer still gets a blank line.
+Git reads the last paragraph as trailers only when the whole paragraph
+is trailers, so `Note: see below' does not make one."
+  (should (equal (magit-git-issue-test--trailer-into
+                  "subject\n\nsome prose\nNote: see below\n"
+                  "fixes" "a1b2c3d")
+                 "subject\n\nsome prose\nNote: see below\n\nFixes: #a1b2c3d\n")))
+
+(ert-deftest magit-git-issue-insert-trailer-stacks-under-a-trailer ()
+  "A message ending in a real trailer paragraph takes the new one directly."
+  (should (equal (magit-git-issue-test--trailer-into
+                  "subject\n\nbody\n\nSigned-off-by: x <x@example.invalid>\n"
+                  "fixes" "a1b2c3d")
+                 "subject\n\nbody\n\nSigned-off-by: x <x@example.invalid>\n\
+Fixes: #a1b2c3d\n")))
+
+(ert-deftest magit-git-issue-insert-trailer-into-an-empty-message ()
+  "An empty message opens no blank line above the trailer."
+  (should (equal (magit-git-issue-test--trailer-into
+                  "\n# Please enter the commit message for your changes.\n"
+                  "fixes" "a1b2c3d")
+                 "Fixes: #a1b2c3d\n\n\
+# Please enter the commit message for your changes.\n")))
+
 (ert-deftest magit-git-issue-insert-trailer-reads-kind-and-id ()
   (magit-git-issue-test--with-repo
     (let ((a (git-issue-create "alpha task")))
