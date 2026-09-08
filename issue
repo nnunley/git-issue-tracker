@@ -1,4 +1,5 @@
 id: c47bd6c
+v: 2
 title: bench_deps.sh hangs on macOS
 status: open
 priority: medium
@@ -7,5 +8,18 @@ updated: 2026-08-14T02:06:20Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
+description: tests/bench_deps.sh hangs indefinitely on macOS (confirmed pre-existing: reproduces at merge-base before the portable-install fixes). Passes on ubuntu. Likely gdate/date or read loop difference; excluded from test batteries since it is a benchmark.
 
-tests/bench_deps.sh hangs indefinitely on macOS (confirmed pre-existing: reproduces at merge-base before the portable-install fixes). Passes on ubuntu. Likely gdate/date or read loop difference; excluded from test batteries since it is a benchmark.
+## Comments
+[2026-09-08T04:25:40Z] Norman Nunley, Jr: Investigated 2026-09-08 on macOS 15 (Darwin 25.6, arm64), time-boxed. Could not reproduce an indefinite hang, at HEAD or at the pre-portable-install commit fc9d63d:
+ 
+   timeout 60  ./tests/bench_deps.sh 20   -> completes, ~20s (both revisions)
+   timeout 400 ./tests/bench_deps.sh      -> completes, 72s at HEAD, 63s at fc9d63d
+ 
+ Ruled out the two suspects named in the report. _nano is fine: this machine's /usr/bin/date does support %s%N (prints 1788841419577364000), and where it did not, the 'date +%s%N | grep -qv N' probe correctly falls through to python3. There is no read loop in the script.
+ 
+ What it looks like instead is silence mistaken for a hang. The script prints progress only every 50 issues during creation, and prints nothing at all during the dependency loop, which is one 'git issue dep add' (a full read-modify-write of a note) per issue. At the documented target size of 500 issues that is roughly 4-5 minutes of creation with 10 progress lines, then about 2 minutes of complete silence before 'Created N dependencies.' appears. Timings at HEAD, 100 issues / 98 deps: ready 4306ms, topo 1738ms, deps 3933ms, deps --dot 2039ms, dep rebuild 4032ms, dep list 4237ms.
+ 
+ Left out of 'make test-all': at the default COUNT=100 it takes 72s, which is far too slow for the battery, and it is a benchmark with no assertions anyway.
+ 
+ Not closing. Suggested next step for whoever hits it again: add a progress line to the dependency loop and capture the actual stack (sample the pid, or run with 'bash -x') rather than the elapsed time, so we learn whether the original report was a genuine deadlock on a different macOS/bash/coreutils mix or just this silence.
