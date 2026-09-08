@@ -2,9 +2,9 @@ id: f495183
 v: 2
 title: emacs: statuses defcustom should union the repo's observed statuses
 status: open
-priority: medium
+priority: low
 created: 2026-09-07T21:24:40Z
-updated: 2026-09-07T21:24:40Z
+updated: 2026-09-08T03:44:29Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
