@@ -3,6 +3,20 @@
 (require 'cl-lib)
 (require 'git-issue)
 
+;; The registry lives in *global* git config and a standalone tracker lives
+;; under XDG_DATA_HOME, so an unisolated run would write into the
+;; developer's own ~/.gitconfig and data directory.  Redirect both once, at
+;; load, before any test runs -- the same guard run-ui-tests.sh applies to
+;; the UI suite.  GIT_CONFIG_NOSYSTEM keeps /etc/gitconfig out too.
+(defvar git-issue-test--home
+  (file-name-as-directory (make-temp-file "git-issue-test-home" t))
+  "An isolated HOME for the whole core suite.")
+
+(setenv "HOME" git-issue-test--home)
+(setenv "XDG_CONFIG_HOME" (expand-file-name ".config" git-issue-test--home))
+(setenv "XDG_DATA_HOME" (expand-file-name ".local/share" git-issue-test--home))
+(setenv "GIT_CONFIG_NOSYSTEM" "1")
+
 (defun git-issue-test--scratch-repo ()
   "Create a git repository with one commit; return its directory (trailing slash)."
   (let ((dir (file-name-as-directory (make-temp-file "git-issue-test" t))))

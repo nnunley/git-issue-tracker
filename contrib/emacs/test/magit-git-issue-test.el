@@ -330,12 +330,21 @@ the section announce a failure in every repository with nothing ready."
                             said)))))
 
 (ert-deftest magit-git-issue-status-section-survives-a-cli-failure ()
-  "A broken CLI reports itself; it does not abort the status refresh."
+  "A broken CLI reports itself; it does not abort the status refresh.
+Both halves matter: surviving silently would hide the breakage, so the
+`message' has to happen as well as the rest of the buffer."
   (magit-git-issue-test--with-repo
-    (let ((git-issue-program "git-issue-does-not-exist"))
-      (with-current-buffer (magit-status-setup-buffer default-directory)
-        (goto-char (point-min))
-        (should (search-forward "Recent commits" nil t))))))
+    (let ((git-issue-program "git-issue-does-not-exist")
+          (said nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format-string &rest args)
+                   (when format-string
+                     (push (apply #'format format-string args) said)))))
+        (with-current-buffer (magit-status-setup-buffer default-directory)
+          (goto-char (point-min))
+          (should (search-forward "Recent commits" nil t))))
+      (should (seq-find (lambda (line) (string-prefix-p "git-issue:" line))
+                        said)))))
 
 (ert-deftest magit-git-issue-status-section-survives-an-unrunnable-program ()
   "A program that exists but cannot be run must not abort the refresh.
@@ -659,6 +668,24 @@ runs the CLI; reading it outside the handler let that escape as a raw
         (should (equal (git-issue-issue-priority (git-issue-show-issue a))
                        "high"))))))
 
+(ert-deftest magit-git-issue-set-role-completes-over-the-roles-in-use ()
+  "The CLI does not constrain roles, so the prompt offers the ones in use."
+  (magit-git-issue-test--with-repo
+    (let ((a (git-issue-create "alpha task"))
+          (b (git-issue-create "beta task"))
+          (offered nil))
+      (git-issue-update a "role" "reviewer")
+      (with-current-buffer (magit-status-setup-buffer default-directory)
+        (magit-git-issue-test--goto "beta task")
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (_prompt collection &rest _)
+                     (setq offered collection)
+                     "reviewer")))
+          (magit-git-issue-set-role))
+        (should (member "reviewer" offered))
+        (should (equal (git-issue-issue-role (git-issue-show-issue b))
+                       "reviewer"))))))
+
 (ert-deftest magit-git-issue-set-status-offers-the-repositorys-own-statuses ()
   "A status this repository uses completes even when the option omits it.
 A repository can define its own status machine in `.git-issue/statuses',
@@ -775,22 +802,23 @@ defcustom is unioned with what the repository's issues actually carry."
   (magit-git-issue-test--with-repo
     (let ((a (git-issue-create "alpha task")))
       (with-current-buffer (magit-status-setup-buffer default-directory)
-        (goto-char (point-min))
-        (cl-letf (((symbol-function 'git-issue-read-id) (lambda (&rest _) "zzzzzzz")))
-          (magit-git-issue-comment))
+        (magit-git-issue-test--goto "alpha task")
+        (magit-git-issue-comment)
         (insert "carefully composed\ntext")
-        (let ((err (should-error
-                    (call-interactively (key-binding (kbd "C-c C-c")))
-                    :type 'user-error)))
-          (should (string-match-p "not found" (cadr err))))
+        ;; A transient failure: the CLI is broken while this finish runs.
+        (let ((err (let ((git-issue-program "false"))
+                     (should-error
+                      (call-interactively (key-binding (kbd "C-c C-c")))
+                      :type 'user-error))))
+          (should (string-match-p (regexp-quote git-issue-silent-failure-message)
+                                  (cadr err))))
         (let ((buffer (get-buffer "*git-issue edit*")))
           (should buffer)
           (with-current-buffer buffer
             (should (equal (buffer-substring-no-properties (point-min) (point-max))
                            "carefully composed\ntext"))
-            ;; The same buffer can be finished again once the cause is gone.
-            (setq magit-git-issue--edit-callback
-                  (lambda (text) (git-issue-comment a text)))
+            ;; The cause is gone, so the *real* command finishes it: nothing
+            ;; is put back by hand, which is what makes this a retry.
             (call-interactively (key-binding (kbd "C-c C-c")))))
         (should-not (get-buffer "*git-issue edit*"))
         (should (equal (caddr (car (git-issue-detail-comments
