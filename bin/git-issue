@@ -610,7 +610,7 @@ create_issue() {
     done
     
     if [[ $attempts -ge 100 ]]; then
-        echo -e "${RED}Unable to generate unique ID after 100 attempts${NC}"
+        echo -e "${RED}Unable to generate unique ID after 100 attempts${NC}" >&2
         return 1
     fi
     
@@ -820,15 +820,15 @@ update_issue() {
     case "$field" in
         status)
             if [[ ! " ${STATUSES[*]} " =~ " ${value} " ]]; then
-                echo -e "${RED}Invalid status: $value${NC}"
-                echo "Valid statuses: ${STATUSES[*]}"
+                echo -e "${RED}Invalid status: $value${NC}" >&2
+                echo "Valid statuses: ${STATUSES[*]}" >&2
                 return 1
             fi
             ;;
         priority)
             if [[ ! " ${PRIORITIES[*]} " =~ " ${value} " ]]; then
-                echo -e "${RED}Invalid priority: $value${NC}"
-                echo "Valid priorities: ${PRIORITIES[*]}"
+                echo -e "${RED}Invalid priority: $value${NC}" >&2
+                echo "Valid priorities: ${PRIORITIES[*]}" >&2
                 return 1
             fi
             ;;
@@ -845,8 +845,8 @@ update_issue() {
             # Accept comma-separated issue IDs
             ;;
         *)
-            echo -e "${RED}Invalid field: $field${NC}"
-            echo "Valid fields: status, priority, assignee, role, description, blocks, depends_on, parent_of, relates_to"
+            echo -e "${RED}Invalid field: $field${NC}" >&2
+            echo "Valid fields: status, priority, assignee, role, description, blocks, depends_on, parent_of, relates_to" >&2
             return 1
             ;;
     esac
@@ -1152,7 +1152,7 @@ setup_sync() {
     local action="${1:-enable}"
     
     if [[ "$STORAGE_TYPE" == "xdg" ]]; then
-        echo -e "${YELLOW}⚠️  Auto-sync is only available in git repositories, not XDG mode${NC}"
+        echo -e "${YELLOW}⚠️  Auto-sync is only available in git repositories, not XDG mode${NC}" >&2
         return 1
     fi
     
@@ -1204,8 +1204,8 @@ setup_sync_enable() {
     echo -e "${BLUE}🔧 Setting up automatic git notes synchronization...${NC}"
 
     if [[ -z "$hooks_source" ]]; then
-        echo -e "${RED}❌ Could not find hook templates in any known location${NC}"
-        echo -e "${YELLOW}   Searched: relative to script, Homebrew share, /usr/local/share${NC}"
+        echo -e "${RED}❌ Could not find hook templates in any known location${NC}" >&2
+        echo -e "${YELLOW}   Searched: relative to script, Homebrew share, /usr/local/share${NC}" >&2
         return 1
     fi
 
@@ -1214,7 +1214,7 @@ setup_sync_enable() {
 
     # Install post-merge hook
     if [[ -f "$hooks_dir/post-merge" ]]; then
-        echo -e "${YELLOW}⚠️  Existing post-merge hook found, backing up to post-merge.backup${NC}"
+        echo -e "${YELLOW}⚠️  Existing post-merge hook found, backing up to post-merge.backup${NC}" >&2
         mv "$hooks_dir/post-merge" "$hooks_dir/post-merge.backup"
     fi
 
@@ -1223,13 +1223,13 @@ setup_sync_enable() {
         chmod +x "$hooks_dir/post-merge"
         echo -e "${GREEN}✓ Installed post-merge hook (auto-fetch notes)${NC}"
     else
-        echo -e "${RED}❌ Could not find post-merge hook template in $hooks_source${NC}"
+        echo -e "${RED}❌ Could not find post-merge hook template in $hooks_source${NC}" >&2
         return 1
     fi
 
     # Install pre-push hook
     if [[ -f "$hooks_dir/pre-push" ]]; then
-        echo -e "${YELLOW}⚠️  Existing pre-push hook found, backing up to pre-push.backup${NC}"
+        echo -e "${YELLOW}⚠️  Existing pre-push hook found, backing up to pre-push.backup${NC}" >&2
         mv "$hooks_dir/pre-push" "$hooks_dir/pre-push.backup"
     fi
 
@@ -1238,7 +1238,7 @@ setup_sync_enable() {
         chmod +x "$hooks_dir/pre-push"
         echo -e "${GREEN}✓ Installed pre-push hook (auto-push notes)${NC}"
     else
-        echo -e "${RED}❌ Could not find pre-push hook template in $hooks_source${NC}"
+        echo -e "${RED}❌ Could not find pre-push hook template in $hooks_source${NC}" >&2
         return 1
     fi
     
@@ -1646,7 +1646,7 @@ link_issue() {
     
     # Validate commit
     if ! git rev-parse "$commit" >/dev/null 2>&1; then
-        echo -e "${RED}Invalid commit: $commit${NC}"
+        echo -e "${RED}Invalid commit: $commit${NC}" >&2
         return 1
     fi
     
@@ -3501,25 +3501,25 @@ main() {
     case "$1" in
     create)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'create' requires title${NC}"
-            echo "Usage: git issue create 'Title' [--description='Description']"
+            echo -e "${RED}Error: 'create' requires title${NC}" >&2
+            echo "Usage: git issue create 'Title' [--description='Description']" >&2
             exit 1
         fi
         create_issue_with_flags "${@:2}"
         ;;
     add)
         # Legacy support - redirect to create
-        echo -e "${YELLOW}Note: 'add' is deprecated, use 'create' for auto-generated hash IDs${NC}"
+        echo -e "${YELLOW}Note: 'add' is deprecated, use 'create' for auto-generated hash IDs${NC}" >&2
         if [ $# -lt 3 ]; then
-            echo -e "${RED}Error: 'add' requires id and title${NC}"
-            usage
+            echo -e "${RED}Error: 'add' requires id and title${NC}" >&2
+            usage >&2
             exit 1
         fi
         # Manual ID creation (legacy)
         manual_id="$2"
         manual_title=$(gi_single_line "${*:3}")
         if issue_exists "$manual_id"; then
-            echo -e "${RED}Issue #$manual_id already exists${NC}"
+            echo -e "${RED}Issue #$manual_id already exists${NC}" >&2
             exit 1
         fi
         # Create with manual ID
@@ -3547,8 +3547,8 @@ hash_source: manual"
         ;;
     show)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'show' requires issue id${NC}"
-            usage
+            echo -e "${RED}Error: 'show' requires issue id${NC}" >&2
+            usage >&2
             exit 1
         fi
         
@@ -3581,48 +3581,48 @@ hash_source: manual"
         ;;
     update)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'update' requires issue id and flags${NC}"
-            echo "Usage: git issue update <id> [--status=<s>] [--priority=<p>] [--assignee=<a>] [--role=<r>]"
+            echo -e "${RED}Error: 'update' requires issue id and flags${NC}" >&2
+            echo "Usage: git issue update <id> [--status=<s>] [--priority=<p>] [--assignee=<a>] [--role=<r>]" >&2
             exit 1
         fi
         update_issue_with_flags "${@:2}"
         ;;
     start)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'start' requires issue id${NC}"
-            echo "Usage: git issue start <id>"
+            echo -e "${RED}Error: 'start' requires issue id${NC}" >&2
+            echo "Usage: git issue start <id>" >&2
             exit 1
         fi
         update_issue_with_flags "$2" "--status=in_progress"
         ;;
     close)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'close' requires issue id${NC}"
-            echo "Usage: git issue close <id>"
+            echo -e "${RED}Error: 'close' requires issue id${NC}" >&2
+            echo "Usage: git issue close <id>" >&2
             exit 1
         fi
         update_issue_with_flags "$2" "--status=closed"
         ;;
     reopen)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'reopen' requires issue id${NC}"
-            echo "Usage: git issue reopen <id>"
+            echo -e "${RED}Error: 'reopen' requires issue id${NC}" >&2
+            echo "Usage: git issue reopen <id>" >&2
             exit 1
         fi
         update_issue_with_flags "$2" "--status=open"
         ;;
     comment)
         if [ $# -lt 3 ]; then
-            echo -e "${RED}Error: 'comment' requires id and text${NC}"
-            usage
+            echo -e "${RED}Error: 'comment' requires id and text${NC}" >&2
+            usage >&2
             exit 1
         fi
         add_comment "$2" "${@:3}"
         ;;
     link)
         if [ $# -lt 3 ]; then
-            echo -e "${RED}Error: 'link' requires id and commit${NC}"
-            usage
+            echo -e "${RED}Error: 'link' requires id and commit${NC}" >&2
+            usage >&2
             exit 1
         fi
         link_issue "$2" "$3"
@@ -3656,8 +3656,8 @@ hash_source: manual"
         ;;
     queue)
         if [ $# -lt 2 ]; then
-            echo -e "${RED}Error: 'queue' requires a role name${NC}"
-            echo "Usage: git issue queue <role> [--limit=<n>]"
+            echo -e "${RED}Error: 'queue' requires a role name${NC}" >&2
+            echo "Usage: git issue queue <role> [--limit=<n>]" >&2
             exit 1
         fi
         queue_role="$2"
@@ -3684,13 +3684,13 @@ hash_source: manual"
         usage
         ;;
     "")
-        usage
+        usage >&2
         exit 1
         ;;
     *)
         echo -e "${RED}Error: Unknown command '$1'${NC}" >&2
-        echo ""
-        usage
+        echo "" >&2
+        usage >&2
         exit 1
         ;;
     esac

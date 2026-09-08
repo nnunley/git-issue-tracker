@@ -363,6 +363,40 @@ fresh_repo filterexit
 "$GI" create "alpha task" --porcelain >/dev/null 2>&1
 empty_ok "ready with a role nothing matches" ready --role=nobody-has-this-role
 
+echo "Testing every diagnostic goes to stderr [R-plain-stdout]"
+# A consumer reading stdout as data must never see a diagnostic there, in
+# either mode: the human mode's banner and coloured errors used to land on
+# stdout for validation failures (invalid status/priority/field/commit) as
+# well as for not-found ids.
+fresh_repo diagerr
+real=$("$GI" create "alpha task" --porcelain 2>/dev/null)
+diag_err() { # diag_err <label> <expected fragment> <args...>
+    local label="$1" want="$2"; shift 2
+    local mode out rc err_file="$WORK/diagerr.err"
+    for mode in plain porcelain; do
+        if [[ "$mode" == porcelain ]]; then
+            out=$("$GI" "$@" --porcelain 2>"$err_file") && rc=0 || rc=$?
+        else
+            out=$("$GI" "$@" 2>"$err_file") && rc=0 || rc=$?
+        fi
+        eq "$label ($mode): nonzero exit" "1" "$([[ $rc -ne 0 ]] && echo 1 || echo 0)"
+        eq "$label ($mode): nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+        eq "$label ($mode): diagnostic on stderr" "1" \
+           "$(grep -c -- "$want" "$err_file" || true)"
+    done
+}
+diag_err "show on a bogus id"    "not found"        show zzzzzzz
+diag_err "update on a bogus id"  "not found"        update zzzzzzz --status=open
+diag_err "link on a bogus id"    "not found"        link zzzzzzz HEAD
+diag_err "dep add self"          "self-dependency"  dep add zzzzzzz blocks zzzzzzz
+diag_err "update invalid status" "Invalid status"   update "$real" --status=not-a-status
+diag_err "link invalid commit"   "Invalid commit"   link "$real" not-a-commit
+# The unknown-command branch prints its usage as part of the error.
+out=$("$GI" no-such-command 2>/dev/null) && rc=0 || rc=$?
+eq "unknown command: nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+eq "unknown command: usage on stderr" "1" \
+   "$("$GI" no-such-command 2>&1 >/dev/null | grep -c '^Usage: git issue' || true)"
+
 echo "Testing --version"
 # The version query is answered in _gi_dispatch before storage detection, so
 # it must work with no repository in sight and must never create a store.
