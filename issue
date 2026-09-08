@@ -1,10 +1,10 @@
 id: f3902ef
 v: 2
 title: porcelain: trailing empty continuation lines and empty comment text
-status: open
+status: closed
 priority: low
 created: 2026-09-06T21:11:17Z
-updated: 2026-09-08T03:44:28Z
+updated: 2026-09-08T04:11:07Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
