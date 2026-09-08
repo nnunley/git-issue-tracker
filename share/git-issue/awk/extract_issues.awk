@@ -21,9 +21,13 @@ function emit(   i, status) {
 BEGIN {
     OFS = "\037"
     header_re = "^(" FIELDS "): ?"
-    # Below the body, a "description:" line is prose: it neither joins nor
-    # extends a trailing header block (see the emit() guard).
-    not_trailing_re = "^description:"
+    # Below the body, an "id:" or "description:" line is prose: neither
+    # joins nor extends a trailing header block (see the emit() guard,
+    # which drops exactly these two).  Identical to body.awk's and
+    # front_matter.awk's not_trailing_re on purpose -- if the three
+    # parsers disagree, one puts a line in the body that another reads as
+    # a header, and the same note means two different things.
+    not_trailing_re = "^(id|description):"
     reset()
 }
 { gsub(/\t/, " "); gsub(/[[:cntrl:]]/, "") }

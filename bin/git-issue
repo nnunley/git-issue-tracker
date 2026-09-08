@@ -627,7 +627,9 @@ create_issue() {
     # Check for conflicts (rare but possible)
     local attempts=0
     while issue_exists "$id" && [[ $attempts -lt 100 ]]; do
-        echo "⚠️  Hash collision detected for $id, regenerating..."
+        # stderr: `create --porcelain' writes the new id to stdout, and a
+        # notice mixed in there would be read as data.
+        echo "⚠️  Hash collision detected for $id, regenerating..." >&2
         # Add microsecond precision to avoid collision
         timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
         id=$(generate_issue_id "$title" "$author" "$timestamp")
@@ -1194,12 +1196,16 @@ setup_sync() {
             setup_sync_status
             ;;
         *)
-            echo "Usage: git issue setup-sync [enable|disable|status]"
-            echo ""
-            echo "Commands:"
-            echo "  enable   Install git hooks for automatic notes sync"
-            echo "  disable  Remove git hooks and disable auto-sync"
-            echo "  status   Show current sync configuration"
+            # This branch is a usage *error* (it returns 1), so the usage
+            # goes to stderr with it -- R-plain-stdout.
+            {
+                echo "Usage: git issue setup-sync [enable|disable|status]"
+                echo ""
+                echo "Commands:"
+                echo "  enable   Install git hooks for automatic notes sync"
+                echo "  disable  Remove git hooks and disable auto-sync"
+                echo "  status   Show current sync configuration"
+            } >&2
             return 1
             ;;
     esac
@@ -1834,11 +1840,31 @@ get_related_commits() {
 }
 
 # Handle git issue commit command with trailers
+_gi_commit_usage() {
+    echo "Usage: git issue commit [OPTIONS]"
+    echo ""
+    echo "Add issue trailers to git commits for standardized issue tracking"
+    echo ""
+    echo "Options:"
+    echo "  --issue <id>      Link commit to issue (default)"
+    echo "  --fixes <id>      Mark issue as fixed by this commit"
+    echo "  --closes <id>     Mark issue as closed by this commit"
+    echo "  --related-to <id> Reference related issue"
+    echo "  --commit <hash>   Target commit (default: HEAD)"
+    echo "  --help, -h        Show this help"
+    echo ""
+    echo "Examples:"
+    echo "  git issue commit --fixes a1b2c3d"
+    echo "  git issue commit --issue b2c3d4e --commit abc1234"
+    echo "  git issue commit --closes c3d4e5f"
+}
+
 handle_commit_with_trailers() {
     local issue_id=""
     local trailer_type="issue"
     local commit="HEAD"
     local show_help=false
+    local help_requested=false
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -1869,6 +1895,7 @@ handle_commit_with_trailers() {
                 ;;
             --help|-h)
                 show_help=true
+                help_requested=true
                 shift
                 ;;
             *)
@@ -1880,22 +1907,14 @@ handle_commit_with_trailers() {
     done
     
     if [[ "$show_help" == true ]] || [[ -z "$issue_id" ]]; then
-        echo "Usage: git issue commit [OPTIONS]"
-        echo ""
-        echo "Add issue trailers to git commits for standardized issue tracking"
-        echo ""
-        echo "Options:"
-        echo "  --issue <id>      Link commit to issue (default)"
-        echo "  --fixes <id>      Mark issue as fixed by this commit"
-        echo "  --closes <id>     Mark issue as closed by this commit" 
-        echo "  --related-to <id> Reference related issue"
-        echo "  --commit <hash>   Target commit (default: HEAD)"
-        echo "  --help, -h        Show this help"
-        echo ""
-        echo "Examples:"
-        echo "  git issue commit --fixes a1b2c3d"
-        echo "  git issue commit --issue b2c3d4e --commit abc1234"
-        echo "  git issue commit --closes c3d4e5f"
+        # An asked-for help text is output; the same text after an unknown
+        # option or a missing id is a diagnostic, and a diagnostic may not
+        # touch stdout (R-plain-stdout).
+        if [[ "$help_requested" == true ]]; then
+            _gi_commit_usage
+        else
+            _gi_commit_usage >&2
+        fi
         return 1
     fi
     

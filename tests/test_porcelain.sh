@@ -529,6 +529,48 @@ diag_err "link on a bogus id"    "not found"        link zzzzzzz HEAD
 diag_err "dep add self"          "self-dependency"  dep add zzzzzzz blocks zzzzzzz
 diag_err "update invalid status" "Invalid status"   update "$real" --status=not-a-status
 diag_err "link invalid commit"   "Invalid commit"   link "$real" not-a-commit
+# Usage printed *because of* an error is a diagnostic, so it goes to stderr
+# too. `git issue commit --help' is the other half of that: asked for, it is
+# output, and it stays on stdout.
+out=$("$GI" setup-sync bogus 2>/dev/null) && rc=0 || rc=$?
+eq "setup-sync usage: nonzero exit" "1" "$([[ $rc -ne 0 ]] && echo 1 || echo 0)"
+eq "setup-sync usage: nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+eq "setup-sync usage: usage on stderr" "1" \
+   "$("$GI" setup-sync bogus 2>&1 >/dev/null | grep -c '^Usage: git issue setup-sync' || true)"
+
+out=$("$GI" commit --no-such-option 2>/dev/null) && rc=0 || rc=$?
+eq "commit unknown option: nonzero exit" "1" "$([[ $rc -ne 0 ]] && echo 1 || echo 0)"
+eq "commit unknown option: nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
+eq "commit unknown option: usage on stderr" "1" \
+   "$("$GI" commit --no-such-option 2>&1 >/dev/null | grep -c '^Usage: git issue commit' || true)"
+eq "commit --help: usage stays on stdout" "1" \
+   "$("$GI" commit --help 2>/dev/null | grep -c '^Usage: git issue commit' || true)"
+
+# The collision-retry notice comes from inside create_issue's loop, which only
+# runs when `generate_issue_id' hands back an id that already exists. That is
+# unreachable from the command line, but bin/git-issue dispatches only when it
+# is run directly, so sourcing it and stubbing `issue_exists' to claim one
+# collision reaches the loop. `create --porcelain' writes the new id to stdout,
+# so the notice landing there would be read as data.
+fresh_repo collision
+collision_out="$WORK/collision.out"
+collision_err="$WORK/collision.err"
+GI="$GI" bash -c '
+    set +e
+    export GIT_ISSUE_PORCELAIN=1
+    # shellcheck disable=SC1090
+    source "$GI"
+    calls=0
+    issue_exists() { calls=$((calls + 1)); [[ $calls -le 1 ]]; }
+    create_issue "collision probe" ""
+' >"$collision_out" 2>"$collision_err"
+eq "collision retry: notice on stderr" "1" \
+   "$(grep -c 'Hash collision detected' "$collision_err" || true)"
+eq "collision retry: nothing but the id on stdout" "1" \
+   "$(grep -cE '^[0-9a-f]{7}$' "$collision_out" || true)"
+eq "collision retry: no notice on stdout" "0" \
+   "$(grep -c 'Hash collision' "$collision_out" || true)"
+
 # The unknown-command branch prints its usage as part of the error.
 out=$("$GI" no-such-command 2>/dev/null) && rc=0 || rc=$?
 eq "unknown command: nothing on stdout" "0" "$(printf '%s' "$out" | wc -c | tr -d ' ')"
