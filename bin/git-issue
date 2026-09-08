@@ -333,13 +333,19 @@ read_issue_data() {
 }
 
 # Note format: 2 when line 2 is the marker "v: 2", else 1 (R-format-marker).
+# Bash string ops, not `sed -n 2p`: this runs once per note on the show and
+# write paths, and a subshell plus a sed process cost far more than the two
+# expansions below. A note with fewer than two lines has no marker.
 note_format() {
-    local data="$1"
-    if [[ "$(printf '%s\n' "$data" | sed -n '2p')" == "v: 2" ]]; then
-        echo 2
-    else
-        echo 1
+    local data="$1" rest
+    if [[ "$data" == *$'\n'* ]]; then
+        rest="${data#*$'\n'}"
+        if [[ "${rest%%$'\n'*}" == "v: 2" ]]; then
+            echo 2
+            return 0
+        fi
     fi
+    echo 1
 }
 
 # Batch-read all issue data using git cat-file --batch (3 git processes total
@@ -499,19 +505,24 @@ parse_front_matter() {
 
 # Parse body from issue data (between first blank line and trailing headers / ## Comments)
 # Excludes both the trailing header block and any stray lines after it.
+# The optional second argument is the note's format, for callers that have
+# already computed it; omitted, it is computed here as before.
 parse_body() {
     local data="$1"
-    [[ "$(note_format "$data")" == "2" ]] && return 0
+    local fmt="${2:-$(note_format "$data")}"
+    [[ "$fmt" == "2" ]] && return 0
     echo "$data" | awk -f "$(require_awk_file body.awk)" -v FIELDS="$KNOWN_HEADER_FIELDS"
 }
 
-# Description for either note format, newlines preserved.
+# Description for either note format, newlines preserved. Optional second and
+# third arguments are the format and the already-parsed front matter.
 get_description() {
     local data="$1"
-    if [[ "$(note_format "$data")" == "2" ]]; then
-        get_field_raw "$(parse_front_matter "$data")" "description"
+    local fmt="${2:-$(note_format "$data")}"
+    if [[ "$fmt" == "2" ]]; then
+        get_field_raw "${3-$(parse_front_matter "$data")}" "description"
     else
-        parse_body "$data"
+        parse_body "$data" "$fmt"
     fi
 }
 
@@ -519,7 +530,8 @@ get_description() {
 # first line "[ts] author: text", continuation lines prefixed by one space.
 parse_comment_records() {
     local data="$1"
-    printf '%s\n' "$data" | awk -f "$(require_awk_file comments.awk)" -v FORMAT="$(note_format "$data")"
+    local fmt="${2:-$(note_format "$data")}"
+    printf '%s\n' "$data" | awk -f "$(require_awk_file comments.awk)" -v FORMAT="$fmt"
 }
 
 # Comments for human display: records with continuation unfolded.
@@ -557,10 +569,14 @@ gi_single_line() {
 # comments become folded records under "## Comments".
 _gi_to_format_2() {
     local data="$1"
-    local front_matter description comments headers
+    local front_matter description comments headers fmt
+    # Compute the format once and hand the parsed front matter down: this
+    # used to parse the front matter twice (once here, once inside
+    # get_description for a format-2 note) and detect the format three times.
+    fmt=$(note_format "$data")
     front_matter=$(parse_front_matter "$data")
-    description=$(get_description "$data")
-    comments=$(parse_comment_records "$data")
+    description=$(get_description "$data" "$fmt" "$front_matter")
+    comments=$(parse_comment_records "$data" "$fmt")
     headers=$(printf '%s\n' "$front_matter" | awk -f "$(require_awk_file upgrade_note.awk)")
 
     local out="$headers"
@@ -707,7 +723,8 @@ _PORCELAIN_SHOW_FIELDS="id title status priority created updated author assignee
 
 _porcelain_show() {
     local data="$1"
-    local front_matter
+    local front_matter fmt
+    fmt=$(note_format "$data")
     front_matter=$(parse_front_matter "$data")
     local f v
     for f in $_PORCELAIN_SHOW_FIELDS; do
@@ -720,11 +737,11 @@ _porcelain_show() {
         [[ -n "$v" ]] && printf '%s: %s\n' "$f" "$v"
     done
     local description
-    description=$(get_description "$data")
+    description=$(get_description "$data" "$fmt" "$front_matter")
     if [[ -n "$description" ]]; then
         printf 'description: %s\n' "$(gi_fold "$description")"
     fi
-    parse_comment_records "$data" | sed -E '/^\[/s/^/comment: /'
+    parse_comment_records "$data" "$fmt" | sed -E '/^\[/s/^/comment: /'
 }
 
 # Show issue details
@@ -746,12 +763,13 @@ show_issue() {
         _porcelain_show "$data"
         return 0
     fi
+    local fmt=$(note_format "$data")
     local front_matter=$(parse_front_matter "$data")
-    local comments=$(parse_comments "$data")
+    local comments=$(parse_comment_records "$data" "$fmt" | sed 's/^ //')
 
     # Extract fields
     local title=$(get_field_value "$front_matter" "title")
-    local description=$(get_description "$data")
+    local description=$(get_description "$data" "$fmt" "$front_matter")
     local github_id=$(get_field_value "$front_matter" "github_id")
     local github_url=$(get_field_value "$front_matter" "github_url")
     local jira_id=$(get_field_value "$front_matter" "jira_id")
