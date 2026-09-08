@@ -1,6 +1,6 @@
 id: bf45bb0
+v: 2
 title: Test waits_for
-description: Testing waits_for dep type
 status: open
 priority: medium
 created: 2026-03-03T04:26:28Z
@@ -9,4 +9,6 @@ author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
 waits_for: 8e42d88
----
+
+## Comments
+[2026-09-08T03:44:24Z] Norman Nunley, Jr: Triage 2026-09-07: test fixture left in the real tracker; closing.
