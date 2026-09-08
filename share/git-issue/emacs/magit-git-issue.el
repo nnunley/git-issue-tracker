@@ -388,6 +388,17 @@ these as completions without requiring a match."
   :type '(repeat string)
   :group 'magit-git-issue)
 
+(defun magit-git-issue--status-choices ()
+  "The statuses the set-status prompt offers.
+`magit-git-issue-statuses' names the shipped status machine, but a
+repository can define its own in `.git-issue/statuses' -- and then its
+own vocabulary is the one worth completing.  So the option is unioned
+with the statuses this repository\='s issues actually carry, and the
+prompt still does not require a match."
+  (delete-dups
+   (append magit-git-issue-statuses
+           (magit-git-issue--field-values #'git-issue-issue-status))))
+
 (defun magit-git-issue--field-values (accessor)
   "Distinct non-empty values of ACCESSOR across the issues of this repo.
 Used to offer completion for fields the CLI does not constrain."
@@ -442,7 +453,8 @@ never meant to see."
 (magit-git-issue--define-action magit-git-issue-set-status
     "Set the status of the issue at point." "Set status of issue: "
   (git-issue-update id "status"
-                    (completing-read "Status: " magit-git-issue-statuses)))
+                    (completing-read "Status: "
+                                     (magit-git-issue--status-choices))))
 
 (magit-git-issue--define-action magit-git-issue-set-priority
     "Set the priority of the issue at point." "Set priority of issue: "

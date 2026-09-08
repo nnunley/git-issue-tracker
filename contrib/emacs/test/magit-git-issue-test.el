@@ -659,6 +659,30 @@ runs the CLI; reading it outside the handler let that escape as a raw
         (should (equal (git-issue-issue-priority (git-issue-show-issue a))
                        "high"))))))
 
+(ert-deftest magit-git-issue-set-status-offers-the-repositorys-own-statuses ()
+  "A status this repository uses completes even when the option omits it.
+A repository can define its own status machine in `.git-issue/statuses',
+and then its vocabulary is the one worth completing, so the fixed
+defcustom is unioned with what the repository's issues actually carry."
+  (magit-git-issue-test--with-repo
+    (let ((a (git-issue-create "alpha task"))
+          (offered nil))
+      (git-issue-update a "status" "review")
+      (with-current-buffer (magit-status-setup-buffer default-directory)
+        (magit-git-issue-test--goto "alpha task")
+        ;; `review' removed from the option: only the repository has it.
+        (let ((magit-git-issue-statuses '("open" "closed")))
+          (cl-letf (((symbol-function 'completing-read)
+                     (lambda (_prompt collection &rest _)
+                       (setq offered collection)
+                       "open")))
+            (magit-git-issue-set-status)))
+        (should (member "review" offered))
+        (should (member "open" offered))
+        (should (member "closed" offered))
+        (should (equal (git-issue-issue-status (git-issue-show-issue a))
+                       "open"))))))
+
 (ert-deftest magit-git-issue-dep-add-creates-the-edge ()
   (magit-git-issue-test--with-repo
     (let ((a (git-issue-create "alpha task"))
