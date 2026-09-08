@@ -1,10 +1,10 @@
 id: e4e021f
 v: 2
 title: body.awk trailing scan never excluded id: lines
-status: open
+status: closed
 priority: low
 created: 2026-09-06T21:11:18Z
-updated: 2026-09-08T03:44:28Z
+updated: 2026-09-08T04:07:12Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
