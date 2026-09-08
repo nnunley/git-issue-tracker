@@ -278,6 +278,81 @@ eq "description survives all three rewrites" "see below"$'\n'"status: unclear" \
    "$(src "get_description \"\$(read_issue_data $g)\"")"
 eq "real status still readable" "closed" "$("$GI" list --porcelain | awk -F'\t' -v g="$g" '$2==g{print $3}')"
 
+echo "Testing each continuation guard is load-bearing [R-store-continuation]"
+# The block above only fails when all five "/^ / { print; next }" guards are
+# gone: it drives three commands over one note, and the surviving guards on
+# the other paths repair what the mutated one broke. One scenario per rewrite
+# path instead, each on a fresh note, so removing any single guard fails a
+# test. The probe is a description whose continuation line reads
+# "updated: ...": every one of the five programs has an $1 == "updated:" rule
+# that claims that line the moment the guard stops consuming it, which both
+# destroys the description line and leaves a second updated: header behind.
+guard_probe() { # guard_probe <repo-name>: fresh repo + probe issue, id in $p.
+    # Not a command substitution: fresh_repo cds, and a subshell's cd is lost.
+    fresh_repo "$1" >/dev/null
+    p=$("$GI" create "probe" --description="$(printf 'see below\nupdated: 1999-01-01T00:00:00Z')" \
+        --porcelain 2>/dev/null)
+}
+gnote_of() { git cat-file -p "refs/notes/issue-$1:issue"; }
+guard_intact() { # guard_intact <label> <id> [<continuation must survive: 1|0>]
+    eq "$1: exactly one updated: header" "1" "$(gnote_of "$2" | grep -c '^updated:')"
+    if [[ "${3:-1}" == "1" ]]; then
+        eq "$1: lookalike continuation survives" "1" \
+           "$(gnote_of "$2" | grep -c '^ updated: 1999-01-01T00:00:00Z$')"
+    fi
+}
+
+# Guard 1 — update_issue, description branch: the timestamp rewriter that runs
+# over the parsed front matter before upgrade_note.awk.
+guard_probe guard1
+"$GI" update "$p" --description="replacement" >/dev/null 2>&1
+# The old description is gone by design here, so the tell is the stray header.
+guard_intact "guard 1 (update --description)" "$p" 0
+eq "guard 1: the replacement is the whole description" "replacement" \
+   "$(src "get_description \"\$(read_issue_data $p)\"")"
+
+# Guard 2 — update_issue, plain header field branch.
+guard_probe guard2
+"$GI" update "$p" --priority=high >/dev/null 2>&1
+guard_intact "guard 2 (update --priority)" "$p"
+eq "guard 2: the real header was rewritten" "1" "$(gnote_of "$p" | grep -c '^priority: high$')"
+
+# Guard 3 — add_to_field.
+guard_probe guard3
+o=$("$GI" create "other" --porcelain 2>/dev/null)
+"$GI" dep add "$p" blocks "$o" >/dev/null 2>&1
+guard_intact "guard 3 (dep add)" "$p"
+eq "guard 3: the edge was written" "1" "$(gnote_of "$p" | grep -c "^blocks: $o\$")"
+
+# Guard 4 — remove_from_field, the branch that drops the field entirely.
+guard_probe guard4
+o=$("$GI" create "other" --porcelain 2>/dev/null)
+"$GI" dep add "$p" blocks "$o" >/dev/null 2>&1
+"$GI" dep rm "$p" blocks "$o" >/dev/null 2>&1
+guard_intact "guard 4 (dep rm, last edge)" "$p"
+eq "guard 4: the field is gone" "0" "$(gnote_of "$p" | grep -c '^blocks:')"
+
+# Guard 5 — remove_from_field, the branch that writes the filtered list back.
+guard_probe guard5
+o1=$("$GI" create "other one" --porcelain 2>/dev/null)
+o2=$("$GI" create "other two" --porcelain 2>/dev/null)
+"$GI" dep add "$p" blocks "$o1" >/dev/null 2>&1
+"$GI" dep add "$p" blocks "$o2" >/dev/null 2>&1
+"$GI" dep rm "$p" blocks "$o1" >/dev/null 2>&1
+guard_intact "guard 5 (dep rm, one of two edges)" "$p"
+eq "guard 5: the surviving edge is the other one" "1" "$(gnote_of "$p" | grep -c "^blocks: $o2\$")"
+
+# Rebuild the state the fixed-point section below inherits (the scenarios
+# above left the shell in guard5's repository).
+fresh_repo guards >/dev/null
+"$GI" create "guard task" --description="$(printf 'see below\nstatus: unclear')" >/dev/null 2>&1
+"$GI" create "other task" >/dev/null 2>&1
+g=$("$GI" list --porcelain | awk -F'\t' '$12=="guard task"{print $2}')
+o=$("$GI" list --porcelain | awk -F'\t' '$12=="other task"{print $2}')
+"$GI" update "$g" --status=closed >/dev/null 2>&1
+"$GI" dep add "$g" blocks "$o" >/dev/null 2>&1
+"$GI" dep rm "$g" blocks "$o" >/dev/null 2>&1
+
 echo "Testing format-2 canonicalization is a fixed point [R-format-marker]"
 # A second write that changes nothing material must reproduce the same blob,
 # byte for byte. A user-level no-op flag ("--status=closed" on a closed issue)
