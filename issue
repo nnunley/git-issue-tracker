@@ -1,0 +1,11 @@
+id: e2dfdaa
+v: 2
+title: setup-sync's forced notes fetch silently drops unpushed local issue edits
+status: open
+priority: medium
+created: 2026-10-10T21:24:54Z
+updated: 2026-10-10T21:24:54Z
+author: Norman Nunley, Jr
+assignee: Norman Nunley, Jr
+hash_source: content
+description: Repro (2026-10-10, two clones A and B of one bare remote, both with `git issue setup-sync enable`): A creates an issue and pushes; B fetches it. A comments and pushes. B comments locally without pushing, then runs a plain `git fetch`. Git prints `+ 25cf272...97fc72b refs/notes/issue-<id> -> refs/notes/issue-<id> (forced update)`, and `git issue show` on B shows only A's comment: B's comment is gone. `git pull` does the same through the post-merge hook. Cause: setup-sync adds the refspec `+refs/notes/*:refs/notes/*`, so every fetch force-replaces each local issue ref with the remote's instead of merging divergent histories. The edit survives only in the reflog (refs/notes/issue-<id>@{1}). Expected: a fetch keeps both sides. For example, fetch notes into a remote-tracking namespace (refs/remotes-notes/<remote>/issue-*), then merge each issue ref (git notes merge, or a commit with both parents and a field-level merge of the issue document), and refuse or report on conflict rather than drop. Also check the pre-push side: a push of a diverged issue ref should be rejected, not forced.
