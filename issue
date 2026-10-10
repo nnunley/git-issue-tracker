@@ -24,3 +24,4 @@ description: Sync must merge issue refs the way git merges branches, instead of 
 
 ## Comments
 [2026-10-10T21:29:49Z] Norman Nunley, Jr: Scope widened (2026-10-10): this is now the redesign back to the git notes porcelain with stable anchors; the forced-fetch loss is its motivating bug. Title left as filed: git issue update has no --title.
+[2026-10-10T21:32:55Z] Norman Nunley, Jr: Design revised (2026-10-10): keep per-issue refs; they were chosen for performance (no single-ref write contention, batch reads instead of a process per note, one sha comparison per ref for change detection and push). The fix is a tracking namespace plus a per-issue merge, as git does for branches, not a return to one notes ref.
