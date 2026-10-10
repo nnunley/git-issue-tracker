@@ -4,24 +4,23 @@ title: setup-sync's forced notes fetch silently drops unpushed local issue edits
 status: open
 priority: high
 created: 2026-10-10T21:24:54Z
-updated: 2026-10-10T21:29:49Z
+updated: 2026-10-10T21:32:55Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
-description: Redesign: store issues as real git notes again, so sync merges like git does instead of overwriting.
+description: Sync must merge issue refs the way git merges branches, instead of force-overwriting them.
  
- Motivating bug (2026-10-10, two clones of one bare remote, both with setup-sync): an unpushed local comment is dropped by a plain git fetch, which prints (forced update) for refs/notes/issue-<id>; git pull does the same through the post-merge hook. Cause: the refspec +refs/notes/*:refs/notes/* writes the remote's refs straight over the local ones, as if git fetched with +refs/heads/*:refs/heads/*. Recoverable only from the reflog.
+ Bug (2026-10-10, two clones of one bare remote, both with setup-sync): an unpushed local comment is dropped by a plain git fetch, which prints (forced update) for refs/notes/issue-<id>; git pull does the same through the post-merge hook. Cause: the refspec +refs/notes/*:refs/notes/* writes the remote's refs straight over the local ones, as if git fetched with +refs/heads/*:refs/heads/*. Recoverable only from the reflog.
  
- Root cause: 0682bdf (2026-02-28) left the git notes API because notes were attached to HEAD and were orphaned by every new commit. It switched to hand-built commits, which cured the orphaning but dropped what notes give (git notes merge), hence the forced fetch. The notes-native fix is a stable anchor, not plumbing.
+ Keep per-issue refs. They exist for performance, and a single notes ref would lose all three properties: (1) no write contention, since edits to different issues touch different refs, so parallel editors do not diverge on unrelated work; (2) no process per note, since list/show read every ref in one batch (for-each-ref + cat-file --batch); (3) change detection by one sha comparison per ref, which the pre-push hook (6ff704b) and the edge index rely on.
  
- Proposed design:
- 1. One notes ref, refs/notes/issues. Each issue is a note on its own anchor, a blob written once with git hash-object -w (e.g. 'git-issue <title> <nonce>'); the issue id is the anchor's hash. Anchors never move, so nothing is orphaned. Linking to a commit can be a note on that commit.
- 2. Plain git works: git notes --ref=issues show <anchor>, git notes append for comments, git log refs/notes/issues for history, notes.displayRef to show issues in git log.
- 3. Sync as branches do: fetch +refs/notes/issues:refs/notes/remotes/<remote>/issues (a tracking ref), then git notes --ref=issues merge refs/notes/remotes/<remote>/issues. Comments are append-only (cat_sort_uniq); field changes on both sides use -s manual and a git-issue field-level resolve before git notes merge --commit. Push without force, so a diverged notes ref is rejected like a diverged branch.
- 4. Edges (deps) as notes on the anchors too, or one index note, merged the same way.
- 5. Migration: replay each refs/notes/issue-<id> history into a note on an anchor that keeps <id>, as the format-1 upgrade did; keep reading the old layout until migrated.
+ Design, after git's own branch model:
+ 1. Fetch into a tracking namespace: +refs/notes/issue-*:refs/issue-remotes/<remote>/issue-* (likewise the edge index ref). A fetch never touches local issue refs.
+ 2. Integrate per issue, after fetch and in post-merge: for each issue whose local and tracking refs differ, fast-forward when one contains the other; otherwise git merge-base, a field-level three-way merge of the issue document (comments as a union by timestamp and author), and a commit with both parents. A field changed on both sides is a conflict: report it, keep both values recorded, and leave the issue for the user to resolve (git issue resolve <id>), never drop one. Unchanged and fast-forward issues cost one sha comparison, so speed is kept.
+ 3. Push without force: the pre-push hook pushes only changed refs (as now) without +, so a diverged issue ref is rejected like a diverged branch, and the hook says to fetch and integrate first.
+ 4. Rebuild the edge index incrementally from the merged headers, as reads already do.
  
- Acceptance: the two-clone repro keeps both comments after fetch/pull; a both-sides status change is reported as a conflict, not dropped; a diverged push is rejected; git notes show works on an issue id.
+ Acceptance: the two-clone repro keeps both comments after fetch and after pull; a both-sides status change is reported as a conflict, with neither value lost; a diverged push is rejected; git issue list and the pre-push hook stay O(changed refs) in git calls.
 
 ## Comments
 [2026-10-10T21:29:49Z] Norman Nunley, Jr: Scope widened (2026-10-10): this is now the redesign back to the git notes porcelain with stable anchors; the forced-fetch loss is its motivating bug. Title left as filed: git issue update has no --title.
