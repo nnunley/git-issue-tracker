@@ -22,3 +22,6 @@ description: Redesign: store issues as real git notes again, so sync merges like
  5. Migration: replay each refs/notes/issue-<id> history into a note on an anchor that keeps <id>, as the format-1 upgrade did; keep reading the old layout until migrated.
  
  Acceptance: the two-clone repro keeps both comments after fetch/pull; a both-sides status change is reported as a conflict, not dropped; a diverged push is rejected; git notes show works on an issue id.
+
+## Comments
+[2026-10-10T21:29:49Z] Norman Nunley, Jr: Scope widened (2026-10-10): this is now the redesign back to the git notes porcelain with stable anchors; the forced-fetch loss is its motivating bug. Title left as filed: git issue update has no --title.
