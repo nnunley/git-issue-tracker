@@ -4,8 +4,21 @@ title: setup-sync's forced notes fetch silently drops unpushed local issue edits
 status: open
 priority: high
 created: 2026-10-10T21:24:54Z
-updated: 2026-10-10T21:24:54Z
+updated: 2026-10-10T21:29:49Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
-description: Repro (2026-10-10, two clones A and B of one bare remote, both with `git issue setup-sync enable`): A creates an issue and pushes; B fetches it. A comments and pushes. B comments locally without pushing, then runs a plain `git fetch`. Git prints `+ 25cf272...97fc72b refs/notes/issue-<id> -> refs/notes/issue-<id> (forced update)`, and `git issue show` on B shows only A's comment: B's comment is gone. `git pull` does the same through the post-merge hook. Cause: setup-sync adds the refspec `+refs/notes/*:refs/notes/*`, so every fetch force-replaces each local issue ref with the remote's instead of merging divergent histories. The edit survives only in the reflog (refs/notes/issue-<id>@{1}). Expected: a fetch keeps both sides. For example, fetch notes into a remote-tracking namespace (refs/remotes-notes/<remote>/issue-*), then merge each issue ref (git notes merge, or a commit with both parents and a field-level merge of the issue document), and refuse or report on conflict rather than drop. Also check the pre-push side: a push of a diverged issue ref should be rejected, not forced.
+description: Redesign: store issues as real git notes again, so sync merges like git does instead of overwriting.
+ 
+ Motivating bug (2026-10-10, two clones of one bare remote, both with setup-sync): an unpushed local comment is dropped by a plain git fetch, which prints (forced update) for refs/notes/issue-<id>; git pull does the same through the post-merge hook. Cause: the refspec +refs/notes/*:refs/notes/* writes the remote's refs straight over the local ones, as if git fetched with +refs/heads/*:refs/heads/*. Recoverable only from the reflog.
+ 
+ Root cause: 0682bdf (2026-02-28) left the git notes API because notes were attached to HEAD and were orphaned by every new commit. It switched to hand-built commits, which cured the orphaning but dropped what notes give (git notes merge), hence the forced fetch. The notes-native fix is a stable anchor, not plumbing.
+ 
+ Proposed design:
+ 1. One notes ref, refs/notes/issues. Each issue is a note on its own anchor, a blob written once with git hash-object -w (e.g. 'git-issue <title> <nonce>'); the issue id is the anchor's hash. Anchors never move, so nothing is orphaned. Linking to a commit can be a note on that commit.
+ 2. Plain git works: git notes --ref=issues show <anchor>, git notes append for comments, git log refs/notes/issues for history, notes.displayRef to show issues in git log.
+ 3. Sync as branches do: fetch +refs/notes/issues:refs/notes/remotes/<remote>/issues (a tracking ref), then git notes --ref=issues merge refs/notes/remotes/<remote>/issues. Comments are append-only (cat_sort_uniq); field changes on both sides use -s manual and a git-issue field-level resolve before git notes merge --commit. Push without force, so a diverged notes ref is rejected like a diverged branch.
+ 4. Edges (deps) as notes on the anchors too, or one index note, merged the same way.
+ 5. Migration: replay each refs/notes/issue-<id> history into a note on an anchor that keeps <id>, as the format-1 upgrade did; keep reading the old layout until migrated.
+ 
+ Acceptance: the two-clone repro keeps both comments after fetch/pull; a both-sides status change is reported as a conflict, not dropped; a diverged push is rejected; git notes show works on an issue id.
