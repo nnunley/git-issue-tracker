@@ -259,7 +259,7 @@ usage() {
     echo "  create <title> [--description=<desc>]  Create new issue (auto-generates hash ID)"
     echo "  list                                    List all issues"
     echo "  show <id> [--with-commits]              Show issue details (optionally with related commits)"
-    echo "  update <id> [--status=<s>] [--priority=<p>] [--assignee=<a>] [--role=<r>] [--description=<d>]  Update issue"
+    echo "  update <id> [--status=<s>] [--priority=<p>] [--assignee=<a>] [--role=<r>] [--title=<t>] [--description=<d>]  Update issue"
     echo "  start <id>                             Set status to in_progress"
     echo "  close <id>                             Set status to closed"
     echo "  reopen <id>                            Set status to open"
@@ -867,6 +867,13 @@ update_issue() {
         role)
             # Accept any value for role
             ;;
+        title)
+            # One non-empty line: a header field like the others
+            if [[ -z "${value//[[:space:]]/}" || "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+                echo -e "${RED}Invalid title: it must be one non-empty line${NC}" >&2
+                return 1
+            fi
+            ;;
         description)
             # Accept any value for description
             ;;
@@ -875,7 +882,7 @@ update_issue() {
             ;;
         *)
             echo -e "${RED}Invalid field: $field${NC}" >&2
-            echo "Valid fields: status, priority, assignee, role, description, blocks, depends_on, parent_of, relates_to" >&2
+            echo "Valid fields: status, priority, assignee, role, title, description, blocks, depends_on, parent_of, relates_to" >&2
             return 1
             ;;
     esac
@@ -948,7 +955,7 @@ update_issue_with_flags() {
     fi
     
     local status_val="" priority="" assignee="" description=""
-    local role_val="__unset__"
+    local role_val="__unset__" title_val="__unset__"
     local blocks="" depends_on="" parent_of="" relates_to=""
     local has_updates=false
 
@@ -975,6 +982,10 @@ update_issue_with_flags() {
                 role_val="${1#*=}"
                 has_updates=true
                 ;;
+            --title=*)
+                title_val="${1#*=}"
+                has_updates=true
+                ;;
             --blocks=*)
                 blocks="${1#*=}"
                 has_updates=true
@@ -991,7 +1002,7 @@ update_issue_with_flags() {
                 relates_to="${1#*=}"
                 has_updates=true
                 ;;
-            --status|--priority|--assignee|--role|--description|--blocks|--depends-on|--parent-of|--relates-to)
+            --status|--priority|--assignee|--role|--title|--description|--blocks|--depends-on|--parent-of|--relates-to)
                 if [[ $# -lt 2 ]]; then
                     echo -e "${RED}Error: $1 requires a value${NC}" >&2
                     return 1
@@ -1001,6 +1012,7 @@ update_issue_with_flags() {
                     --priority) priority="$2"; has_updates=true ;;
                     --assignee) assignee="$2"; has_updates=true ;;
                     --role) role_val="$2"; has_updates=true ;;
+                    --title) title_val="$2"; has_updates=true ;;
                     --description) description="$2"; has_updates=true ;;
                     --blocks) blocks="$2"; has_updates=true ;;
                     --depends-on) depends_on="$2"; has_updates=true ;;
@@ -1011,7 +1023,7 @@ update_issue_with_flags() {
                 ;;
             *)
                 echo -e "${RED}Error: Unknown flag '$1'${NC}" >&2
-                echo "Valid flags: --status, --priority, --assignee, --role, --description, --blocks, --depends-on, --parent-of, --relates-to" >&2
+                echo "Valid flags: --status, --priority, --assignee, --role, --title, --description, --blocks, --depends-on, --parent-of, --relates-to" >&2
                 return 1
                 ;;
         esac
@@ -1020,7 +1032,7 @@ update_issue_with_flags() {
 
     if [[ "$has_updates" == "false" ]]; then
         echo -e "${RED}Error: No update flags provided${NC}" >&2
-        echo "Use --status, --priority, --assignee, --role, --description, --blocks, --depends-on, --parent-of, or --relates-to" >&2
+        echo "Use --status, --priority, --assignee, --role, --title, --description, --blocks, --depends-on, --parent-of, or --relates-to" >&2
         return 1
     fi
 
@@ -1029,6 +1041,19 @@ update_issue_with_flags() {
         if [[ ! " ${STATUSES[*]} " =~ " ${status_val} " ]]; then
             echo -e "${RED}Error: Invalid status '$status_val'${NC}" >&2
             echo "Valid statuses: ${STATUSES[*]}" >&2
+            return 1
+        fi
+    fi
+
+    # A title is one non-empty line: it is a header field, and the id never
+    # depends on it after creation, so it can change freely
+    if [[ "$title_val" != "__unset__" ]]; then
+        if [[ -z "${title_val//[[:space:]]/}" ]]; then
+            echo -e "${RED}Error: --title cannot be empty${NC}" >&2
+            return 1
+        fi
+        if [[ "$title_val" == *$'\n'* || "$title_val" == *$'\r'* ]]; then
+            echo -e "${RED}Error: --title must be a single line${NC}" >&2
             return 1
         fi
     fi
@@ -1095,6 +1120,14 @@ update_issue_with_flags() {
         else
             update_issue "$id" "assignee" "$assignee"
             changes="${changes}assignee=$assignee "
+        fi
+    fi
+    if [[ "$title_val" != "__unset__" ]]; then
+        if [[ "$(_current_val "title")" == "$title_val" ]]; then
+            echo -e "${YELLOW}Issue #$id already has title '$title_val'${NC}" >&2
+        else
+            update_issue "$id" "title" "$title_val"
+            changes="${changes}title=updated "
         fi
     fi
     if [[ "$role_val" != "__unset__" ]]; then
@@ -3628,7 +3661,7 @@ hash_source: manual"
     update)
         if [ $# -lt 2 ]; then
             echo -e "${RED}Error: 'update' requires issue id and flags${NC}" >&2
-            echo "Usage: git issue update <id> [--status=<s>] [--priority=<p>] [--assignee=<a>] [--role=<r>]" >&2
+            echo "Usage: git issue update <id> [--status=<s>] [--priority=<p>] [--assignee=<a>] [--role=<r>] [--title=<t>]" >&2
             exit 1
         fi
         update_issue_with_flags "${@:2}"

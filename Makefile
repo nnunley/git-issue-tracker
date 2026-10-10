@@ -6,7 +6,7 @@ SHAREDIR = $(DESTDIR)$(PREFIX)/share/git-issue
 MAN1DIR = $(DESTDIR)$(PREFIX)/share/man/man1
 MAN8DIR = $(DESTDIR)$(PREFIX)/share/man/man8
 
-.PHONY: install uninstall test test-deps test-content-safety test-dispatch test-layout test-registry bench-deps clean install-mcp uninstall-mcp test-mcp build-mcp clean-mcp
+.PHONY: install uninstall test test-deps test-content-safety test-dispatch test-layout test-flags test-registry bench-deps clean install-mcp uninstall-mcp test-mcp build-mcp clean-mcp
 
 install:
 	@echo "Installing git-issue..."
@@ -94,6 +94,11 @@ test-layout:
 	chmod +x tests/test_install_layout.sh
 	./tests/test_install_layout.sh
 
+test-flags:
+	@echo "Running update flag tests..."
+	chmod +x tests/test_git_style_flags.sh
+	./tests/test_git_style_flags.sh
+
 test-registry:
 	@echo "Running multi-project registry tests..."
 	chmod +x tests/test_registry.sh
@@ -115,7 +120,7 @@ bench-deps:
 	chmod +x tests/bench_deps.sh
 	./tests/bench_deps.sh $(COUNT)
 
-test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-registry test-porcelain test-emacs-core
+test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-flags test-registry test-porcelain test-emacs-core
 
 # Single source of the release version: VERSION, the GIT_ISSUE_VERSION
 # constant in bin/git-issue, and every man page .TH line must agree.

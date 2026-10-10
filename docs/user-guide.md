@@ -100,6 +100,7 @@ role, description, comments, and dependency fields. Change fields with
 git issue update a064d35 --status=review --priority=high
 git issue update a064d35 --assignee="Ada Lovelace" --role=frontend
 git issue update a064d35 --description="Rewritten description"
+git issue update a064d35 --title="Navbar overlaps content on mobile"   # the id stays
 ```
 
 Priorities are `low`, `medium`, `high`, `critical`.

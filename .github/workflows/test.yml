@@ -67,6 +67,9 @@ jobs:
     - name: Run dispatch tests
       run: ./tests/test_dispatch.sh
 
+    - name: Run update flag tests
+      run: ./tests/test_git_style_flags.sh
+
     - name: Run multi-project registry tests
       run: ./tests/test_registry.sh
 

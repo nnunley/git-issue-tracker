@@ -156,6 +156,20 @@ else
     echo "  Got: $SHOW_OUTPUT"
 fi
 
+# Test: title flag with equals; the id is unchanged, show and list follow
+run_test "title flag with equals" "git issue update $ISSUE_ID --title='Renamed issue'" "success"
+run_test "title stored in issue data" "git issue show $ISSUE_ID" "title: Renamed issue"
+run_test "list shows the new title" "git issue list" "Renamed issue"
+
+# Test: title flag with space
+run_test "title flag with space" "git issue update $ISSUE_ID --title 'Spaced title'" "success"
+run_test "title replaced again" "git issue show $ISSUE_ID" "title: Spaced title"
+
+# Test: a title must be one non-empty line
+run_test "empty title rejected" "git issue update $ISSUE_ID --title=" "failure"
+run_test "multi-line title rejected" "git issue update $ISSUE_ID --title=\"$(printf 'two\nlines')\"" "failure"
+run_test "title kept after rejected updates" "git issue show $ISSUE_ID" "title: Spaced title"
+
 echo ""
 echo -e "${BLUE}Test Results:${NC}"
 echo "============="

@@ -34,9 +34,10 @@ includes linked commits.
 List all issues, color-coded by status.
 .SS Updating
 .TP
-.BI "update " id " [--status=" s "] [--priority=" p "] [--issue-type=" type "] [--assignee=" name "] [--description=" desc "] [--external-ref=" ref "] [--external-refs=" refs ","] [--labels=" labels ","]
+.BI "update " id " [--status=" s "] [--priority=" p "] [--title=" title "] [--issue-type=" type "] [--assignee=" name "] [--description=" desc "] [--external-ref=" ref "] [--external-refs=" refs ","] [--labels=" labels ","]
 Change one or more fields.
 Flags combine freely.
+A title must be one non-empty line; changing it never changes the id.
 Status transitions are checked against the status machine (see
 .BR "STATUSES" ).
 .PP

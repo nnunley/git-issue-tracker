@@ -77,7 +77,7 @@ git issue-status
 | `git issue create <title> [--description=<desc>]` | Create new issue (auto-generates hash ID) |
 | `git issue list` | List all issues |
 | `git issue show <id>` | Show issue details |
-| `git issue update <id> [--status=<status>] [--priority=<priority>] [--assignee=<assignee>] [--description=<desc>]` | Update issue with git-style flags |
+| `git issue update <id> [--status=<status>] [--priority=<priority>] [--assignee=<assignee>] [--title=<title>] [--description=<desc>]` | Update issue with git-style flags |
 | `git issue statuses` | Show configured statuses and allowed transitions |
 | `git issue comment <id> <text>` | Add comment to issue |
 | `git issue link <id> <commit>` | Link issue to commit |
