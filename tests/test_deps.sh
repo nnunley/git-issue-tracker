@@ -685,6 +685,53 @@ test_dep_rebuild_matches_incremental() {
     fi
 }
 
+# Dep headers edited outside dep add/rm must still reach the graph.  Rebuild
+# first: with no cursor the index rebuilds in full and hides the bug.
+# Backdating stands in for a note arriving by fetch or import, which keeps the
+# date it was written with.  Fails on a date cursor in every timezone.
+test_incremental_picks_up_backdated_ref() {
+    local a b
+    a=$(create_test_issue "Backdated pickup A")
+    b=$(create_test_issue "Backdated pickup B")
+
+    git issue dep rebuild >/dev/null 2>&1
+
+    GIT_COMMITTER_DATE="2020-01-01T00:00:00Z" GIT_AUTHOR_DATE="2020-01-01T00:00:00Z" \
+        git issue update "$a" --relates-to="$b" >/dev/null 2>&1
+
+    local output
+    output=$(git issue deps 2>/dev/null)
+
+    assert_contains "$a" "$output" "deps sees a note whose commit date predates the index"
+    assert_contains "relates_to" "$output" "deps reports the backdated relation type"
+}
+
+# A deleted note ref leaves no headers to re-parse, so its edges must be
+# dropped from the index rather than kept until the next full rebuild.
+test_incremental_drops_edges_of_deleted_ref() {
+    local a b
+    a=$(create_test_issue "Deleted ref A")
+    b=$(create_test_issue "Deleted ref B")
+
+    git issue update "$a" --relates-to="$b" >/dev/null 2>&1
+    git issue dep rebuild >/dev/null 2>&1
+
+    git update-ref -d "refs/notes/issue-$a"
+
+    local output
+    output=$(git issue deps 2>/dev/null)
+
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [[ "$output" != *"$a"* ]]; then
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        echo -e "  ${GREEN}✓${NC} deps drops edges of a deleted note ref"
+    else
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        echo -e "  ${RED}✗${NC} deps still shows edges of a deleted note ref"
+        echo "  Output: $output"
+    fi
+}
+
 # Main
 main() {
     echo -e "${BLUE}Testing Dependency Header Fields${NC}"
@@ -779,6 +826,8 @@ main() {
     run_test "topo with no deps shows all issues" test_topo_no_deps_shows_all
     run_test "dep list with no deps shows clean output" test_dep_list_no_deps
     run_test "dep rebuild matches incremental index" test_dep_rebuild_matches_incremental
+    run_test "incremental index picks up backdated refs" test_incremental_picks_up_backdated_ref
+    run_test "incremental index drops edges of deleted refs" test_incremental_drops_edges_of_deleted_ref
 
     echo ""
     echo "================================="
