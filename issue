@@ -2,7 +2,7 @@ id: e2dfdaa
 v: 2
 title: setup-sync's forced notes fetch silently drops unpushed local issue edits
 status: open
-priority: medium
+priority: high
 created: 2026-10-10T21:24:54Z
 updated: 2026-10-10T21:24:54Z
 author: Norman Nunley, Jr
