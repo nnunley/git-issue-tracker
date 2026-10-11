@@ -190,6 +190,68 @@ TESTS_RUN=$((TESTS_RUN + 1))
 # Test 16: Test invalid setup-sync argument
 run_test "invalid setup-sync argument" "git issue setup-sync invalid" "Usage: git issue setup-sync"
 
+# Test 17: enable writes a non-forcing notes refspec and rewrites a forcing one
+echo -n "Verifying non-forcing notes refspec... "
+git remote add origin /nonexistent >/dev/null 2>&1
+git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'
+git issue setup-sync enable >/dev/null 2>&1
+REFSPECS=$(git config --get-all remote.origin.fetch)
+if echo "$REFSPECS" | grep -qx 'refs/notes/\*:refs/notes/\*' && ! echo "$REFSPECS" | grep -q '^+refs/notes'; then
+    echo -e "${GREEN}PASS${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${RED}FAIL${NC}"
+    echo "  Refspecs: $REFSPECS"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+
+# Test 18: a fetch does not replace an issue edited locally and on the remote
+echo -n "Verifying a diverged issue keeps the local edit on fetch... "
+SYNC_DIR="/tmp/git-issue-diverge-test-$$"
+mkdir -p "$SYNC_DIR"
+git init --bare "$SYNC_DIR/remote.git" >/dev/null 2>&1
+for who in alice bob; do
+    git init "$SYNC_DIR/$who" >/dev/null 2>&1
+    git -C "$SYNC_DIR/$who" config user.name "$who"
+    git -C "$SYNC_DIR/$who" config user.email "$who@example.com"
+    git -C "$SYNC_DIR/$who" remote add origin "$SYNC_DIR/remote.git"
+done
+git -C "$SYNC_DIR/alice" commit -q --allow-empty -m init
+git -C "$SYNC_DIR/alice" push -q origin HEAD:main >/dev/null 2>&1
+DIV_ID=$(git -C "$SYNC_DIR/alice" issue create "shared issue" 2>&1 | grep -o '#[a-f0-9]\+' | head -1 | cut -c2-)
+git -C "$SYNC_DIR/alice" push -q origin "refs/notes/issue-$DIV_ID" >/dev/null 2>&1
+git -C "$SYNC_DIR/bob" fetch -q origin main >/dev/null 2>&1
+git -C "$SYNC_DIR/bob" issue setup-sync enable >/dev/null 2>&1
+git -C "$SYNC_DIR/bob" fetch -q origin >/dev/null 2>&1
+git -C "$SYNC_DIR/alice" issue comment "$DIV_ID" "alice's edit" >/dev/null 2>&1
+git -C "$SYNC_DIR/alice" push -q origin "refs/notes/issue-$DIV_ID" >/dev/null 2>&1
+git -C "$SYNC_DIR/bob" issue comment "$DIV_ID" "bob's unpushed edit" >/dev/null 2>&1
+BOB_BEFORE=$(git -C "$SYNC_DIR/bob" rev-parse "refs/notes/issue-$DIV_ID")
+FETCH_MSG=$(git -C "$SYNC_DIR/bob" fetch origin 2>&1)
+BOB_AFTER=$(git -C "$SYNC_DIR/bob" rev-parse "refs/notes/issue-$DIV_ID")
+if [[ "$BOB_BEFORE" == "$BOB_AFTER" ]] && echo "$FETCH_MSG" | grep -q "rejected"; then
+    echo -e "${GREEN}PASS${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${RED}FAIL${NC}"
+    echo "  Local ref before: $BOB_BEFORE after: $BOB_AFTER"
+    echo "  Fetch said: $FETCH_MSG"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+
+# Test 19: the post-merge hook names the diverged issue instead of staying silent
+echo -n "Verifying the post-merge hook reports the diverged issue... "
+HOOK_MSG=$(cd "$SYNC_DIR/bob" && .git/hooks/post-merge 2>&1)
+if echo "$HOOK_MSG" | grep -q "issue-$DIV_ID" && echo "$HOOK_MSG" | grep -q "diverged"; then
+    echo -e "${GREEN}PASS${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${RED}FAIL${NC}"
+    echo "  Hook said: $HOOK_MSG"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+rm -rf "$SYNC_DIR"
+
 echo ""
 echo -e "${BLUE}Test Results:${NC}"
 echo "============="

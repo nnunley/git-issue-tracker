@@ -29,16 +29,25 @@ REMOTE=$(git remote | head -1)
 
 echo -e "${BLUE}🔄 Syncing issue notes from $REMOTE...${NC}"
 
-# Fetch issue notes from remote
-if git fetch "$REMOTE" 'refs/notes/issue-*:refs/notes/issue-*' 2>/dev/null; then
-    # Count synced notes
-    NOTE_COUNT=$(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | wc -l)
-    if [[ $NOTE_COUNT -gt 0 ]]; then
-        echo -e "${GREEN}✓ Synced $NOTE_COUNT issue notes${NC}"
-    fi
-else
+# Fetch issue notes from remote. The refspec is not forcing, so an issue
+# edited locally and on the remote since the last push is rejected rather
+# than replaced; say which ones, because a silent refusal looks like a
+# fetch that worked.
+FETCH_OUT=$(git fetch "$REMOTE" 'refs/notes/issue-*:refs/notes/issue-*' 2>&1)
+FETCH_RC=$?
+REJECTED=$(echo "$FETCH_OUT" | grep '\[rejected\]' | grep -o 'refs/notes/issue-[0-9a-f]*' | sort -u)
+if [[ -n "$REJECTED" ]]; then
+    echo -e "${YELLOW}⚠️  Issue notes diverged from $REMOTE (local edits kept, remote edits not fetched):${NC}"
+    echo "$REJECTED" | sed 's/^/     /'
+    echo -e "${YELLOW}   Push your edit first, or reconcile by hand; the two histories are in the reflog and on $REMOTE.${NC}"
+fi
+if [[ $FETCH_RC -ne 0 && -z "$REJECTED" ]]; then
     # Silently fail if remote doesn't have notes - this is normal for new repos
     exit 0
+fi
+NOTE_COUNT=$(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | wc -l)
+if [[ $NOTE_COUNT -gt 0 ]]; then
+    echo -e "${GREEN}✓ Synced $NOTE_COUNT issue notes${NC}"
 fi
 
 # Optional: fetch commit notes too if they exist

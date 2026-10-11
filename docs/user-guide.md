@@ -220,7 +220,10 @@ git issue setup-sync status
 
 This installs a pre-push hook that pushes the notes refs and a
 post-merge hook that fetches them, and adds the refspec so `git fetch`
-brings them down. On a second machine, clone, run `setup-sync enable`,
+brings them down. The refspec is not forcing: an issue edited locally and
+on the remote since your last push is rejected by the fetch, and the hook
+names it, rather than your edit being replaced. Push your edit first, or
+reconcile by hand from the reflog (`git reflog show refs/notes/issue-<id>`). On a second machine, clone, run `setup-sync enable`,
 and `git fetch` once. To do it by hand instead:
 
 ```bash

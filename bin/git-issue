@@ -1312,9 +1312,17 @@ setup_sync_enable() {
     git config git-issue.sync.enabled true
     echo -e "${GREEN}✓ Enabled automatic notes sync in git config${NC}"
     
-    # Configure automatic notes fetching
-    git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*' 2>/dev/null || true
-    echo -e "${GREEN}✓ Configured automatic notes fetching${NC}"
+    # Configure automatic notes fetching. The refspec is deliberately not
+    # forcing: with a leading '+' a fetch replaces a local issue ref that has
+    # unpushed edits, and git-issue keeps one linear history per issue, so the
+    # edits are gone except from the reflog. Without it git rejects that fetch
+    # as non-fast-forward and the local edit stays. Earlier releases wrote the
+    # forcing form, so an existing one is rewritten.
+    git config --unset-all remote.origin.fetch '^\+refs/notes/\*:refs/notes/\*$' 2>/dev/null || true
+    if ! git config --get-all remote.origin.fetch 2>/dev/null | grep -qx 'refs/notes/\*:refs/notes/\*'; then
+        git config --add remote.origin.fetch 'refs/notes/*:refs/notes/*' 2>/dev/null || true
+    fi
+    echo -e "${GREEN}✓ Configured automatic notes fetching (non-forcing)${NC}"
     
     echo ""
     echo -e "${GREEN}🎉 Automatic git notes sync is now enabled!${NC}"
