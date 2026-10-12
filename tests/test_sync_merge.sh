@@ -276,6 +276,91 @@ test_status_conflict_resolved() {
         "$id" "$out" "$show" "$list" "$rc_partial" "$rc_full" "$(in_B parents "$id")" "$after"
 }
 
+# --- Task 7: the hooks -------------------------------------------------------
+
+# commit_and_push [<remote>]: a new code commit pushed normally, so the
+# pre-push hook runs; the push's stderr is left in $ROOT/push.err
+commit_and_push() {
+    echo "$RANDOM" >> README && git add README && git commit -qm change
+    git push -q "${1:-origin}" HEAD 2>"$ROOT/push.err"
+}
+remote_sha() { git --git-dir="$R" rev-parse -q --verify "refs/notes/issue-$1" 2>/dev/null; }
+
+test_diverged_push_refused() {
+    setup_pair t7a
+    local id before rc soft
+    id=$(diverge_status)
+    before=$(remote_sha "$id")
+    in_B commit_and_push; rc=$?
+    local err; err=$(cat "$ROOT/push.err")
+    in_B bash -c 'echo x >> README && git add README && git commit -qm soft && GIT_ISSUE_PUSH_SOFT=1 git push -q origin HEAD 2>/dev/null'; soft=$?
+    check diverged_push_refused bash -c '[[ $0 != 0 && $3 == 0 && $4 == "$5" ]] && grep -qF "run \`git issue sync origin\` first" <<< "$1" && grep -q "$2" <<< "$1"' \
+        "$rc" "$err" "$id" "$soft" "$before" "$(remote_sha "$id")"
+}
+
+test_push_after_resolve_succeeds() {
+    setup_pair t7b
+    local id rc
+    id=$(diverge_status)
+    in_B git issue sync origin >/dev/null 2>&1
+    in_B git issue resolve "$id" status=closed >/dev/null 2>&1
+    in_B commit_and_push; rc=$?
+    check push_after_resolve_succeeds test "$rc" = 0 -a "$(remote_sha "$id")" = "$(in_B ref_sha "$id")"
+}
+
+test_no_change_pushes_nothing() {
+    setup_pair t7c
+    cd "$A"
+    new_issue "One" >/dev/null; new_issue "Two" >/dev/null
+    commit_and_push
+    git issue sync origin >/dev/null 2>&1
+    echo y >> README && git add README && git commit -qm again
+    local out trace
+    out=$(GIT_TRACE="$ROOT/trace" git push origin HEAD 2>&1)
+    check no_change_pushes_nothing bash -c '! grep -q Pushing <<< "$0" && ! grep -q ls-remote "$1"' "$out" "$ROOT/trace"
+}
+
+test_first_push_without_tracking_refs() {
+    setup_pair t7d
+    cd "$A"
+    local R2="$ROOT/t7d/R2.git"
+    git init -q --bare "$R2"
+    git remote add r2 "$R2"
+    new_issue "a" >/dev/null; new_issue "b" >/dev/null; new_issue "c" >/dev/null
+    commit_and_push r2
+    check first_push_without_tracking_refs test "$(git ls-remote "$R2" 'refs/notes/issue-*' | wc -l | tr -d ' ')" = 3
+}
+
+test_post_merge_runs_sync() {
+    setup_pair t7e
+    local id
+    id=$(in_A new_issue "Pulled")
+    in_A commit_and_push
+    in_B git pull -q origin main >/dev/null 2>&1
+    in_B git issue comment "$id" "Bob was here" >/dev/null 2>&1
+    in_B commit_and_push
+    in_A git issue comment "$id" "Alice, not pushed yet" >/dev/null 2>&1
+    in_A git pull -q --no-rebase origin main >/dev/null 2>&1
+    check post_merge_runs_sync bash -c 'grep -q "Bob was here" <<< "$0" && grep -q "Alice, not pushed yet" <<< "$0"' "$(in_A git issue show "$id" 2>&1)"
+}
+
+test_hooks_use_named_remote() {
+    setup_pair t7f
+    in_A git remote rename origin forgejo 2>/dev/null
+    in_B git remote rename origin forgejo 2>/dev/null
+    in_A git issue setup-sync enable >/dev/null 2>&1
+    in_B git issue setup-sync enable >/dev/null 2>&1
+    local id rc
+    id=$(in_A new_issue "Named")
+    in_A push_issue "$id" forgejo
+    in_B git issue sync forgejo >/dev/null 2>&1
+    in_A git issue close "$id" >/dev/null 2>&1
+    in_A push_issue "$id" forgejo
+    in_B git issue update "$id" --status=blocked >/dev/null 2>&1
+    in_B commit_and_push forgejo; rc=$?
+    check hooks_use_named_remote bash -c '[[ $0 != 0 ]] && grep -qF "run \`git issue sync forgejo\` first" "$1"' "$rc" "$ROOT/push.err"
+}
+
 # ---------------------------------------------------------------------------
 
 ALL_TESTS=$(declare -F | awk '$3 ~ /^test_/ {print $3}')

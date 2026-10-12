@@ -250,8 +250,14 @@ git issue setup-sync disable
 ```
 
 **What automatic sync does:**
-- **Auto-fetch**: Issue notes sync when you `git pull` or `git merge`
-- **Auto-push**: Issue notes sync when you `git push` commits
+- **Auto-fetch**: after `git pull` or `git merge`, the post-merge hook runs
+  `git issue sync` for the branch's remote
+- **Auto-push**: `git push` also pushes the issues that changed since the
+  remote's copy was last seen, without force. If the remote's copy of an
+  issue has moved on, the push is refused like a diverged branch: the hook
+  names the issues and says to run `git issue sync <remote>`, and the whole
+  push fails. `GIT_ISSUE_PUSH_SOFT=1 git push` warns instead and pushes the
+  code anyway
 - **Zero friction**: Works transparently with normal git workflow
 - **Team collaboration**: Everyone stays in sync automatically
 

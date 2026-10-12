@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Git hook: pre-push  
-# Auto-sync git notes before push operations
+# Git hook: pre-push
+# Push the issue refs that changed along with every push, without force.
 # Installed by: git issue setup-sync
+#
+# An issue ref is pushed when it differs from the remote's copy as last seen
+# (refs/issue-remotes/<remote>/issue-<id>, filled by fetch and by this hook)
+# or when there is no copy yet. The push has no "+", so an issue that has
+# diverged from the remote's copy is rejected like a diverged branch; the
+# hook then names it, says to run `git issue sync <remote>`, and fails the
+# push. GIT_ISSUE_PUSH_SOFT=1 warns instead and lets the push proceed.
 
-# Colors for output
 BLUE='\033[0;34m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -16,67 +22,59 @@ if [[ -n "$GIT_ISSUE_PUSHING_NOTES" ]]; then
 fi
 export GIT_ISSUE_PUSHING_NOTES=1
 
-# Hook receives remote name and URL as arguments
+# Hook receives remote name (or URL) and URL as arguments
 REMOTE="$1"
-URL="$2"
 
-# Check if git-issue notes sync is enabled
 if ! git config --get-regexp "git-issue" | grep -q "sync.enabled.*true"; then
     exit 0
 fi
-
-# Only sync notes in git repositories (skip XDG mode)
 if ! git rev-parse --git-dir >/dev/null 2>&1; then
     exit 0
 fi
 
-# Check if we have any issue notes to push
-NOTE_REFS=$(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null)
-if [[ -z "$NOTE_REFS" ]]; then
-    # No issue notes to push
-    exit 0
-fi
+# The issue refs that differ from the remote's copy, as "<ref> <sha>": one
+# for-each-ref over both namespaces, no network round trip
+TRACK="refs/issue-remotes/$REMOTE/issue-"
+CHANGED=$(git for-each-ref --format='%(refname) %(objectname)' 'refs/notes/issue-*' "${TRACK}*" 2>/dev/null \
+    | awk -v t="$TRACK" '
+        index($1, t) == 1 { seen[substr($1, length(t) + 1)] = $2; next }
+        { id = $1; sub(/^refs\/notes\/issue-/, "", id); ref[id] = $1; sha[id] = $2 }
+        END { for (id in ref) if (!(id in seen) || seen[id] != sha[id]) print ref[id], sha[id] }')
+[[ -z "$CHANGED" ]] && exit 0
 
-# Find notes that changed since last push by comparing local vs remote refs.
-# This avoids pushing all N notes every time.
-CHANGED_REFS=""
-while IFS= read -r ref; do
-    local_sha=$(git rev-parse "$ref" 2>/dev/null)
-    remote_sha=$(git rev-parse "refs/remotes/$REMOTE/${ref#refs/}" 2>/dev/null || \
-                 git ls-remote --refs "$REMOTE" "$ref" 2>/dev/null | awk '{print $1}')
-    if [[ "$local_sha" != "$remote_sha" ]]; then
-        CHANGED_REFS="${CHANGED_REFS}${ref}"$'\n'
-    fi
-done <<< "$NOTE_REFS"
+COUNT=$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')
+echo -e "${BLUE}🔄 Pushing $COUNT changed issue notes to $REMOTE...${NC}" >&2
 
-# Strip trailing newline and check if anything changed
-CHANGED_REFS=$(echo "$CHANGED_REFS" | grep -v '^$')
-if [[ -z "$CHANGED_REFS" ]]; then
-    exit 0
-fi
-
-CHANGED_COUNT=$(echo "$CHANGED_REFS" | wc -l | tr -d ' ')
-NOTE_COUNT=$(echo "$NOTE_REFS" | wc -l | tr -d ' ')
-echo -e "${BLUE}🔄 Pushing $CHANGED_COUNT/$NOTE_COUNT changed issue notes to $REMOTE...${NC}"
-
-# Build refspec list for only changed refs
 REFSPECS=()
-while IFS= read -r ref; do
-    [[ -z "$ref" ]] && continue
-    REFSPECS+=("$ref")
-done <<< "$CHANGED_REFS"
+while read -r ref _; do
+    REFSPECS+=("$ref:$ref")
+done <<< "$CHANGED"
 
-# Push with --atomic so all ref updates succeed or fail together
-if git push --atomic "$REMOTE" "${REFSPECS[@]}"; then
-    echo -e "${GREEN}✓ Successfully pushed $CHANGED_COUNT issue notes${NC}"
+if OUT=$(git push --porcelain --atomic "$REMOTE" "${REFSPECS[@]}" 2>&1); then
+    # Record what the remote now has, so the next push compares against it
+    # (not for a push to a bare URL, which has no tracking namespace)
+    if git check-ref-format "${TRACK}x"; then
+        while read -r ref sha; do
+            git update-ref "$TRACK${ref#refs/notes/issue-}" "$sha"
+        done <<< "$CHANGED"
+    fi
+    echo -e "${GREEN}✓ Pushed $COUNT issue notes${NC}" >&2
 else
-    echo -e "${YELLOW}⚠️  Failed to push some issue notes (this may be normal for new remotes)${NC}"
-    # Don't fail the push - notes sync failure shouldn't block code push
-    exit 0
+    # Name the refs the remote refused on their own account (with --atomic
+    # the rest are reported as "atomic push failed")
+    ids_of() { awk -F'\t' -v want="$1" '$1 == "!" && (want == "" || $3 !~ /atomic/) { split($2, a, ":"); id = a[1]; sub(/^refs\/notes\/issue-/, "", id); print id }'; }
+    REJECTED=$(printf '%s\n' "$OUT" | ids_of own)
+    [[ -z "$REJECTED" ]] && REJECTED=$(printf '%s\n' "$OUT" | ids_of "")
+    echo -e "${RED}✗ $REMOTE refused issue notes that have diverged from its copy: $(echo $REJECTED)${NC}" >&2
+    echo -e "${YELLOW}  run \`git issue sync $REMOTE\` first${NC}" >&2
+    if [[ -n "$GIT_ISSUE_PUSH_SOFT" ]]; then
+        exit 0
+    fi
+    exit 1
 fi
 
 # Optional: push commit notes too if they exist
-if git rev-parse refs/notes/commits >/dev/null 2>&1; then
+if git rev-parse -q --verify refs/notes/commits >/dev/null 2>&1; then
     git push "$REMOTE" refs/notes/commits 2>/dev/null || true
 fi
 

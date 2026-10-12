@@ -696,9 +696,10 @@ create_issue() {
     # Generate hash ID
     local id=$(generate_issue_id "$title" "$author" "$timestamp")
     
-    # Check for conflicts (rare but possible)
+    # Check for conflicts (rare but possible), against remotes' copies too:
+    # an id another clone already pushed would collide at the next sync
     local attempts=0
-    while issue_exists "$id" && [[ $attempts -lt 100 ]]; do
+    while { issue_exists "$id" || [[ -n "$(git for-each-ref --count=1 --format=x "refs/issue-remotes/*/issue-$id" 2>/dev/null)" ]]; } && [[ $attempts -lt 100 ]]; do
         # stderr: `create --porcelain' writes the new id to stdout, and a
         # notice mixed in there would be read as data.
         echo "⚠️  Hash collision detected for $id, regenerating..." >&2

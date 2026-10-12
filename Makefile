@@ -112,6 +112,10 @@ test-merge-doc: ## Run issue document merge and diff unit tests
 	chmod +x tests/test_merge_doc.sh
 	./tests/test_merge_doc.sh
 
+test-hooks-sync: ## Run the setup-sync hook installation tests
+	chmod +x tests/test_hooks_sync.sh
+	./tests/test_hooks_sync.sh
+
 test-sync: ## Run multi-user sync and history tests
 	chmod +x tests/test_sync_merge.sh
 	./tests/test_sync_merge.sh
@@ -128,7 +132,7 @@ bench-deps:
 	chmod +x tests/bench_deps.sh
 	./tests/bench_deps.sh $(COUNT)
 
-test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-flags test-registry test-porcelain test-merge-doc test-sync test-emacs-core
+test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-flags test-registry test-porcelain test-merge-doc test-sync test-hooks-sync test-emacs-core
 
 # Single source of the release version: VERSION, the GIT_ISSUE_VERSION
 # constant in bin/git-issue, and every man page .TH line must agree.
