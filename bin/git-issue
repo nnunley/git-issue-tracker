@@ -2030,35 +2030,45 @@ handle_commit_with_trailers() {
 # ==========================================
 
 # ==========================================
-# EDGE INDEX (refs/notes/dep-graph)
+# EDGE INDEX (refs/issue-local/dep-graph)
 # ==========================================
 
-# Read the edge index from refs/notes/dep-graph
+# Read the edge index (GI_EDGE_REF)
+# The index is derived from issue headers, so it is local: it lives outside
+# the refs that sync pushes and fetches (refs/notes/issue-*). An index
+# another version left at refs/notes/dep-graph is never read.
+GI_EDGE_REF=refs/issue-local/dep-graph
+GI_LEGACY_EDGE_REF=refs/notes/dep-graph
+
+# The commit the index ref points at, or nothing
+_edge_commit() {
+    git rev-parse -q --verify "$GI_EDGE_REF^{commit}" 2>/dev/null || true
+}
+
+# The index's edges as of <commit> (default: the ref's current commit)
 read_edge_index() {
-    local ref="refs/notes/dep-graph"
-    local tree_hash
-    tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
-    if [[ -z "$tree_hash" ]]; then
-        echo ""
-        return 0
-    fi
+    local commit="${1-$(_edge_commit)}"
+    [[ -z "$commit" ]] && { echo ""; return 0; }
     local blob_hash
-    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "edges" {print $3}')
+    blob_hash=$(git rev-parse -q --verify "$commit:edges" 2>/dev/null)
     if [[ -z "$blob_hash" ]]; then
         # Fallback: legacy format
-        blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
+        blob_hash=$(git ls-tree "$commit" 2>/dev/null | tail -1 | awk '{print $3}')
     fi
-    if [[ -z "$blob_hash" ]]; then
-        echo ""
-        return 0
-    fi
+    [[ -z "$blob_hash" ]] && { echo ""; return 0; }
     git cat-file -p "$blob_hash" 2>/dev/null || echo ""
 }
 
-# Write content to the edge index using git plumbing
+# write_edge_index <data> <expected>: like write_issue_data, the ref moves
+# only from <expected> (empty: the ref must not exist); GI_STALE otherwise.
+# Empty <data> deletes the index.
 write_edge_index() {
-    local data="$1"
-    local ref="refs/notes/dep-graph"
+    local data="$1" expected="$2"
+    if [[ -z "$data" ]]; then
+        [[ -z "$expected" ]] && return 0
+        git update-ref -d "$GI_EDGE_REF" "$expected" 2>/dev/null || return $GI_STALE
+        return 0
+    fi
 
     local blob_hash
     blob_hash=$(echo "$data" | git hash-object -w --stdin)
@@ -2067,65 +2077,64 @@ write_edge_index() {
     tree_hash=$(printf "100644 blob %s\tedges\n" "$blob_hash" | git mktree)
 
     local commit_hash
-    local parent
-    parent=$(git rev-parse --verify "$ref" 2>/dev/null) || true
-    if [[ -n "$parent" ]]; then
-        commit_hash=$(git commit-tree "$tree_hash" -p "$parent" -m "Update edge index" </dev/null)
+    if [[ -n "$expected" ]]; then
+        commit_hash=$(git commit-tree "$tree_hash" -p "$expected" -m "Update edge index" </dev/null)
     else
         commit_hash=$(git commit-tree "$tree_hash" -m "Create edge index" </dev/null)
     fi
 
-    git update-ref "$ref" "$commit_hash"
+    git update-ref "$GI_EDGE_REF" "$commit_hash" "${expected:-$GI_ZERO_OID}" 2>/dev/null || return $GI_STALE
+}
+
+# _edit_edge_index <transform> [args...]: apply <transform> (current edges
+# as $1, prints the new edges) under write_edge_index's check. A lost race
+# is never retried as an edit: the index is derived data, so it is rebuilt
+# from the headers instead, which already carry the edit.
+_edit_edge_index() {
+    local transform="$1"; shift
+    local commit current updated
+    commit=$(_edge_commit)
+    current=$(read_edge_index "$commit")
+    updated=$("$transform" "$current" "$@") || return $?
+    [[ "$updated" == "$current" ]] && return 0
+    write_edge_index "$updated" "$commit" && return 0
+    rebuild_edge_index >/dev/null
 }
 
 # Add an edge to the index (deduplicates)
-add_edge() {
-    local from="$1"
-    local type="$2"
-    local to="$3"
-    local line="$from $type $to"
-
-    local current
-    current=$(read_edge_index)
-
-    # Check for duplicate
-    if echo "$current" | grep -qF "$line"; then
-        return 0
-    fi
-
+add_edge() { _edit_edge_index _tx_add_edge "$1 $2 $3"; }
+_tx_add_edge() {
+    local current="$1" line="$2"
     if [[ -z "$current" ]]; then
-        write_edge_index "$line"
+        printf '%s\n' "$line"
+    elif echo "$current" | grep -qxF "$line"; then
+        printf '%s\n' "$current"
     else
-        write_edge_index "${current}"$'\n'"${line}"
+        printf '%s\n' "$current" "$line"
     fi
 }
 
 # Remove an edge from the index
-remove_edge() {
-    local from="$1"
-    local type="$2"
-    local to="$3"
-    local line="$from $type $to"
-
-    local current
-    current=$(read_edge_index)
-
-    if [[ -z "$current" ]]; then
-        return 0
-    fi
-
-    local updated
-    updated=$(echo "$current" | grep -vF "$line" || true)
-
-    if [[ -z "$updated" ]]; then
-        git update-ref -d "refs/notes/dep-graph" 2>/dev/null || true
-    else
-        write_edge_index "$updated"
-    fi
+remove_edge() { _edit_edge_index _tx_remove_edge "$1 $2 $3"; }
+_tx_remove_edge() {
+    local current="$1" line="$2"
+    echo "$current" | grep -vxF "$line" || true
 }
 
 # Rebuild the entire edge index from issue headers
 rebuild_edge_index() {
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        _rebuild_edge_index_once && return 0
+        [[ $? -eq $GI_STALE ]] || return 1
+    done
+    echo -e "${RED}Error: edge index kept changing; not rebuilt${NC}" >&2
+    return $GI_STALE
+}
+
+_rebuild_edge_index_once() {
+    local base
+    base=$(_edge_commit)
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local edges="last_rebuilt_from: $timestamp"
@@ -2179,8 +2188,45 @@ rebuild_edge_index() {
         fi
     done
 
-    write_edge_index "$edges"
+    write_edge_index "$edges" "$base" || return $?
     echo -e "${GREEN}Edge index rebuilt at $timestamp${NC}"
+}
+
+# _gi_reindex_edges <edges> <id>...: <edges> with each id's outgoing edges
+# re-derived from its current headers (the marker line is left as is)
+_gi_reindex_edges() {
+    local edge_data="$1"; shift
+    local id
+    for id in "$@"; do
+        local data
+        data=$(read_issue_data "$id" 2>/dev/null) || continue
+
+        # Remove old edges where this issue is the source.
+        # Target-side edges belong to their source issue and are handled
+        # when that source is processed (avoids ordering issues).
+        edge_data=$(echo "$edge_data" | grep -v "^${id} " || true)
+
+        # Parse dep fields and add new edges
+        for field in blocks depends_on parent_of relates_to; do
+            local values
+            values=$(trim_ws "$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2-)")
+            if [[ -n "$values" ]]; then
+                for target in $(echo "$values" | tr ',' '\n'); do
+                    target=$(trim_ws "$target")
+                    [[ -n "$target" ]] && edge_data="${edge_data}"$'\n'"${id} ${field} ${target}"
+                done
+            fi
+        done
+    done
+    printf '%s\n' "$edge_data"
+}
+
+# gi_reindex_issues <id>...: re-derive exactly these issues' edges in the
+# index, e.g. after sync changed their headers (their commit dates can be
+# older than the index's marker, so ensure_edge_index_current would skip them)
+gi_reindex_issues() {
+    [[ $# -eq 0 ]] && return 0
+    _edit_edge_index _gi_reindex_edges "$@"
 }
 
 # Incremental rebuild: check if any issue notes have changed since the
@@ -2188,8 +2234,9 @@ rebuild_edge_index() {
 # edge index.  Called before graph queries to keep the index current
 # when headers are edited outside of dep add/rm (manual edits, imports).
 ensure_edge_index_current() {
-    local edge_data
-    edge_data=$(read_edge_index)
+    local base edge_data
+    base=$(_edge_commit)
+    edge_data=$(read_edge_index "$base")
 
     # Get the last rebuild timestamp from the index
     local last_rebuilt
@@ -2216,32 +2263,12 @@ ensure_edge_index_current() {
 
     if [[ "$needs_rebuild" == "true" ]]; then
         # Re-parse only changed issues and update edges
-        for id in "${changed_ids[@]}"; do
-            local data
-            data=$(read_issue_data "$id" 2>/dev/null) || continue
-
-            # Remove old edges where this issue is the source.
-            # Target-side edges belong to their source issue and are handled
-            # when that source is processed (avoids ordering issues).
-            edge_data=$(echo "$edge_data" | grep -v "^${id} " || true)
-
-            # Parse dep fields and add new edges
-            for field in blocks depends_on parent_of relates_to; do
-                local values
-                values=$(trim_ws "$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2-)")
-                if [[ -n "$values" ]]; then
-                    for target in $(echo "$values" | tr ',' '\n'); do
-                        target=$(trim_ws "$target")
-                        [[ -n "$target" ]] && edge_data="${edge_data}"$'\n'"${id} ${field} ${target}"
-                    done
-                fi
-            done
-        done
+        edge_data=$(_gi_reindex_edges "$edge_data" "${changed_ids[@]}")
 
         # Update marker and write
         edge_data=$(echo "$edge_data" | grep -v "^last_rebuilt_from:" | grep -v "^$" || true)
         edge_data="last_rebuilt_from: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"$'\n'"${edge_data}"
-        write_edge_index "$edge_data"
+        write_edge_index "$edge_data" "$base" || rebuild_edge_index >/dev/null
     fi
 }
 

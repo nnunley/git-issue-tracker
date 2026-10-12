@@ -10,7 +10,7 @@ export PATH="$SCRIPT_DIR/../bin:$PATH"
 
 # Helper to read the edge index via plumbing (matches write_edge_index format)
 read_edge_index_raw() {
-    local ref="refs/notes/dep-graph"
+    local ref="refs/issue-local/dep-graph"
     local tree_hash blob_hash
     tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2)
     [[ -z "$tree_hash" ]] && return 0
@@ -328,7 +328,7 @@ test_dep_rebuild() {
     local b=$(create_test_issue "Rebuild B")
     git issue dep add "$a" blocks "$b" 2>/dev/null
     # Wipe the edge index
-    git update-ref -d refs/notes/dep-graph 2>/dev/null || true
+    git update-ref -d refs/issue-local/dep-graph 2>/dev/null || true
     # Rebuild
     git issue dep rebuild 2>/dev/null
     local edges

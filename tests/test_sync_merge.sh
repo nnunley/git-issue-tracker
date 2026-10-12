@@ -91,6 +91,33 @@ title: clobber" "" >/dev/null 2>&1; echo $?' _ "$GI" "$id")
     check create_never_overwrites test "$rc" = 75 -a "$(ref_sha "$id")" = "$before"
 }
 
+# --- Task 2: the dependency index is local ---------------------------------
+
+test_edge_index_ref_is_local() {
+    setup_pair t2a
+    cd "$A"
+    local a b
+    a=$(new_issue "Blocker"); b=$(new_issue "Blocked")
+    git issue dep add "$a" blocks "$b" >/dev/null 2>&1
+    check edge_index_ref_is_local \
+        bash -c 'git rev-parse -q --verify refs/issue-local/dep-graph >/dev/null && ! git rev-parse -q --verify refs/notes/dep-graph >/dev/null'
+}
+
+test_legacy_edge_ref_ignored() {
+    setup_pair t2b
+    cd "$A"
+    local a b blob tree commit
+    a=$(new_issue "Real"); b=$(new_issue "Other")
+    git issue dep add "$a" relates_to "$b" >/dev/null 2>&1
+    # A legacy index that looks current (marker in the future), so only
+    # reading it, not rescanning headers, could surface the bogus edge
+    blob=$(printf '%s\n' "last_rebuilt_from: 2999-01-01T00:00:00Z" "$a blocks deadbee" | git hash-object -w --stdin)
+    tree=$(printf '100644 blob %s\tedges\n' "$blob" | git mktree)
+    commit=$(git commit-tree "$tree" -m legacy </dev/null)
+    git update-ref refs/notes/dep-graph "$commit"
+    check legacy_edge_ref_ignored bash -c "! git issue deps '$a' 2>&1 | grep -q deadbee"
+}
+
 # ---------------------------------------------------------------------------
 
 ALL_TESTS=$(declare -F | awk '$3 ~ /^test_/ {print $3}')
