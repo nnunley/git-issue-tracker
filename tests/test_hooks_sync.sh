@@ -250,6 +250,21 @@ else
     echo "  Hook said: $HOOK_MSG"
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
+
+# Test 20: the pre-push hook still pushes other issues past a diverged one
+echo -n "Verifying the pre-push hook pushes past a diverged issue... "
+NEW_ID=$(git -C "$SYNC_DIR/bob" issue create "bob's new issue" 2>&1 | grep -o '#[a-f0-9]\+' | head -1 | cut -c2-)
+HOOK_MSG=$(cd "$SYNC_DIR/bob" && .git/hooks/pre-push origin "$SYNC_DIR/remote.git" 2>&1)
+REMOTE_NEW=$(git -C "$SYNC_DIR/remote.git" rev-parse -q --verify "refs/notes/issue-$NEW_ID")
+if [[ -n "$REMOTE_NEW" ]] && echo "$HOOK_MSG" | grep -q "issue-$DIV_ID" && echo "$HOOK_MSG" | grep -q "diverged"; then
+    echo -e "${GREEN}PASS${NC}"
+    TESTS_PASSED=$((TESTS_PASSED + 1))
+else
+    echo -e "${RED}FAIL${NC}"
+    echo "  Remote has new issue: ${REMOTE_NEW:-no}"
+    echo "  Hook said: $HOOK_MSG"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
 rm -rf "$SYNC_DIR"
 
 echo ""

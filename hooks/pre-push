@@ -66,11 +66,24 @@ while IFS= read -r ref; do
     REFSPECS+=("$ref")
 done <<< "$CHANGED_REFS"
 
-# Push with --atomic so all ref updates succeed or fail together
-if git push --atomic "$REMOTE" "${REFSPECS[@]}"; then
+# Not --atomic: an issue edited here and on the remote since the last push
+# is rejected as a non-fast-forward, and an atomic push would hold back every
+# other changed issue with it. Name the rejected ones, as post-merge does.
+PUSH_OUT=$(git push "$REMOTE" "${REFSPECS[@]}" 2>&1)
+PUSH_RC=$?
+REJECTED=$(echo "$PUSH_OUT" | grep '\[rejected\]' | grep -o 'refs/notes/issue-[0-9a-f]*' | sort -u)
+if [[ -n "$REJECTED" ]]; then
+    REJECTED_COUNT=$(echo "$REJECTED" | wc -l | tr -d ' ')
+    echo -e "${GREEN}✓ Pushed $((CHANGED_COUNT - REJECTED_COUNT)) issue notes${NC}"
+    echo -e "${YELLOW}⚠️  Issue notes diverged from $REMOTE (not pushed):${NC}"
+    echo "$REJECTED" | sed 's/^/     /'
+    echo -e "${YELLOW}   Keep yours: git push --force $REMOTE refs/notes/issue-<id>${NC}"
+    echo -e "${YELLOW}   Take theirs: git fetch $REMOTE +refs/notes/issue-<id>:refs/notes/issue-<id>${NC}"
+elif [[ $PUSH_RC -eq 0 ]]; then
     echo -e "${GREEN}✓ Successfully pushed $CHANGED_COUNT issue notes${NC}"
 else
-    echo -e "${YELLOW}⚠️  Failed to push some issue notes (this may be normal for new remotes)${NC}"
+    echo "$PUSH_OUT"
+    echo -e "${YELLOW}⚠️  Failed to push issue notes (this may be normal for new remotes)${NC}"
     # Don't fail the push - notes sync failure shouldn't block code push
     exit 0
 fi

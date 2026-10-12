@@ -39,7 +39,8 @@ REJECTED=$(echo "$FETCH_OUT" | grep '\[rejected\]' | grep -o 'refs/notes/issue-[
 if [[ -n "$REJECTED" ]]; then
     echo -e "${YELLOW}⚠️  Issue notes diverged from $REMOTE (local edits kept, remote edits not fetched):${NC}"
     echo "$REJECTED" | sed 's/^/     /'
-    echo -e "${YELLOW}   Push your edit first, or reconcile by hand; the two histories are in the reflog and on $REMOTE.${NC}"
+    echo -e "${YELLOW}   Keep yours: git push --force $REMOTE refs/notes/issue-<id>${NC}"
+    echo -e "${YELLOW}   Take theirs: git fetch $REMOTE +refs/notes/issue-<id>:refs/notes/issue-<id>${NC}"
 fi
 if [[ $FETCH_RC -ne 0 && -z "$REJECTED" ]]; then
     # Silently fail if remote doesn't have notes - this is normal for new repos
