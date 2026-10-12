@@ -278,6 +278,7 @@ usage() {
     echo "  deps [<id>] [--dot]                      Show dependency graph (text or Graphviz DOT)"
     echo "  migrate-status                                                              Migrate issue data from state→status"
     echo "  setup-sync [enable|disable|status]     Configure automatic git notes sync"
+    echo "  sync [<remote>]                         Fetch issues and merge them with each remote's copies"
     echo "  repo add [--force] <name> <path>        Register a repository in the global registry"
     echo "  repo list                               List registered repositories as '<name> <path>'"
     echo "  repo rm <name>                          Forget a repository (contents untouched)"
@@ -2101,6 +2102,137 @@ handle_commit_with_trailers() {
 # ==========================================
 
 # Read the edge index (GI_EDGE_REF)
+# ---------------------------------------------------------------------------
+# SYNC: integrate each issue with a remote's copy (refs/issue-remotes/<r>/)
+# ---------------------------------------------------------------------------
+
+# The remotes whose fetch refspec fills a tracking namespace
+gi_sync_remotes() {
+    git config --get-regexp 'remote\..*\.fetch' 2>/dev/null \
+        | awk '$2 ~ /:refs\/issue-remotes\// { r = $1; sub(/^remote\./, "", r); sub(/\.fetch$/, "", r); print r }' \
+        | sort -u
+}
+
+# _gi_merge_commit <id> <local> <remote> <message> <conflicts> [field=value...]:
+# merge the two commits' documents against their merge base, with the given
+# values written over conflicting fields. Prints the merge commit (parents
+# local, remote) and exits 0; exits 1 with the conflicts left in <conflicts>
+# when a conflicting field has no value.
+_gi_merge_commit() {
+    local id="$1" local_c="$2" remote_c="$3" message="$4" conflicts="$5"; shift 5
+    local base d merged rc
+    base=$(git merge-base "$local_c" "$remote_c") || return 2
+    d=$(mktemp -d "${TMPDIR:-/tmp}/git-issue-sync.XXXXXX") || return 2
+    read_issue_at "$base" > "$d/base"
+    read_issue_at "$local_c" > "$d/local"
+    read_issue_at "$remote_c" > "$d/remote"
+    merged=$(gi_merge_docs "$d/base" "$d/local" "$d/remote" "$conflicts"); rc=$?
+    rm -f "$d/base" "$d/local" "$d/remote"; rmdir "$d"
+    if [[ $rc -eq 1 && $# -gt 0 ]]; then
+        merged=$(_gi_resolve_fields "$merged" "$conflicts" "$@") || return 1
+        rc=0
+    fi
+    [[ $rc -eq 0 ]] || return $rc
+    local blob tree
+    blob=$(printf '%s\n' "$merged" | git hash-object -w --stdin)
+    tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+    git commit-tree "$tree" -p "$local_c" -p "$remote_c" -m "$message" </dev/null
+}
+
+# gi_issue_conflicts <remote> <id> <conflicts>: exit 1 (conflicts written)
+# when the issue has diverged from the remote's copy and they don't merge
+# cleanly, 2 when the two share no history, else 0
+gi_issue_conflicts() {
+    local r="$1" id="$2" conflicts="$3" local_c remote_c base
+    : > "$conflicts"
+    local_c=$(gi_ref_commit "$id")
+    remote_c=$(git rev-parse -q --verify "$(gi_tracking_ref "$r" "$id")^{commit}" 2>/dev/null)
+    [[ -n "$local_c" && -n "$remote_c" && "$local_c" != "$remote_c" ]] || return 0
+    git merge-base --is-ancestor "$local_c" "$remote_c" 2>/dev/null && return 0
+    git merge-base --is-ancestor "$remote_c" "$local_c" 2>/dev/null && return 0
+    base=$(git merge-base "$local_c" "$remote_c") || return 2
+    local d rc
+    d=$(mktemp -d "${TMPDIR:-/tmp}/git-issue-sync.XXXXXX") || return 2
+    read_issue_at "$base" > "$d/base"; read_issue_at "$local_c" > "$d/local"; read_issue_at "$remote_c" > "$d/remote"
+    gi_merge_docs "$d/base" "$d/local" "$d/remote" "$conflicts" >/dev/null; rc=$?
+    rm -f "$d/base" "$d/local" "$d/remote"; rmdir "$d"
+    return $rc
+}
+
+_gi_title_at() { read_issue_at "$1" 2>/dev/null | sed -n 's/^title: //p' | head -1; }
+
+# gi_integrate <remote>: bring every issue that differs from the remote's
+# copy up to date. One line per issue changed or flagged:
+#   new <id> | fast-forward <id> | merged <id> | conflict <id> <field>... |
+#   collision <id> "<local title>" "<remote title>"
+# The ids it changed go to GI_INTEGRATED. Exits 1 if any issue is in
+# conflict or collides, else 0.
+gi_integrate() {
+    local r="$1" status=0 id local_c remote_c
+    GI_INTEGRATED=()
+    while read -r id local_c remote_c; do
+        [[ -z "$id" ]] && continue
+        local attempt
+        for attempt in 1 2; do
+            if [[ "$local_c" == "-" ]]; then
+                git update-ref "$(get_issue_ref "$id")" "$remote_c" "$GI_ZERO_OID" 2>/dev/null || { local_c=$(gi_ref_commit "$id"); continue; }
+                echo "new $id"; GI_INTEGRATED+=("$id"); break
+            fi
+            if git merge-base --is-ancestor "$remote_c" "$local_c" 2>/dev/null; then
+                break  # local is ahead: push sends it
+            fi
+            if git merge-base --is-ancestor "$local_c" "$remote_c" 2>/dev/null; then
+                git update-ref "$(get_issue_ref "$id")" "$remote_c" "$local_c" 2>/dev/null || { local_c=$(gi_ref_commit "$id"); continue; }
+                echo "fast-forward $id"; GI_INTEGRATED+=("$id"); break
+            fi
+            if ! git merge-base "$local_c" "$remote_c" >/dev/null 2>&1; then
+                echo "collision $id \"$(_gi_title_at "$local_c")\" \"$(_gi_title_at "$remote_c")\""
+                status=1; break
+            fi
+            local conflicts merge_c
+            conflicts=$(mktemp "${TMPDIR:-/tmp}/git-issue-conflicts.XXXXXX")
+            if merge_c=$(_gi_merge_commit "$id" "$local_c" "$remote_c" "Merge issue $id from $r" "$conflicts"); then
+                rm -f "$conflicts"
+                git update-ref "$(get_issue_ref "$id")" "$merge_c" "$local_c" 2>/dev/null || { local_c=$(gi_ref_commit "$id"); continue; }
+                echo "merged $id"; GI_INTEGRATED+=("$id"); break
+            fi
+            echo "conflict $id $(sed -n 's/^field: //p' "$conflicts" | tr '\n' ' ' | sed 's/ $//')"
+            rm -f "$conflicts"
+            status=1; break
+        done
+    done < <(git for-each-ref --format='%(refname) %(objectname)' 'refs/notes/issue-*' "refs/issue-remotes/$r/issue-*" 2>/dev/null \
+             | awk -v t="refs/issue-remotes/$r/issue-" '
+                 index($1, t) == 1 { id = substr($1, length(t) + 1); remote[id] = $2; next }
+                 { id = $1; sub(/^refs\/notes\/issue-/, "", id); local_[id] = $2 }
+                 END { for (id in remote) {
+                         l = (id in local_) ? local_[id] : "-"   # test first: reading local_[id] would create it
+                         if (l != remote[id]) print id, l, remote[id]
+                       } }' \
+             | sort)
+    return $status
+}
+
+# git issue sync [<remote>]: fetch each remote's issues into its tracking
+# namespace and integrate them. Default: every remote set up by setup-sync.
+sync_issues() {
+    local remotes=("$@") r status=0 changed=()
+    [[ ${#remotes[@]} -eq 0 ]] && remotes=($(gi_sync_remotes))
+    if [[ ${#remotes[@]} -eq 0 ]]; then
+        echo -e "${YELLOW}No remote fetches issues yet: run git issue setup-sync enable${NC}" >&2
+        return 1
+    fi
+    for r in "${remotes[@]}"; do
+        if ! git fetch -q "$r" "$(gi_tracking_refspec "$r")" 2>/dev/null; then
+            echo -e "${RED}Error: could not fetch issues from $r${NC}" >&2
+            status=1; continue
+        fi
+        gi_integrate "$r" || status=1
+        changed+=(${GI_INTEGRATED[@]+"${GI_INTEGRATED[@]}"})
+    done
+    gi_reindex_issues ${changed[@]+"${changed[@]}"}
+    return $status
+}
+
 # The index is derived from issue headers, so it is local: it lives outside
 # the refs that sync pushes and fetches (refs/notes/issue-*). An index
 # another version left at refs/notes/dep-graph is never read.
@@ -3871,6 +4003,10 @@ hash_source: manual"
     setup-sync)
         shift
         setup_sync "$@"
+        ;;
+    sync)
+        shift
+        sync_issues "$@"
         ;;
     import)
         shift

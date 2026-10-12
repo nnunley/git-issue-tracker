@@ -13,7 +13,8 @@ Every command, field and integration, section by section. For a walkthrough, rea
 | `git issue statuses` | Show configured statuses and allowed transitions |
 | `git issue comment <id> <text>` | Add comment to issue |
 | `git issue link <id> <commit>` | Link issue to commit |
-| `git issue setup-sync [enable\|disable\|status]` | Configure automatic git notes sync |
+| `git issue setup-sync [enable [<remote>...]\|disable\|status]` | Configure automatic git notes sync |
+| `git issue sync [<remote>]` | Fetch each remote's issues and merge them with yours |
 | `git issue dep add <from> <type> <to>` | Add dependency between issues |
 | `git issue dep rm <from> <type> <to>` | Remove dependency |
 | `git issue dep list [<id>]` | Show dependencies for an issue |
@@ -253,10 +254,29 @@ git issue setup-sync disable
 - **Zero friction**: Works transparently with normal git workflow
 - **Team collaboration**: Everyone stays in sync automatically
 
+**How sync merges.** A fetch writes a remote's issues to
+`refs/issue-remotes/<remote>/issue-<id>`, never over your own
+`refs/notes/issue-<id>`. `git issue sync [<remote>]` then integrates each
+issue that differs, the way git merges a branch, and prints one line per issue:
+
+- `new <id>`: an issue only the remote had;
+- `fast-forward <id>`: only the remote changed it;
+- `merged <id>`: both changed it, and the merge commit has both as parents.
+  A field one side changed takes that side's value, `updated:` takes the
+  later value, list fields (`labels`, `blocks`, `depends_on`, `parent_of`,
+  `relates_to`, `waits_for`) merge as sets, and comments are the union of
+  both sides;
+- `conflict <id> <field>...`: both changed a field to different values. The
+  issue is left as it is, and nothing is dropped;
+- `collision <id> "<title>" "<title>"`: two different issues got the same id.
+  Neither is changed.
+
+`sync` exits 1 when any issue is in conflict or collides.
+
 **Manual sync (if auto-sync disabled):**
 ```bash
-# Fetch issue notes from remote
-git fetch origin 'refs/notes/*:refs/notes/*'
+# Fetch each remote's issues and merge them
+git issue sync origin
 
 # Push issue notes to remote  
 git push origin 'refs/notes/issue-*'
