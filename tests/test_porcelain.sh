@@ -362,7 +362,7 @@ echo "Testing format-2 canonicalization is a fixed point [R-format-marker]"
 "$GI" comment "$g" "$(printf 'note\nwith continuation')" >/dev/null 2>&1
 blob_before=$(git rev-parse "refs/notes/issue-$g:issue")
 commits_before=$(git rev-list --count "refs/notes/issue-$g")
-src "write_issue_data '$g' \"\$(read_issue_data '$g')\"" >/dev/null 2>&1
+src "write_issue_data '$g' \"\$(read_issue_data '$g')\" \"\$(gi_ref_commit '$g')\"" >/dev/null 2>&1
 eq "rewriting a note with its own data is a real write" \
    "$((commits_before + 1))" "$(git rev-list --count "refs/notes/issue-$g")"
 eq "rewriting a note with its own data leaves the blob identical" \

@@ -309,27 +309,29 @@ get_issue_ref() {
     echo "refs/notes/issue-$1"
 }
 
-# Read issue data using git plumbing
-read_issue_data() {
-    local id="$1"
-    local ref=$(get_issue_ref "$id")
+# The commit an issue's ref points at, or nothing when the issue is absent.
+gi_ref_commit() {
+    git rev-parse -q --verify "$(get_issue_ref "$1")^{commit}" 2>/dev/null || true
+}
 
-    # Get the tree hash from the ref's commit
-    local tree_hash
-    tree_hash=$(git cat-file -p "$ref" 2>/dev/null | grep "^tree" | cut -d' ' -f2) || return 1
-
-    # Tree should contain exactly one blob named "issue"
-    local blob_hash
-    blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | awk '$4 == "issue" {print $3}')
-
+# The issue document stored in one commit: its "issue" blob, or (legacy
+# notes) the last blob in its tree.
+read_issue_at() {
+    local commit="$1" blob_hash
+    blob_hash=$(git rev-parse -q --verify "$commit:issue" 2>/dev/null)
     if [[ -z "$blob_hash" ]]; then
-        # Fallback: legacy format where blob is named after a commit SHA
-        # If multiple blobs exist, take the first one (most recent is last in tree)
-        blob_hash=$(git ls-tree "$tree_hash" 2>/dev/null | tail -1 | awk '{print $3}')
+        blob_hash=$(git ls-tree "$commit" 2>/dev/null | tail -1 | awk '{print $3}')
     fi
-
     [[ -z "$blob_hash" ]] && return 1
     git cat-file -p "$blob_hash" 2>/dev/null || return 1
+}
+
+# Read issue data using git plumbing
+read_issue_data() {
+    local commit
+    commit=$(gi_ref_commit "$1")
+    [[ -n "$commit" ]] || return 1
+    read_issue_at "$commit"
 }
 
 # Note format: 2 when line 2 is the marker "v: 2", else 1 (R-format-marker).
@@ -406,9 +408,17 @@ _issue_tsv_stream() {
 }
 
 # Write issue data using git plumbing (hash-object + mktree + commit-tree + update-ref)
+# write_issue_data <id> <data> <expected>: <expected> is the commit the edit
+# was computed from, or empty to create. The ref moves only if it still
+# points there (update-ref's old value; the zero oid means "must not
+# exist"), so a concurrent write is never overwritten: a mismatch returns
+# GI_STALE (75) and writes nothing. Edits go through gi_edit, which retries.
+GI_STALE=75
+GI_ZERO_OID=0000000000000000000000000000000000000000
 write_issue_data() {
     local id="$1"
     local data="$2"
+    local expected="$3"
     local ref=$(get_issue_ref "$id")
 
     # Every write emits format 2: the note is canonicalized (and a format-1
@@ -432,21 +442,44 @@ write_issue_data() {
     local tree_hash
     tree_hash=$(printf "100644 blob %s\tissue\n" "$blob_hash" | git mktree)
 
-    # Create commit pointing to the tree (with parent if ref exists)
+    # Commit on top of the expected parent (none for a create)
     local commit_hash
-    local parent
-    parent=$(git rev-parse --verify "$ref" 2>/dev/null) || true
-    if [[ -n "$parent" ]]; then
-        commit_hash=$(git commit-tree "$tree_hash" -p "$parent" -m "Update issue $id" </dev/null)
+    if [[ -n "$expected" ]]; then
+        commit_hash=$(git commit-tree "$tree_hash" -p "$expected" -m "Update issue $id" </dev/null)
     else
         commit_hash=$(git commit-tree "$tree_hash" -m "Create issue $id" </dev/null)
     fi
 
-    # Point the ref at the new commit
-    git update-ref "$ref" "$commit_hash"
+    # Move the ref only from the expected commit
+    git update-ref "$ref" "$commit_hash" "${expected:-$GI_ZERO_OID}" 2>/dev/null || return $GI_STALE
 
     # Trigger auto-gc (no-op when below threshold, background by default)
     git gc --auto 2>/dev/null &
+}
+
+# gi_edit <id> <transform> [args...]: apply one edit to an issue without
+# losing a concurrent one. <transform> gets the current document as $1 (the
+# rest of the args after it) and prints the new document; a nonzero exit
+# aborts the edit with that status. A result equal to the document writes
+# nothing. When another write lands between the read and the write, the
+# edit is re-applied to the newer document, up to 5 times.
+gi_edit() {
+    local id="$1" transform="$2"
+    shift 2
+    local attempt commit data new rc
+    for attempt in 1 2 3 4 5; do
+        commit=$(gi_ref_commit "$id")
+        [[ -n "$commit" ]] || { echo -e "${RED}Issue #$id not found${NC}" >&2; return 1; }
+        data=$(read_issue_at "$commit") || return 1
+        new=$("$transform" "$data" "$@") || return $?
+        [[ "$new" == "$data" ]] && return 0
+        write_issue_data "$id" "$new" "$commit"
+        rc=$?
+        [[ $rc -eq $GI_STALE ]] || return $rc
+        sleep "0.$((RANDOM % 3))$((RANDOM % 10))"
+    done
+    echo -e "${RED}Error: issue $id kept changing; edit not applied${NC}" >&2
+    return $GI_STALE
 }
 
 # List all issues (always git refs now)
@@ -664,7 +697,10 @@ hash_source: content"
 description: $(gi_fold "$description")"
     fi
 
-    write_issue_data "$id" "$issue_data"
+    if ! write_issue_data "$id" "$issue_data" ""; then
+        echo -e "${RED}Error: issue $id was created concurrently; not written${NC}" >&2
+        return 1
+    fi
 
     if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
         printf '%s\n' "$id"
@@ -887,8 +923,13 @@ update_issue() {
             ;;
     esac
     
-    # Get current data
-    data=$(read_issue_data "$id")
+    gi_edit "$id" _tx_update_issue "$field" "$value" "$timestamp"
+}
+
+# update_issue's edit: <data> <field> <value> <timestamp> -> new document
+_tx_update_issue() {
+    local data="$1" field="$2" value="$3" timestamp="$4"
+    local updated_data
 
     if [[ "$field" == "description" ]]; then
         # Description is a folded top-block header in format 2. Rebuild the
@@ -935,8 +976,7 @@ $comments"
         ')
     fi
 
-    # Save updated data
-    write_issue_data "$id" "$updated_data"
+    printf '%s\n' "$updated_data"
 }
 
 # Update issue using git-style flags
@@ -1562,7 +1602,7 @@ import_single_issue() {
     fi
 
     # Write issue data
-    if write_issue_data "$id" "$data"; then
+    if write_issue_data "$id" "$data" ""; then
         local title=$(trim_ws "$(echo "$data" | grep "^title:" | head -1 | cut -d' ' -f2-)")
         echo -e "${GREEN}✓ Imported issue #$id: $title${NC}" >&2
         return 0
@@ -1664,21 +1704,14 @@ EOF
 }
 
 # Add comment to issue
-add_comment() {
-    local id=$1
-    local comment="${@:2}"
-    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local author=$(get_git_user)
-    
-    if ! read_issue_data "$id" >/dev/null 2>&1; then
-        echo -e "${RED}Issue #$id not found${NC}" >&2
-        return 1
-    fi
-    
+# add_comment's edit: <data> <timestamp> <author> <comment> -> new document
+_tx_add_comment() {
+    local data="$1" timestamp="$2" author="$3" comment="$4"
+    local updated_data
     # Get current data and append comment under ## Comments marker. The note
     # is canonicalized to format 2 first so the folded record we append is
     # read back under the format-2 rule, not the legacy one.
-    data=$(_gi_to_format_2 "$(read_issue_data "$id")")
+    data=$(_gi_to_format_2 "$data")
 
     # The comment record is folded: continuation lines carry one leading
     # space so a line beginning with "[" or "## " cannot be mistaken for a
@@ -1695,7 +1728,21 @@ add_comment() {
 [$timestamp] $author: $(gi_fold "$comment")"
     fi
 
-    write_issue_data "$id" "$updated_data"
+    printf '%s\n' "$updated_data"
+}
+
+add_comment() {
+    local id=$1
+    local comment="${@:2}"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local author=$(get_git_user)
+    
+    if ! read_issue_data "$id" >/dev/null 2>&1; then
+        echo -e "${RED}Issue #$id not found${NC}" >&2
+        return 1
+    fi
+    
+    gi_edit "$id" _tx_add_comment "$timestamp" "$author" "$comment" || return $?
     
     echo -e "${GREEN}✓ Added comment to issue #$id${NC}"
 }
@@ -2226,16 +2273,17 @@ check_for_cycles() {
 # Append a value to a comma-separated header field (deduplicates)
 # Usage: append_to_field <issue_id> <field_name> <value>
 append_to_field() {
-    local id="$1"
-    local field="$2"
-    local value="$3"
-    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    issue_exists "$1" || { echo -e "${RED}Error: Issue #$1 not found${NC}" >&2; return 1; }
+    gi_edit "$1" _tx_append_to_field "$1" "$2" "$3"
+}
 
-    local data
-    data=$(read_issue_data "$id") || {
-        echo -e "${RED}Error: Issue #$id not found${NC}" >&2
-        return 1
-    }
+# append_to_field's edit: <data> <id> <field> <value> -> new document
+_tx_append_to_field() {
+    local data="$1"
+    local id="$2"
+    local field="$3"
+    local value="$4"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
     # Get current field value
     local current
@@ -2249,7 +2297,7 @@ append_to_field() {
             existing=$(trim_ws "$existing")
             if [[ "$existing" == "$value" ]]; then
                 echo -e "${YELLOW}Value '$value' already exists in $field for issue #$id${NC}" >&2
-                return 0
+                printf '%s\n' "$data"; return 0
             fi
         done
         unset IFS
@@ -2272,29 +2320,30 @@ append_to_field() {
         END { if (!found && !in_body) print field, value }
     ')
 
-    write_issue_data "$id" "$updated_data"
+    printf '%s\n' "$updated_data"
 }
 
 # Remove a value from a comma-separated header field
 # Usage: remove_from_field <issue_id> <field_name> <value>
 remove_from_field() {
-    local id="$1"
-    local field="$2"
-    local value="$3"
-    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    issue_exists "$1" || { echo -e "${RED}Error: Issue #$1 not found${NC}" >&2; return 1; }
+    gi_edit "$1" _tx_remove_from_field "$1" "$2" "$3"
+}
 
-    local data
-    data=$(read_issue_data "$id") || {
-        echo -e "${RED}Error: Issue #$id not found${NC}" >&2
-        return 1
-    }
+# remove_from_field's edit: <data> <id> <field> <value> -> new document
+_tx_remove_from_field() {
+    local data="$1"
+    local id="$2"
+    local field="$3"
+    local value="$4"
+    local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
     # Get current field value
     local current
     current=$(trim_ws "$(echo "$data" | grep "^${field}:" | head -1 | cut -d' ' -f2-)")
 
     if [[ -z "$current" ]]; then
-        return 0  # Nothing to remove
+        printf '%s\n' "$data"; return 0  # Nothing to remove
     fi
 
     # Filter out the value
@@ -2336,7 +2385,7 @@ remove_from_field() {
         ')
     fi
 
-    write_issue_data "$id" "$updated_data"
+    printf '%s\n' "$updated_data"
 }
 
 # Cascade unblock: when an issue is marked done, check all its dependents
@@ -3152,8 +3201,9 @@ migrate_status() {
     for ref in $(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | sort); do
         local id
         id=$(echo "$ref" | sed 's|refs/notes/issue-||')
-        local data
-        data=$(read_issue_data "$id" 2>/dev/null) || continue
+        local data commit
+        commit=$(gi_ref_commit "$id")
+        data=$(read_issue_at "$commit" 2>/dev/null) || continue
 
         # Skip if already migrated (has status: field)
         if echo "$data" | grep -q "^status:"; then
@@ -3174,7 +3224,10 @@ migrate_status() {
             -e 's/^state: done$/status: closed/' \
             -e 's/^state: /status: /')
 
-        write_issue_data "$id" "$new_data"
+        if ! write_issue_data "$id" "$new_data" "$commit"; then
+            echo -e "${YELLOW}  #$id changed during migration; skipped (rerun to migrate it)${NC}" >&2
+            continue
+        fi
         migrated=$((migrated + 1))
         echo "  Migrated #$id"
     done
@@ -3193,8 +3246,9 @@ migrate_format() {
     for ref in $(git for-each-ref --format="%(refname)" refs/notes/issue-* 2>/dev/null | sort); do
         local id
         id=$(echo "$ref" | sed 's|refs/notes/issue-||')
-        local data
-        data=$(read_issue_data "$id" 2>/dev/null) || continue
+        local data commit
+        commit=$(gi_ref_commit "$id")
+        data=$(read_issue_at "$commit" 2>/dev/null) || continue
 
         # Detect old format: has a ^---$ line
         if ! echo "$data" | grep -q "^---$"; then
@@ -3236,7 +3290,10 @@ $desc_value"
 $comments"
         fi
 
-        write_issue_data "$id" "$new_data"
+        if ! write_issue_data "$id" "$new_data" "$commit"; then
+            echo -e "${YELLOW}  #$id changed during migration; skipped (rerun to migrate it)${NC}" >&2
+            continue
+        fi
         migrated=$((migrated + 1))
         echo "  Migrated #$id"
     done
@@ -3614,7 +3671,10 @@ updated: $timestamp
 author: $author
 assignee:
 hash_source: manual"
-        write_issue_data "$manual_id" "$issue_data"
+        write_issue_data "$manual_id" "$issue_data" "" || {
+            echo -e "${RED}Issue #$manual_id already exists${NC}" >&2
+            exit 1
+        }
         if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
             printf '%s\n' "$manual_id"
         else

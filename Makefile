@@ -108,6 +108,10 @@ test-porcelain: ## Run porcelain output tests
 	chmod +x tests/test_porcelain.sh
 	./tests/test_porcelain.sh
 
+test-sync: ## Run multi-user sync and history tests
+	chmod +x tests/test_sync_merge.sh
+	./tests/test_sync_merge.sh
+
 test-emacs-core: ## Run the Elisp core ERT suite (Emacs only, no magit)
 	PATH="$(CURDIR)/bin:$$PATH" emacs -Q --batch -L share/git-issue/emacs -l ert -l contrib/emacs/test/git-issue-test.el -f ert-run-tests-batch-and-exit
 
@@ -120,7 +124,7 @@ bench-deps:
 	chmod +x tests/bench_deps.sh
 	./tests/bench_deps.sh $(COUNT)
 
-test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-flags test-registry test-porcelain test-emacs-core
+test-all: test-unit test-integration test test-deps test-content-safety test-dispatch test-layout test-flags test-registry test-porcelain test-sync test-emacs-core
 
 # Single source of the release version: VERSION, the GIT_ISSUE_VERSION
 # constant in bin/git-issue, and every man page .TH line must agree.
