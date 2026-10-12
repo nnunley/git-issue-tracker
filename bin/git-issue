@@ -309,6 +309,16 @@ get_issue_ref() {
     echo "refs/notes/issue-$1"
 }
 
+# A remote's copy of an issue: fetch writes it here, never over the local ref
+gi_tracking_ref() {
+    echo "refs/issue-remotes/$1/issue-$2"
+}
+
+# The fetch refspec that fills a remote's tracking namespace
+gi_tracking_refspec() {
+    echo "+refs/notes/issue-*:refs/issue-remotes/$1/issue-*"
+}
+
 # The commit an issue's ref points at, or nothing when the issue is absent.
 gi_ref_commit() {
     git rev-parse -q --verify "$(get_issue_ref "$1")^{commit}" 2>/dev/null || true
@@ -462,12 +472,12 @@ write_issue_data() {
 # rest of the args after it) and prints the new document; a nonzero exit
 # aborts the edit with that status. A result equal to the document writes
 # nothing. When another write lands between the read and the write, the
-# edit is re-applied to the newer document, up to 5 times.
+# edit is re-applied to the newer document, up to 10 times.
 gi_edit() {
     local id="$1" transform="$2"
     shift 2
     local attempt commit data new rc
-    for attempt in 1 2 3 4 5; do
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
         commit=$(gi_ref_commit "$id")
         [[ -n "$commit" ]] || { echo -e "${RED}Issue #$id not found${NC}" >&2; return 1; }
         data=$(read_issue_at "$commit") || return 1
@@ -476,7 +486,10 @@ gi_edit() {
         write_issue_data "$id" "$new" "$commit"
         rc=$?
         [[ $rc -eq $GI_STALE ]] || return $rc
-        sleep "0.$((RANDOM % 3))$((RANDOM % 10))"
+        # Randomized backoff, doubling per attempt up to 1.6 s, so writers
+        # contending for one issue spread out
+        local ms=$((RANDOM % (100 << (attempt < 4 ? attempt : 4))))
+        sleep "$((ms / 1000)).$(printf '%03d' $((ms % 1000)))"
     done
     echo -e "${RED}Error: issue $id kept changing; edit not applied${NC}" >&2
     return $GI_STALE
@@ -1260,7 +1273,7 @@ setup_sync() {
     
     case "$action" in
         enable)
-            setup_sync_enable
+            setup_sync_enable "${@:2}"
             ;;
         disable)
             setup_sync_disable
@@ -1272,7 +1285,7 @@ setup_sync() {
             # This branch is a usage *error* (it returns 1), so the usage
             # goes to stderr with it -- R-plain-stdout.
             {
-                echo "Usage: git issue setup-sync [enable|disable|status]"
+                echo "Usage: git issue setup-sync [enable [<remote>...]|disable|status]"
                 echo ""
                 echo "Commands:"
                 echo "  enable   Install git hooks for automatic notes sync"
@@ -1352,9 +1365,25 @@ setup_sync_enable() {
     git config git-issue.sync.enabled true
     echo -e "${GREEN}✓ Enabled automatic notes sync in git config${NC}"
     
-    # Configure automatic notes fetching
-    git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*' 2>/dev/null || true
-    echo -e "${GREEN}✓ Configured automatic notes fetching${NC}"
+    # Fetch each remote's issues into its tracking namespace, never over
+    # local issue refs, and drop any refs/notes/ refspec an older version
+    # installed (it overwrote unpushed local edits on every fetch)
+    local remotes=("$@") r
+    [[ ${#remotes[@]} -eq 0 ]] && remotes=($(git remote))
+    for r in "${remotes[@]}"; do
+        if git config --get-all "remote.$r.fetch" 2>/dev/null | grep -q ':refs/notes/'; then
+            git config --unset-all "remote.$r.fetch" ':refs/notes/'
+            echo -e "${GREEN}✓ Removed the refs/notes/ fetch refspec from $r (it overwrote local issues)${NC}"
+        fi
+        if ! git config --get-all "remote.$r.fetch" 2>/dev/null | grep -qxF "$(gi_tracking_refspec "$r")"; then
+            git config --add "remote.$r.fetch" "$(gi_tracking_refspec "$r")"
+        fi
+        echo -e "${GREEN}✓ $r: issues fetch into refs/issue-remotes/$r/${NC}"
+    done
+    [[ ${#remotes[@]} -eq 0 ]] && echo -e "${YELLOW}⚠️  No remotes yet: rerun setup-sync enable after adding one${NC}"
+
+    # The dependency index is local now; an old synced copy is never read
+    git update-ref -d "$GI_LEGACY_EDGE_REF" 2>/dev/null || true
     
     echo ""
     echo -e "${GREEN}🎉 Automatic git notes sync is now enabled!${NC}"
@@ -1394,6 +1423,12 @@ setup_sync_disable() {
         fi
     fi
     
+    # Remove the tracking refspecs enable added
+    local r
+    for r in $(git remote); do
+        git config --unset-all "remote.$r.fetch" ':refs/issue-remotes/' 2>/dev/null || true
+    done
+
     # Disable sync in git config
     git config git-issue.sync.enabled false
     echo -e "${GREEN}✓ Disabled automatic notes sync in git config${NC}"
@@ -1402,7 +1437,7 @@ setup_sync_disable() {
     echo -e "${GREEN}✓ Automatic git notes sync has been disabled${NC}"
     echo ""
     echo "You can manually sync notes with:"
-    echo "  git fetch origin 'refs/notes/*:refs/notes/*'"
+    echo "  git fetch origin '+refs/notes/issue-*:refs/issue-remotes/origin/issue-*'"
     echo "  git push origin 'refs/notes/issue-*'"
 }
 
@@ -1415,9 +1450,12 @@ setup_sync_status() {
     local post_merge=false pre_push=false auto_fetch=false
     [[ -f "$hooks_dir/post-merge" && -x "$hooks_dir/post-merge" ]] && post_merge=true
     [[ -f "$hooks_dir/pre-push"   && -x "$hooks_dir/pre-push"   ]] && pre_push=true
-    if git config --get-regexp "remote\..*\.fetch" 2>/dev/null | grep -q "refs/notes"; then
-        auto_fetch=true
-    fi
+    local unsafe_fetch=false fetch_specs
+    fetch_specs=$(git config --get-regexp 'remote\..*\.fetch' 2>/dev/null || true)
+    grep -q ':refs/issue-remotes/' <<< "$fetch_specs" && auto_fetch=true
+    # A refspec whose destination is refs/notes/ writes the remote's issues
+    # over local ones (the forced one older versions installed)
+    grep -q ':refs/notes/' <<< "$fetch_specs" && unsafe_fetch=true
     local note_count=$(git for-each-ref --format="%(refname)" 'refs/notes/issue-*' 2>/dev/null | wc -l | tr -d ' ')
 
     if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
@@ -1426,6 +1464,7 @@ setup_sync_status() {
         printf 'pre-push-hook\t%s\n'   "$pre_push"
         printf 'auto-fetch\t%s\n'      "$auto_fetch"
         printf 'issue-notes\t%s\n'     "$note_count"
+        printf 'unsafe-fetch\t%s\n'    "$unsafe_fetch"
         return 0
     fi
 
@@ -1441,6 +1480,10 @@ setup_sync_status() {
     echo "Pre-push hook: $mark_pp"
     echo "Notes auto-fetch: $mark_af"
     echo "Issue notes: $note_count"
+    if [[ "$unsafe_fetch" == true ]]; then
+        echo -e "${RED}Unsafe: a fetch refspec writes into refs/notes/, so fetch overwrites local issues${NC}"
+        echo "Run: git issue setup-sync enable"
+    fi
     echo ""
     if [[ "$sync_enabled" == "true" && "$post_merge" == true && "$pre_push" == true ]]; then
         echo -e "${GREEN}✓ Automatic sync is fully configured and enabled${NC}"
@@ -3802,7 +3845,8 @@ hash_source: manual"
         scan_commits_for_issues "$@"
         ;;
     setup-sync)
-        setup_sync "$2"
+        shift
+        setup_sync "$@"
         ;;
     import)
         shift

@@ -118,6 +118,48 @@ test_legacy_edge_ref_ignored() {
     check legacy_edge_ref_ignored bash -c "! git issue deps '$a' 2>&1 | grep -q deadbee"
 }
 
+# --- Task 3: the tracking namespace ----------------------------------------
+
+# push_issue <id> [<remote>]: push one issue ref by hand, past the hooks
+push_issue() { GIT_ISSUE_PUSHING_NOTES=1 git push -q "${2:-origin}" "refs/notes/issue-$1:refs/notes/issue-$1" 2>/dev/null; }
+
+test_fetch_leaves_local_issue() {
+    setup_pair t3a
+    local id a_sha b_sha
+    id=$(in_A new_issue "Shared")
+    in_A push_issue "$id"
+    in_B git fetch -q origin "refs/notes/issue-$id:refs/notes/issue-$id"
+    in_B git issue comment "$id" "from Bob" >/dev/null 2>&1
+    in_B push_issue "$id"
+    b_sha=$(in_B ref_sha "$id")
+    in_A git issue comment "$id" "from Alice, unpushed" >/dev/null 2>&1
+    a_sha=$(in_A ref_sha "$id")
+    in_A git fetch -q origin 2>/dev/null
+    check fetch_leaves_local_issue test "$(in_A ref_sha "$id")" = "$a_sha" \
+        -a "$(in_A git rev-parse -q --verify "refs/issue-remotes/origin/issue-$id")" = "$b_sha"
+}
+
+test_migration_replaces_forced_refspec() {
+    setup_pair t3b
+    cd "$A"
+    git config --unset-all remote.origin.fetch 'refs/(notes|issue)' 2>/dev/null
+    git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'
+    local before after left
+    before=$(GIT_ISSUE_PORCELAIN=1 git issue setup-sync status | awk -F'\t' '$1=="unsafe-fetch"{print $2}')
+    git issue setup-sync enable >/dev/null 2>&1
+    after=$(GIT_ISSUE_PORCELAIN=1 git issue setup-sync status | awk -F'\t' '$1=="unsafe-fetch"{print $2}')
+    left=$(git config --get-all remote.origin.fetch | grep -c ':refs/notes/' || true)
+    check migration_replaces_forced_refspec test "$before" = true -a "$after" = false -a "$left" = 0
+}
+
+test_non_origin_remote() {
+    setup_pair t3c
+    cd "$A"
+    git remote rename origin forgejo
+    git issue setup-sync enable >/dev/null 2>&1
+    check non_origin_remote bash -c "git config --get-all remote.forgejo.fetch | grep -qxF '+refs/notes/issue-*:refs/issue-remotes/forgejo/issue-*'"
+}
+
 # ---------------------------------------------------------------------------
 
 ALL_TESTS=$(declare -F | awk '$3 ~ /^test_/ {print $3}')

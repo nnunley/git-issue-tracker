@@ -119,7 +119,7 @@ echo "Testing key-value lines [R-kv-line]"
 fresh_repo kv
 "$GI" create "alpha task" >/dev/null 2>&1
 eq "sync status keys in order" \
-   "enabled false"$'\n'"post-merge-hook false"$'\n'"pre-push-hook false"$'\n'"auto-fetch false"$'\n'"issue-notes 1" \
+   "enabled false"$'\n'"post-merge-hook false"$'\n'"pre-push-hook false"$'\n'"auto-fetch false"$'\n'"issue-notes 1"$'\n'"unsafe-fetch false" \
    "$("$GI" setup-sync status --porcelain | tr '\t' ' ')"
 "$GI" setup-sync enable >/dev/null 2>&1 || true
 eq "sync status reflects enable" "true" "$("$GI" setup-sync status --porcelain | awk -F'\t' '$1=="enabled"{print $2}')"
