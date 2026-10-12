@@ -50,6 +50,7 @@ in_A() { (cd "$A" && "$@"); }
 in_B() { (cd "$B" && "$@"); }
 new_issue() { GIT_ISSUE_PORCELAIN=1 git issue create "$@" 2>/dev/null | tail -1; }
 ref_sha() { git rev-parse -q --verify "refs/notes/issue-$1" 2>/dev/null; }
+same_text() { [[ "$1" == "$2" ]] || { echo "      want: $1"; echo "      got:  $2"; return 1; }; }
 
 # --- Task 1: compare-and-swap writes ---------------------------------------
 
@@ -359,6 +360,43 @@ test_hooks_use_named_remote() {
     in_B git issue update "$id" --status=blocked >/dev/null 2>&1
     in_B commit_and_push forgejo; rc=$?
     check hooks_use_named_remote bash -c '[[ $0 != 0 ]] && grep -qF "run \`git issue sync forgejo\` first" "$1"' "$rc" "$ROOT/push.err"
+}
+
+# --- Task 8: history ---------------------------------------------------------
+
+test_commit_message_names_change() {
+    setup_pair t8a
+    cd "$A"
+    local id
+    id=$(new_issue "Close me")
+    git issue close "$id" >/dev/null 2>&1
+    check commit_message_names_change same_text "status: open → closed" "$(git log -1 --format=%s "refs/notes/issue-$id")"
+}
+
+test_log_shows_history() {
+    setup_pair t8b
+    local id log
+    id=$(diverge_status)
+    in_B git issue sync origin >/dev/null 2>&1
+    in_B git issue resolve "$id" status=closed >/dev/null 2>&1
+    log=$(in_B git issue log "$id" 2>&1)
+    check log_shows_history bash -c '
+        grep -q "Alice alice@example.com" <<< "$0" && grep -q "Bob bob@example.com" <<< "$0" \
+        && grep -qx "  status: open → closed" <<< "$0" && grep -qx "  status: open → blocked" <<< "$0" \
+        && grep -qx "  status: closed (resolved)" <<< "$0" || { echo "$0" | sed "s/^/      /"; exit 1; }' "$log"
+}
+
+test_log_reads_old_generic_commits() {
+    setup_pair t8c
+    cd "$A"
+    local id data blob tree commit
+    id=$(new_issue "Old style")
+    data=$(git cat-file -p "refs/notes/issue-$id:issue" | sed 's/^priority: medium$/priority: high/')
+    blob=$(printf '%s\n' "$data" | git hash-object -w --stdin)
+    tree=$(printf '100644 blob %s\tissue\n' "$blob" | git mktree)
+    commit=$(git commit-tree "$tree" -p "refs/notes/issue-$id" -m "Update issue $id" </dev/null)
+    git update-ref "refs/notes/issue-$id" "$commit"
+    check log_reads_old_generic_commits bash -c 'grep -qx "  priority: medium → high" <<< "$0"' "$(git issue log "$id" 2>&1)"
 }
 
 # ---------------------------------------------------------------------------

@@ -280,6 +280,7 @@ usage() {
     echo "  setup-sync [enable|disable|status]     Configure automatic git notes sync"
     echo "  sync [<remote>]                         Fetch issues and merge them with each remote's copies"
     echo "  resolve <id> [--remote <r>] <field>=<value>...  Merge an issue in conflict, choosing each field's value"
+    echo "  log <id>                                Show an issue's history: who changed what, when"
     echo "  repo add [--force] <name> <path>        Register a repository in the global registry"
     echo "  repo list                               List registered repositories as '<name> <path>'"
     echo "  repo rm <name>                          Forget a repository (contents untouched)"
@@ -454,10 +455,13 @@ write_issue_data() {
     local tree_hash
     tree_hash=$(printf "100644 blob %s\tissue\n" "$blob_hash" | git mktree)
 
-    # Commit on top of the expected parent (none for a create)
+    # Commit on top of the expected parent (none for a create), with a
+    # message that names the change ("status: open → closed; comment")
     local commit_hash
     if [[ -n "$expected" ]]; then
-        commit_hash=$(git commit-tree "$tree_hash" -p "$expected" -m "Update issue $id" </dev/null)
+        local message
+        message=$(_gi_change_summary "$(read_issue_at "$expected")" "$data")
+        commit_hash=$(git commit-tree "$tree_hash" -p "$expected" -m "${message:-Update issue $id}" </dev/null)
     else
         commit_hash=$(git commit-tree "$tree_hash" -m "Create issue $id" </dev/null)
     fi
@@ -639,6 +643,22 @@ description: $(gi_fold "$description")"
 $comments"
     fi
     printf '%s' "$out"
+}
+
+# gi_diff_docs <old> <new>: the changes from one issue document to another
+# (files, canonical format 2), one per line: "field: old → new",
+# "field: + new", "field: - old", "description changed", "comment"
+gi_diff_docs() {
+    awk -f "$(require_awk_file diff_doc.awk)" "$1" "$2"
+}
+
+# _gi_change_summary <old document> <new document>: the changes joined by
+# "; ", for a commit message (a format-1 old document is canonicalized
+# first, so an upgrade alone is not reported as changes)
+_gi_change_summary() {
+    local old="$1" new="$2"
+    [[ "$(note_format "$old")" == 1 ]] && old=$(_gi_to_format_2 "$old")
+    gi_diff_docs <(printf '%s\n' "$old") <(printf '%s\n' "$new") | awk '{ printf "%s%s", (NR > 1 ? "; " : ""), $0 }'
 }
 
 # Header fields that hold comma-separated sets (merged element by element)
@@ -2368,6 +2388,63 @@ gi_integrate() {
                        } }' \
              | sort)
     return $status
+}
+
+# _gi_commit_changes <commit> <parents> <subject>: the changes one commit
+# of an issue's history made, one per line. A merge commit's lines say where
+# each value came from: "(from remote)", or "(resolved)" for the fields its
+# subject lists after "resolved:".
+_gi_commit_changes() {
+    local c="$1" subject="$3" p1 p2
+    read -r p1 p2 _ <<< "$2"
+    if [[ -z "$p1" ]]; then echo "created"; return 0; fi
+    local old new
+    old=$(read_issue_at "$p1"); new=$(read_issue_at "$c")
+    [[ "$(note_format "$old")" == 1 ]] && old=$(_gi_to_format_2 "$old")
+    [[ "$(note_format "$new")" == 1 ]] && new=$(_gi_to_format_2 "$new")
+    local changes
+    changes=$(gi_diff_docs <(printf '%s\n' "$old") <(printf '%s\n' "$new"))
+    if [[ -z "$p2" ]]; then
+        [[ -n "$changes" ]] && printf '%s\n' "$changes"
+        return 0
+    fi
+    local resolved=" "
+    [[ "$subject" == *"(resolved: "* ]] && { resolved="${subject##*(resolved: }"; resolved=" ${resolved%)} "; }
+    printf '%s\n' "$changes" | awk -v resolved="$resolved" '
+        $0 == "" { next }
+        $0 == "comment" { print "comment (from remote)"; next }
+        $0 == "description changed" { print $0 (index(resolved, " description ") ? " (resolved)" : " (from remote)"); next }
+        {
+            k = substr($0, 1, index($0, ":") - 1); rest = substr($0, length(k) + 3)
+            arrow = " → "
+            if (index(rest, arrow)) v = substr(rest, index(rest, arrow) + length(arrow))
+            else if (substr(rest, 1, 2) == "+ ") v = substr(rest, 3)
+            else v = "(removed)"
+            print k ": " v (index(resolved, " " k " ") ? " (resolved)" : " (from remote)")
+        }'
+}
+
+# git issue log <id>: the issue's history, newest first. Each commit is a
+# line "<short sha> <date> <committer> <email>" followed by its changes,
+# indented two spaces. With --porcelain, one record per commit: sha, date,
+# name, email, then the changes joined by RS (\036), separated by US (\037).
+log_issue() {
+    local id="$1"
+    if [[ -z "$id" ]]; then echo "Usage: git issue log <id>" >&2; return 1; fi
+    issue_exists "$id" || { echo -e "${RED}Error: Issue #$id not found${NC}" >&2; return 1; }
+    local sha parents date name email subject changes first=1
+    while IFS=$'\t' read -r sha parents date name email subject; do
+        changes=$(_gi_commit_changes "$sha" "$parents" "$subject")
+        if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
+            printf '%s\037%s\037%s\037%s\037%s\n' "$sha" "$date" "$name" "$email" \
+                "$(printf '%s\n' "$changes" | awk '{ printf "%s%s", (NR > 1 ? "\036" : ""), $0 }')"
+            continue
+        fi
+        [[ $first -eq 1 ]] || echo ""
+        first=0
+        echo -e "${YELLOW}${sha:0:7}${NC} $date $name $email"
+        [[ -n "$changes" ]] && printf '%s\n' "$changes" | sed 's/^/  /'
+    done < <(git log --format='%H%x09%P%x09%cI%x09%cn%x09%ce%x09%s' "$(get_issue_ref "$id")")
 }
 
 # git issue sync [<remote>]: fetch each remote's issues into its tracking
@@ -4169,6 +4246,10 @@ hash_source: manual"
     resolve)
         shift
         resolve_issue "$@"
+        ;;
+    log)
+        shift
+        log_issue "$@"
         ;;
     import)
         shift

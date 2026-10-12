@@ -110,6 +110,29 @@ test_format1_vs_format2() {
     check format1_vs_format2 bash -c '[[ $0 == 0 && ! -s $1 ]] && grep -qx "description: old body" <<< "$2" && [[ $(grep -c "Alice: one" <<< "$2") == 1 ]]' "$RC" "$CONF" "$OUT"
 }
 
+# diff <old> <new>: gi_diff_docs of two documents, into $OUT
+diff_of() {
+    printf '%s\n' "$1" > "$ROOT/old"
+    printf '%s\n' "$2" > "$ROOT/new"
+    OUT=$(bash -c 'source "$1"; gi_diff_docs "$2/old" "$2/new"' _ "$GI" "$ROOT" 2>"$ROOT/err")
+}
+
+test_diff_status_change() {
+    diff_of "$(doc open medium $T0)" "$(doc closed medium $T1)"
+    check diff_status_change same "status: open → closed" "$OUT"
+}
+
+test_diff_added_comment() {
+    diff_of "$(doc open medium $T0)" "$(doc open medium $T1 'c:[2026-10-02T00:00:00Z] Bob: hi' 'c: there')"
+    check diff_added_comment same "comment" "$OUT"
+}
+
+test_diff_description_changed() {
+    diff_of "$(doc open medium $T0 'h:description: one')" "$(doc open medium $T1 'h:description: two' 'h: lines' h:role:\ dev)"
+    check diff_description_changed same "description changed
+role: + dev" "$OUT"
+}
+
 ALL_TESTS=$(declare -F | awk '$3 ~ /^test_/ {print $3}')
 if [[ $# -gt 0 ]]; then ALL_TESTS=$(printf 'test_%s\n' "$@"); fi
 echo "git-issue document merge tests"

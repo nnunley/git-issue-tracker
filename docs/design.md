@@ -4,7 +4,11 @@ The storage model and why ids are hashes.
 
 ## How It Works
 
-git-issue stores each issue under its own ref, `refs/notes/issue-<id>`. The ref points at a commit whose tree holds one file, the issue document: a header of fields, then the description and comments. Each edit is a new commit, so an issue's history is the ref's log. (Despite the `refs/notes/` prefix these are not `git notes` entries; see #e2dfdaa for why sync needs to merge them.) A document looks like this:
+git-issue stores each issue under its own ref, `refs/notes/issue-<id>`. The ref points at a commit whose tree holds one file, the issue document: a header of fields, then the description and comments. Each edit is a new commit whose message names the change (`status: open → closed`), so an issue's history is the ref's log, and `git issue log <id>` reads it. (Despite the `refs/notes/` prefix these are not `git notes` entries.)
+
+Every write checks the ref still points at the commit the edit was computed from, and re-applies the edit if another write landed first, so concurrent edits are never lost. A fetch writes a remote's issues to `refs/issue-remotes/<remote>/issue-<id>`, never over local refs; `git issue sync` merges each issue with the remote's copy as git merges a branch, and a push sends issues without force (multi-user sync design, `docs/plans/2026-10-11-multi-user-sync-design.md`). The dependency index at `refs/issue-local/dep-graph` is derived from the headers and never syncs.
+
+A document looks like this:
 
 ```yaml
 id: a064d35

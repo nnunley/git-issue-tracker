@@ -16,6 +16,7 @@ Every command, field and integration, section by section. For a walkthrough, rea
 | `git issue setup-sync [enable [<remote>...]\|disable\|status]` | Configure automatic git notes sync |
 | `git issue sync [<remote>]` | Fetch each remote's issues and merge them with yours |
 | `git issue resolve <id> [--remote <r>] <field>=<value>...` | Merge an issue in conflict, choosing each conflicting field's value |
+| `git issue log <id> [--porcelain]` | Show an issue's history: each commit's date, committer and the fields it changed |
 | `git issue dep add <from> <type> <to>` | Add dependency between issues |
 | `git issue dep rm <from> <type> <to>` | Remove dependency |
 | `git issue dep list [<id>]` | Show dependencies for an issue |
