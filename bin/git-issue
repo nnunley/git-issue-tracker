@@ -639,6 +639,30 @@ $comments"
     printf '%s' "$out"
 }
 
+# Header fields that hold comma-separated sets (merged element by element)
+GI_LIST_FIELDS="labels blocks depends_on parent_of relates_to waits_for"
+
+# gi_merge_docs <base> <local> <remote> <conflicts>: three-way merge of the
+# issue documents in those files (either note format). Prints the merged
+# canonical document; exits 0 when clean, 1 when <conflicts> holds records
+# ("field: <name>", "local: <value>", "remote: <value>"), in which case the
+# document carries the local value of each conflicting field.
+gi_merge_docs() {
+    local base="$1" local_doc="$2" remote="$3" conflicts="$4"
+    local d f src
+    d=$(mktemp -d "${TMPDIR:-/tmp}/git-issue-merge.XXXXXX") || return 2
+    for f in base local remote; do
+        case "$f" in base) src="$base" ;; local) src="$local_doc" ;; remote) src="$remote" ;; esac
+        printf '%s\n' "$(_gi_to_format_2 "$(cat "$src")")" > "$d/$f"
+    done
+    : > "$conflicts"
+    awk -f "$(require_awk_file merge_doc.awk)" -v LIST_FIELDS="$GI_LIST_FIELDS" -v CONFLICTS="$conflicts" \
+        "$d/base" "$d/local" "$d/remote"
+    local rc=$?
+    rm -f "$d/base" "$d/local" "$d/remote"; rmdir "$d"
+    return $rc
+}
+
 # Raw value of a header field with continuation lines unfolded (joined by
 # newline, leading space stripped). Empty if absent.
 get_field_raw() {
