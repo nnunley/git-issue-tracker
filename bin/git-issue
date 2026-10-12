@@ -317,6 +317,11 @@ gi_tracking_ref() {
     echo "refs/issue-remotes/$1/issue-$2"
 }
 
+# A fetch refspec that writes a remote's issues over local ones: the forced
+# +refs/notes/*:refs/notes/* older versions installed, or any refspec whose
+# destination is the issue refs (git config value pattern, ERE)
+GI_UNSAFE_FETCH_RE=':refs/notes/(\*|issue-\*)$'
+
 # The fetch refspec that fills a remote's tracking namespace
 gi_tracking_refspec() {
     echo "+refs/notes/issue-*:refs/issue-remotes/$1/issue-*"
@@ -489,8 +494,8 @@ gi_edit() {
         data=$(read_issue_at "$commit") || return 1
         new=$("$transform" "$data" "$@") || return $?
         [[ "$new" == "$data" ]] && return 0
-        write_issue_data "$id" "$new" "$commit"
-        rc=$?
+        rc=0
+        write_issue_data "$id" "$new" "$commit" || rc=$?   # not bare: set -e would end the command on a lost race
         [[ $rc -eq $GI_STALE ]] || return $rc
         # Randomized backoff, doubling per attempt up to 1.6 s, so writers
         # contending for one issue spread out
@@ -1425,9 +1430,15 @@ setup_sync_enable() {
     local remotes=("$@") r
     [[ ${#remotes[@]} -eq 0 ]] && remotes=($(git remote))
     for r in "${remotes[@]}"; do
-        if git config --get-all "remote.$r.fetch" 2>/dev/null | grep -q ':refs/notes/'; then
-            git config --unset-all "remote.$r.fetch" ':refs/notes/'
+        if git config --get-all "remote.$r.fetch" 2>/dev/null | grep -qE "$GI_UNSAFE_FETCH_RE"; then
+            git config --unset-all "remote.$r.fetch" "$GI_UNSAFE_FETCH_RE"
             echo -e "${GREEN}✓ Removed the refs/notes/ fetch refspec from $r (it overwrote local issues)${NC}"
+        fi
+        if [[ -z "$(git config --get "remote.$r.url" 2>/dev/null)" ]]; then
+            # A remote section with no URL (an older enable wrote one for a
+            # missing origin): nothing to fetch from
+            git config --unset-all "remote.$r.fetch" ':refs/issue-remotes/' 2>/dev/null || true
+            continue
         fi
         if ! git config --get-all "remote.$r.fetch" 2>/dev/null | grep -qxF "$(gi_tracking_refspec "$r")"; then
             git config --add "remote.$r.fetch" "$(gi_tracking_refspec "$r")"
@@ -1509,7 +1520,7 @@ setup_sync_status() {
     grep -q ':refs/issue-remotes/' <<< "$fetch_specs" && auto_fetch=true
     # A refspec whose destination is refs/notes/ writes the remote's issues
     # over local ones (the forced one older versions installed)
-    grep -q ':refs/notes/' <<< "$fetch_specs" && unsafe_fetch=true
+    grep -qE "$GI_UNSAFE_FETCH_RE" <<< "$fetch_specs" && unsafe_fetch=true
     local note_count=$(git for-each-ref --format="%(refname)" 'refs/notes/issue-*' 2>/dev/null | wc -l | tr -d ' ')
 
     if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
@@ -2457,7 +2468,12 @@ sync_issues() {
         return 1
     fi
     for r in "${remotes[@]}"; do
-        if ! git fetch -q "$r" "$(gi_tracking_refspec "$r")" 2>/dev/null; then
+        if git config --get-all "remote.$r.fetch" 2>/dev/null | grep -qE "$GI_UNSAFE_FETCH_RE"; then
+            echo -e "${YELLOW}⚠️  remote.$r.fetch still writes into refs/notes/, so a plain git fetch overwrites local issues: run git issue setup-sync enable${NC}" >&2
+        fi
+        # --refmap= keeps git from also applying the configured refspecs,
+        # which (in an unmigrated clone) would force-move the local issue refs
+        if ! git fetch -q --refmap= "$r" "$(gi_tracking_refspec "$r")" 2>/dev/null; then
             echo -e "${RED}Error: could not fetch issues from $r${NC}" >&2
             status=1; continue
         fi

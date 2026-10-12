@@ -33,13 +33,19 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 # The issue refs that differ from the remote's copy, as "<ref> <sha>": one
-# for-each-ref over both namespaces, no network round trip
+# for-each-ref over both namespaces, no network round trip. A ref the
+# remote's copy already contains (a fetch moved the copy on, and nothing
+# synced yet) has nothing to send, so it is left out rather than refused.
 TRACK="refs/issue-remotes/$REMOTE/issue-"
 CHANGED=$(git for-each-ref --format='%(refname) %(objectname)' 'refs/notes/issue-*' "${TRACK}*" 2>/dev/null \
     | awk -v t="$TRACK" '
         index($1, t) == 1 { seen[substr($1, length(t) + 1)] = $2; next }
         { id = $1; sub(/^refs\/notes\/issue-/, "", id); ref[id] = $1; sha[id] = $2 }
-        END { for (id in ref) if (!(id in seen) || seen[id] != sha[id]) print ref[id], sha[id] }')
+        END { for (id in ref) if (!(id in seen) || seen[id] != sha[id]) print ref[id], sha[id], ((id in seen) ? seen[id] : "-") }' \
+    | while read -r ref sha theirs; do
+        [[ "$theirs" != "-" ]] && git merge-base --is-ancestor "$sha" "$theirs" 2>/dev/null && continue
+        echo "$ref $sha"
+      done)
 [[ -z "$CHANGED" ]] && exit 0
 
 COUNT=$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')
@@ -60,11 +66,15 @@ if OUT=$(git push --porcelain --atomic "$REMOTE" "${REFSPECS[@]}" 2>&1); then
     fi
     echo -e "${GREEN}✓ Pushed $COUNT issue notes${NC}" >&2
 else
-    # Name the refs the remote refused on their own account (with --atomic
-    # the rest are reported as "atomic push failed")
-    ids_of() { awk -F'\t' -v want="$1" '$1 == "!" && (want == "" || $3 !~ /atomic/) { split($2, a, ":"); id = a[1]; sub(/^refs\/notes\/issue-/, "", id); print id }'; }
-    REJECTED=$(printf '%s\n' "$OUT" | ids_of own)
-    [[ -z "$REJECTED" ]] && REJECTED=$(printf '%s\n' "$OUT" | ids_of "")
+    # The issues the remote refused because its copy moved on: only those
+    # fail the push. Any other refusal (a remote that takes no notes, no
+    # permission, no network) is a warning, and the code push goes ahead.
+    REJECTED=$(printf '%s\n' "$OUT" | awk -F'\t' '$1 == "!" && $3 ~ /non-fast-forward|fetch first|stale info/ { split($2, a, ":"); id = a[1]; sub(/^refs\/notes\/issue-/, "", id); print id }')
+    if [[ -z "$REJECTED" ]]; then
+        echo -e "${YELLOW}⚠️  Could not push issue notes to $REMOTE; pushing the code anyway:${NC}" >&2
+        printf '%s\n' "$OUT" | grep -v '^To \|^Done$' | sed 's/^/   /' >&2
+        exit 0
+    fi
     echo -e "${RED}✗ $REMOTE refused issue notes that have diverged from its copy: $(echo $REJECTED)${NC}" >&2
     echo -e "${YELLOW}  run \`git issue sync $REMOTE\` first${NC}" >&2
     if [[ -n "$GIT_ISSUE_PUSH_SOFT" ]]; then

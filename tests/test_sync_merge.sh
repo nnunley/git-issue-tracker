@@ -399,6 +399,81 @@ test_log_reads_old_generic_commits() {
     check log_reads_old_generic_commits bash -c 'grep -qx "  priority: medium → high" <<< "$0"' "$(git issue log "$id" 2>&1)"
 }
 
+# --- Final review fixes ------------------------------------------------------
+
+test_concurrent_dep_adds_all_kept() {
+    setup_pair f1
+    cd "$A"
+    local a i n=8 others=() fails=0
+    a=$(new_issue "Hub")
+    for ((i = 1; i <= n; i++)); do others+=("$(new_issue "spoke $i")"); done
+    for ((i = 0; i < n; i++)); do (git issue dep add "$a" relates_to "${others[$i]}" >/dev/null 2>&1 || echo fail >> "$ROOT/f1.fails") & done
+    wait
+    [[ -f "$ROOT/f1.fails" ]] && fails=$(wc -l < "$ROOT/f1.fails" | tr -d ' ')
+    local kept
+    kept=$(git cat-file -p "refs/notes/issue-$a:issue" | sed -n 's/^relates_to: //p' | tr ',' '\n' | grep -c .)
+    check concurrent_dep_adds_all_kept test "$fails" = 0 -a "$kept" = "$n"
+}
+
+test_sync_with_legacy_refspec_keeps_local() {
+    setup_pair f2
+    local id
+    id=$(in_A new_issue "Legacy clone")
+    share_issue "$id"
+    in_B git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'
+    in_B git issue comment "$id" "Bob, unpushed" >/dev/null 2>&1
+    in_A git issue comment "$id" "Alice, pushed" >/dev/null 2>&1
+    in_A push_issue "$id"
+    in_B git issue sync origin >/dev/null 2>&1
+    local shown; shown=$(in_B git issue show "$id" 2>&1)
+    check sync_with_legacy_refspec_keeps_local bash -c 'grep -q "Bob, unpushed" <<< "$0" && grep -q "Alice, pushed" <<< "$0"' "$shown"
+}
+
+test_fetch_then_push_not_blocked() {
+    setup_pair f3
+    local id rc
+    id=$(in_A new_issue "Behind")
+    in_A commit_and_push
+    in_B git pull -q --no-rebase origin main >/dev/null 2>&1
+    in_B git issue comment "$id" "Bob moves it on" >/dev/null 2>&1
+    in_B commit_and_push
+    in_A git fetch -q origin 2>/dev/null
+    in_A git rebase -q origin/main 2>/dev/null   # a rebase runs no post-merge hook, so nothing syncs
+    in_A commit_and_push; rc=$?
+    check fetch_then_push_not_blocked test "$rc" = 0
+}
+
+test_notes_refused_for_other_reason_warns() {
+    setup_pair f4
+    cd "$A"
+    local R2="$ROOT/f4/R2.git" rc
+    git init -q --bare "$R2"
+    printf '#!/bin/sh\ncase "$1" in refs/notes/*) echo "notes not accepted here" >&2; exit 1 ;; esac\n' > "$R2/hooks/update"
+    chmod +x "$R2/hooks/update"
+    git remote add deploy "$R2"
+    new_issue "Local only" >/dev/null
+    commit_and_push deploy; rc=$?
+    check notes_refused_for_other_reason_warns test "$rc" = 0 -a -n "$(git --git-dir="$R2" rev-parse -q --verify main)"
+}
+
+test_phantom_origin_not_tracked() {
+    setup_pair f5
+    cd "$A"
+    git remote rename origin forgejo 2>/dev/null
+    git config --add remote.origin.fetch '+refs/notes/*:refs/notes/*'
+    git issue setup-sync enable >/dev/null 2>&1
+    local rc; git issue sync >/dev/null 2>&1; rc=$?
+    check phantom_origin_not_tracked bash -c '[[ $0 == 0 ]] && ! git config --get-all remote.origin.fetch 2>/dev/null | grep -q issue-remotes' "$rc"
+}
+
+test_user_notes_refspec_kept() {
+    setup_pair f6
+    cd "$A"
+    git config --add remote.origin.fetch '+refs/notes/review:refs/notes/review'
+    git issue setup-sync enable >/dev/null 2>&1
+    check user_notes_refspec_kept bash -c 'git config --get-all remote.origin.fetch | grep -qxF "+refs/notes/review:refs/notes/review"'
+}
+
 # ---------------------------------------------------------------------------
 
 ALL_TESTS=$(declare -F | awk '$3 ~ /^test_/ {print $3}')
