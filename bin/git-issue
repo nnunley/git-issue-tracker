@@ -279,6 +279,7 @@ usage() {
     echo "  migrate-status                                                              Migrate issue data from state→status"
     echo "  setup-sync [enable|disable|status]     Configure automatic git notes sync"
     echo "  sync [<remote>]                         Fetch issues and merge them with each remote's copies"
+    echo "  resolve <id> [--remote <r>] <field>=<value>...  Merge an issue in conflict, choosing each field's value"
     echo "  repo add [--force] <name> <path>        Register a repository in the global registry"
     echo "  repo list                               List registered repositories as '<name> <path>'"
     echo "  repo rm <name>                          Forget a repository (contents untouched)"
@@ -657,9 +658,9 @@ gi_merge_docs() {
         printf '%s\n' "$(_gi_to_format_2 "$(cat "$src")")" > "$d/$f"
     done
     : > "$conflicts"
+    local rc=0
     awk -f "$(require_awk_file merge_doc.awk)" -v LIST_FIELDS="$GI_LIST_FIELDS" -v CONFLICTS="$conflicts" \
-        "$d/base" "$d/local" "$d/remote"
-    local rc=$?
+        "$d/base" "$d/local" "$d/remote" || rc=$?
     rm -f "$d/base" "$d/local" "$d/remote"; rmdir "$d"
     return $rc
 }
@@ -765,6 +766,10 @@ list_issues() {
         echo ""
     fi
 
+    # Issues in conflict with a remote are marked "!" in place of "#"
+    local conflicted=" "
+    [[ -z "${GIT_ISSUE_PORCELAIN:-}" ]] && conflicted=" $(gi_conflicted | awk '{print $2}' | tr '\n' ' ')"
+
     # Batch-read all issues, extract fields via awk (3 git processes total)
     _issue_tsv_stream | while IFS=$'\037' read -r id status_val title priority assignee role depends_on updated blocks parent_of relates_to; do
         if [[ -n "${GIT_ISSUE_PORCELAIN:-}" ]]; then
@@ -786,7 +791,9 @@ list_issues() {
 
         # Format output. %b interprets the color escapes; content fields go
         # through %s so stored backslash sequences are NOT interpreted.
-        printf '%b#%s [%s] %s (P: %s)' "$color" "$id" "$status_val" "$title" "$priority"
+        local mark="#"
+        [[ "$conflicted" == *" $id "* ]] && mark="!"
+        printf '%b%s%s [%s] %s (P: %s)' "$color" "$mark" "$id" "$status_val" "$title" "$priority"
         [ -n "$role" ] && printf ' [%s]' "$role"
         [ -n "$assignee" ] && printf ' → %s' "$assignee"
         printf '%b\n' "$NC"
@@ -839,6 +846,7 @@ show_issue() {
         _porcelain_show "$data"
         return 0
     fi
+    _gi_show_conflicts "$id"
     local fmt=$(note_format "$data")
     local front_matter=$(parse_front_matter "$data")
     local comments=$(parse_comment_records "$data" "$fmt" | sed 's/^ //')
@@ -2126,7 +2134,7 @@ _gi_merge_commit() {
     read_issue_at "$base" > "$d/base"
     read_issue_at "$local_c" > "$d/local"
     read_issue_at "$remote_c" > "$d/remote"
-    merged=$(gi_merge_docs "$d/base" "$d/local" "$d/remote" "$conflicts"); rc=$?
+    rc=0; merged=$(gi_merge_docs "$d/base" "$d/local" "$d/remote" "$conflicts") || rc=$?
     rm -f "$d/base" "$d/local" "$d/remote"; rmdir "$d"
     if [[ $rc -eq 1 && $# -gt 0 ]]; then
         merged=$(_gi_resolve_fields "$merged" "$conflicts" "$@") || return 1
@@ -2154,9 +2162,158 @@ gi_issue_conflicts() {
     local d rc
     d=$(mktemp -d "${TMPDIR:-/tmp}/git-issue-sync.XXXXXX") || return 2
     read_issue_at "$base" > "$d/base"; read_issue_at "$local_c" > "$d/local"; read_issue_at "$remote_c" > "$d/remote"
-    gi_merge_docs "$d/base" "$d/local" "$d/remote" "$conflicts" >/dev/null; rc=$?
+    rc=0; gi_merge_docs "$d/base" "$d/local" "$d/remote" "$conflicts" >/dev/null || rc=$?
     rm -f "$d/base" "$d/local" "$d/remote"; rmdir "$d"
     return $rc
+}
+
+# _gi_diverged [<id>]: "<remote> <id>" for each issue whose local ref and a
+# remote's copy have both moved on (neither contains the other). One
+# for-each-ref over both namespaces, then one ancestry check per issue that
+# differs, so the cost follows the differing issues, not all of them.
+_gi_diverged() {
+    local only="${1:-}" r id local_c remote_c
+    while read -r r id local_c remote_c; do
+        [[ -n "$only" && "$id" != "$only" ]] && continue
+        git merge-base --is-ancestor "$local_c" "$remote_c" 2>/dev/null && continue
+        git merge-base --is-ancestor "$remote_c" "$local_c" 2>/dev/null && continue
+        echo "$r $id"
+    done < <(git for-each-ref --format='%(refname) %(objectname)' 'refs/notes/issue-*' 'refs/issue-remotes/*/issue-*' 2>/dev/null \
+             | awk '
+                 index($1, "refs/issue-remotes/") == 1 {
+                     rest = substr($1, 20); i = index(rest, "/issue-")
+                     n++; rr[n] = substr(rest, 1, i - 1); rid[n] = substr(rest, i + 7); rsha[n] = $2; next }
+                 { id = $1; sub(/^refs\/notes\/issue-/, "", id); local_[id] = $2 }
+                 END { for (i = 1; i <= n; i++)
+                         if ((rid[i] in local_) && local_[rid[i]] != rsha[i]) print rr[i], rid[i], local_[rid[i]], rsha[i] }')
+}
+
+# "<remote> <id>" for each issue in conflict or colliding with a remote
+gi_conflicted() {
+    local r id f
+    f=$(mktemp "${TMPDIR:-/tmp}/git-issue-conflicts.XXXXXX")
+    while read -r r id; do
+        [[ -z "$id" ]] && continue
+        gi_issue_conflicts "$r" "$id" "$f" || echo "$r $id"
+    done < <(_gi_diverged "$@")
+    rm -f "$f"
+}
+
+# The conflict block show prints above an issue: per remote, one
+# "field: local | remote" line per conflicting field
+_gi_show_conflicts() {
+    local id="$1" r f rc
+    f=$(mktemp "${TMPDIR:-/tmp}/git-issue-conflicts.XXXXXX")
+    while read -r r _; do
+        [[ -z "$r" ]] && continue
+        rc=0; gi_issue_conflicts "$r" "$id" "$f" || rc=$?
+        [[ $rc -eq 0 ]] && continue
+        echo -e "${RED}Conflict with $r:${NC}"
+        if [[ $rc -eq 2 ]]; then
+            echo "  id collision: $r has a different issue with this id"
+        else
+            awk '
+                /^field: / { if (k != "") print "  " k ": " l " | " r; k = substr($0, 8); l = r = ""; side = ""; next }
+                /^local:/  { l = substr($0, 7); sub(/^ /, "", l); side = "l"; next }
+                /^remote:/ { r = substr($0, 8); sub(/^ /, "", r); side = "r"; next }
+                /^ / { if (side == "l") l = l " " substr($0, 2); else r = r " " substr($0, 2); next }
+                END { if (k != "") print "  " k ": " l " | " r }' "$f"
+            echo "  Resolve with: git issue resolve $id <field>=<value>..."
+        fi
+        echo ""
+    done < <(_gi_diverged "$id")
+    rm -f "$f"
+}
+
+# _gi_resolve_fields <document> <conflicts> <field=value>...: the document
+# with each given field set to its value; exit 1 naming any conflicting
+# field left without one
+_gi_resolve_fields() {
+    local doc="$1" conflicts="$2"; shift 2
+    local missing="" f pair given=" "
+    for pair in "$@"; do given="$given${pair%%=*} "; done
+    for f in $(sed -n 's/^field: //p' "$conflicts"); do
+        [[ "$given" == *" $f "* ]] || missing="$missing $f"
+    done
+    if [[ -n "$missing" ]]; then
+        echo -e "${RED}Error: unresolved fields:$missing${NC}" >&2
+        return 1
+    fi
+    for pair in "$@"; do
+        local k="${pair%%=*}" v="${pair#*=}"
+        [[ "$k" != "description" ]] && v=$(gi_single_line "$v")
+        doc=$(printf '%s\n' "$doc" | awk -v k="$k" -v v="$(gi_fold "$v")" '
+            BEGIN { head = 1 }
+            head && $0 == "" { if (!done) print k ": " v; head = 0; print; next }
+            head && skip && /^ / { next }
+            head { skip = 0 }
+            head && index($0, k ":") == 1 { print k ": " v; done = 1; skip = 1; next }
+            { print }
+            END { if (head && !done) print k ": " v }')
+    done
+    printf '%s\n' "$doc"
+}
+
+# git issue resolve <id> [--remote <r>] <field>=<value>...: merge an issue
+# in conflict with a remote's copy, taking the given value for each
+# conflicting field. Exits 2 when a conflicting field has no value.
+resolve_issue() {
+    local id="" r="" pairs=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --remote) r="$2"; shift 2 ;;
+            --remote=*) r="${1#--remote=}"; shift ;;
+            *=*) pairs+=("$1"); shift ;;
+            *) [[ -z "$id" ]] && id="$1" || { echo -e "${RED}Error: unexpected argument '$1'${NC}" >&2; return 1; }; shift ;;
+        esac
+    done
+    if [[ -z "$id" ]]; then
+        echo "Usage: git issue resolve <id> [--remote <remote>] <field>=<value>..." >&2
+        return 1
+    fi
+    issue_exists "$id" || { echo -e "${RED}Error: Issue #$id not found${NC}" >&2; return 1; }
+    if [[ -z "$r" ]]; then
+        local remotes
+        remotes=$(gi_conflicted "$id" | awk '{print $1}')
+        if [[ -z "$remotes" ]]; then
+            echo "Issue #$id has no conflict to resolve"
+            return 0
+        fi
+        if [[ $(printf '%s\n' "$remotes" | wc -l | tr -d ' ') -gt 1 ]]; then
+            echo -e "${RED}Error: #$id conflicts with several remotes ($(echo $remotes)); pass --remote${NC}" >&2
+            return 1
+        fi
+        r="$remotes"
+    fi
+    local conflicts rc local_c remote_c merge_c
+    conflicts=$(mktemp "${TMPDIR:-/tmp}/git-issue-conflicts.XXXXXX")
+    rc=0; gi_issue_conflicts "$r" "$id" "$conflicts" || rc=$?
+    if [[ $rc -eq 2 ]]; then
+        rm -f "$conflicts"
+        echo -e "${RED}Error: #$id and $r's copy are different issues with the same id${NC}" >&2
+        return 1
+    fi
+    if [[ $rc -eq 0 ]]; then
+        rm -f "$conflicts"
+        echo "Issue #$id has no conflict with $r to resolve"
+        return 0
+    fi
+    local_c=$(gi_ref_commit "$id")
+    remote_c=$(git rev-parse -q --verify "$(gi_tracking_ref "$r" "$id")^{commit}")
+    local fields
+    fields=$(sed -n 's/^field: //p' "$conflicts" | tr '\n' ' ' | sed 's/ $//')
+    if ! merge_c=$(_gi_merge_commit "$id" "$local_c" "$remote_c" "Merge issue $id from $r (resolved: $fields)" "$conflicts" ${pairs[@]+"${pairs[@]}"}); then
+        rm -f "$conflicts"
+        [[ ${#pairs[@]} -eq 0 ]] && echo -e "${RED}Error: unresolved fields: $fields${NC}" >&2
+        return 2
+    fi
+    rm -f "$conflicts"
+    if ! git update-ref "$(get_issue_ref "$id")" "$merge_c" "$local_c" 2>/dev/null; then
+        echo -e "${RED}Error: #$id changed while resolving; run resolve again${NC}" >&2
+        return $GI_STALE
+    fi
+    gi_reindex_issues "$id"
+    echo -e "${GREEN}✓ Resolved #$id with $r ($fields)${NC}"
 }
 
 _gi_title_at() { read_issue_at "$1" 2>/dev/null | sed -n 's/^title: //p' | head -1; }
@@ -4007,6 +4164,10 @@ hash_source: manual"
     sync)
         shift
         sync_issues "$@"
+        ;;
+    resolve)
+        shift
+        resolve_issue "$@"
         ;;
     import)
         shift

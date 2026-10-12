@@ -243,6 +243,39 @@ test_deps_after_sync() {
         "$(in_A git issue deps "$a" 2>&1)" "$b" "$(git ls-remote "$R" 2>/dev/null)"
 }
 
+# --- Task 6: conflicts and resolve ------------------------------------------
+
+# diverge_status: in the current pair, an issue A closed and pushed while B
+# set it blocked, so B's next sync finds a status conflict; prints the id
+diverge_status() {
+    local id
+    id=$(in_A new_issue "Contested")
+    share_issue "$id"
+    in_A git issue close "$id" >/dev/null 2>&1
+    in_A push_issue "$id"
+    in_B git issue update "$id" --status=blocked >/dev/null 2>&1
+    echo "$id"
+}
+
+test_status_conflict_resolved() {
+    local id out show list rc_partial rc_full after
+    setup_pair t6a
+    id=$(diverge_status)
+    out=$(in_B git issue sync origin 2>&1)
+    show=$(in_B git issue show "$id" 2>&1)
+    list=$(in_B git issue list 2>&1)
+    in_B git issue resolve "$id" priority=low >/dev/null 2>&1; rc_partial=$?
+    in_B git issue resolve "$id" status=closed >/dev/null 2>&1; rc_full=$?
+    after=$(in_B git issue show "$id" 2>&1)
+    check status_conflict_resolved bash -c '
+        grep -q "^conflict $1 status$" <<< "$2" || { echo "      sync: $2"; exit 1; }
+        grep -q "status: blocked | closed" <<< "$3" || { echo "      show: $3"; exit 1; }
+        grep -q "!$1" <<< "$4" || { echo "      list: $4"; exit 1; }
+        [[ $5 == 2 && $6 == 0 && $7 == 3 ]] || { echo "      rc partial=$5 full=$6 words=$7"; exit 1; }
+        grep -qx "status: closed" <<< "$8" && ! grep -q "Conflict with" <<< "$8"' _ \
+        "$id" "$out" "$show" "$list" "$rc_partial" "$rc_full" "$(in_B parents "$id")" "$after"
+}
+
 # ---------------------------------------------------------------------------
 
 ALL_TESTS=$(declare -F | awk '$3 ~ /^test_/ {print $3}')

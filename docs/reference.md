@@ -15,6 +15,7 @@ Every command, field and integration, section by section. For a walkthrough, rea
 | `git issue link <id> <commit>` | Link issue to commit |
 | `git issue setup-sync [enable [<remote>...]\|disable\|status]` | Configure automatic git notes sync |
 | `git issue sync [<remote>]` | Fetch each remote's issues and merge them with yours |
+| `git issue resolve <id> [--remote <r>] <field>=<value>...` | Merge an issue in conflict, choosing each conflicting field's value |
 | `git issue dep add <from> <type> <to>` | Add dependency between issues |
 | `git issue dep rm <from> <type> <to>` | Remove dependency |
 | `git issue dep list [<id>]` | Show dependencies for an issue |
@@ -271,7 +272,12 @@ issue that differs, the way git merges a branch, and prints one line per issue:
 - `collision <id> "<title>" "<title>"`: two different issues got the same id.
   Neither is changed.
 
-`sync` exits 1 when any issue is in conflict or collides.
+`sync` exits 1 when any issue is in conflict or collides. A conflicted issue
+shows a `Conflict with <remote>:` block in `git issue show`, with one
+`field: yours | theirs` line per field, and `git issue list` marks it `!` in
+place of `#`. `git issue resolve <id> <field>=<value>...` writes the merge,
+taking your value for each conflicting field; it refuses (exit 2) until every
+conflicting field has one.
 
 **Manual sync (if auto-sync disabled):**
 ```bash
