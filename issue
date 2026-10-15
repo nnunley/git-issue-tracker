@@ -25,3 +25,12 @@ description: Sync must merge issue refs the way git merges branches, instead of 
 ## Comments
 [2026-10-10T21:29:49Z] Norman Nunley, Jr: Scope widened (2026-10-10): this is now the redesign back to the git notes porcelain with stable anchors; the forced-fetch loss is its motivating bug. Title left as filed: git issue update has no --title.
 [2026-10-10T21:32:55Z] Norman Nunley, Jr: Design revised (2026-10-10): keep per-issue refs; they were chosen for performance (no single-ref write contention, batch reads instead of a process per note, one sha comparison per ref for change detection and push). The fix is a tracking namespace plus a per-issue merge, as git does for branches, not a return to one notes ref.
+[2026-10-15T19:52:48Z] Norman Nunley, Jr: Fixed on main: fetch writes into refs/issue-remotes/<remote>/, `git issue sync` fast-forwards or three-way merges each issue (and runs from post-merge), and pre-push pushes without force.
+ 
+ Acceptance, each pinned by a test in tests/test_sync_merge.sh:
+ - both comments kept after fetch and after pull: comments_merge_both_ways, fetch_leaves_local_issue, post_merge_runs_sync
+ - a both-sides status change is a conflict, neither value lost, settled by `git issue resolve`: status_conflict_resolved
+ - a diverged push is refused: diverged_push_refused
+ - list and pre-push stay O(changed refs): both read refs in one for-each-ref and run merge-base only for refs that differ
+ 
+ History came with it: each write's commit message names the change, and `git issue log <id>` shows them. `git issue setup-sync enable` migrates an existing clone.
