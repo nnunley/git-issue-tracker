@@ -32,6 +32,10 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
     exit 0
 fi
 
+# The remote refs this push already updates (git passes them on stdin): an
+# issue ref named on the command line is git's to push, not the hook's
+NAMED=$(awk '{print $3}')
+
 # The issue refs that differ from the remote's copy, as "<ref> <sha>": one
 # for-each-ref over both namespaces, no network round trip. A ref the
 # remote's copy already contains (a fetch moved the copy on, and nothing
@@ -43,6 +47,7 @@ CHANGED=$(git for-each-ref --format='%(refname) %(objectname)' 'refs/notes/issue
         { id = $1; sub(/^refs\/notes\/issue-/, "", id); ref[id] = $1; sha[id] = $2 }
         END { for (id in ref) if (!(id in seen) || seen[id] != sha[id]) print ref[id], sha[id], ((id in seen) ? seen[id] : "-") }' \
     | while read -r ref sha theirs; do
+        grep -qxF "$ref" <<< "$NAMED" && continue
         [[ "$theirs" != "-" ]] && git merge-base --is-ancestor "$sha" "$theirs" 2>/dev/null && continue
         echo "$ref $sha"
       done)

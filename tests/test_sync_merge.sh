@@ -332,6 +332,22 @@ test_first_push_without_tracking_refs() {
     check first_push_without_tracking_refs test "$(git ls-remote "$R2" 'refs/notes/issue-*' | wc -l | tr -d ' ')" = 3
 }
 
+# A push that names an issue ref itself: the hook leaves that ref to git's
+# push and sends only the other changed issues, so the push succeeds
+test_push_naming_issue_ref() {
+    setup_pair t7g
+    cd "$A"
+    local named other rc=0
+    named=$(new_issue "Named"); other=$(new_issue "Other")
+    git push -q origin "refs/notes/issue-$named:refs/notes/issue-$named" >/dev/null 2>&1 || rc=$?
+    check push_naming_issue_ref bash -c '[[ $0 == 0 ]] \
+        && [[ $(git ls-remote origin "refs/notes/issue-$1" | cut -f1) == $(git rev-parse "refs/notes/issue-$1") ]] \
+        && [[ $(git ls-remote origin "refs/notes/issue-$2" | cut -f1) == $(git rev-parse "refs/notes/issue-$2") ]] \
+        && [[ $(git rev-parse -q --verify "refs/issue-remotes/origin/issue-$1") == $(git rev-parse "refs/notes/issue-$1") ]] \
+        && [[ $(git rev-parse -q --verify "refs/issue-remotes/origin/issue-$2") == $(git rev-parse "refs/notes/issue-$2") ]]' \
+        "$rc" "$named" "$other"
+}
+
 test_post_merge_runs_sync() {
     setup_pair t7e
     local id
