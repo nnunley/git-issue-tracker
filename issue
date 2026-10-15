@@ -1,10 +1,10 @@
 id: e2dfdaa
 v: 2
 title: Sync merges issue refs as git merges branches, instead of force-overwriting them
-status: open
+status: closed
 priority: high
 created: 2026-10-10T21:24:54Z
-updated: 2026-10-10T21:49:16Z
+updated: 2026-10-15T19:52:49Z
 author: Norman Nunley, Jr
 assignee: Norman Nunley, Jr
 hash_source: content
