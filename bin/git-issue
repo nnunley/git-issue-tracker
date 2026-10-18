@@ -49,6 +49,7 @@ require_awk_file() {
 STATUSES=()
 STATUS_MODE="permissive"
 PRIORITIES=("low" "medium" "high" "critical")
+ISSUE_TYPES=("bug" "feature" "task" "epic" "chore" "molecule" "gate")
 
 # Storage backend detection  
 STORAGE_TYPE=""
@@ -985,12 +986,19 @@ update_issue() {
         description)
             # Accept any value for description
             ;;
-        blocks|depends_on|parent_of|relates_to)
-            # Accept comma-separated issue IDs
+        issue_type)
+            if [[ ! " ${ISSUE_TYPES[*]} " =~ " ${value} " ]]; then
+                echo -e "${RED}Invalid issue type: $value${NC}" >&2
+                echo "Valid issue types: ${ISSUE_TYPES[*]}" >&2
+                return 1
+            fi
+            ;;
+        blocks|depends_on|parent_of|relates_to|labels|external_ref)
+            # Accept comma-separated values
             ;;
         *)
             echo -e "${RED}Invalid field: $field${NC}" >&2
-            echo "Valid fields: status, priority, assignee, role, title, description, blocks, depends_on, parent_of, relates_to" >&2
+            echo "Valid fields: status, priority, assignee, role, title, description, issue_type, labels, external_ref, blocks, depends_on, parent_of, relates_to" >&2
             return 1
             ;;
     esac
@@ -1069,6 +1077,7 @@ update_issue_with_flags() {
     local status_val="" priority="" assignee="" description=""
     local role_val="__unset__" title_val="__unset__"
     local blocks="" depends_on="" parent_of="" relates_to=""
+    local issue_type="" labels="" external_ref=""
     local has_updates=false
 
     # Parse git-style flags
@@ -1114,7 +1123,20 @@ update_issue_with_flags() {
                 relates_to="${1#*=}"
                 has_updates=true
                 ;;
-            --status|--priority|--assignee|--role|--title|--description|--blocks|--depends-on|--parent-of|--relates-to)
+            --issue-type=*)
+                issue_type="${1#*=}"
+                has_updates=true
+                ;;
+            --labels=*)
+                labels="${1#*=}"
+                has_updates=true
+                ;;
+            --external-ref=*|--external-refs=*)
+                # external_ref holds one reference or a comma-separated list
+                external_ref="${1#*=}"
+                has_updates=true
+                ;;
+            --status|--priority|--assignee|--role|--title|--description|--blocks|--depends-on|--parent-of|--relates-to|--issue-type|--labels|--external-ref|--external-refs)
                 if [[ $# -lt 2 ]]; then
                     echo -e "${RED}Error: $1 requires a value${NC}" >&2
                     return 1
@@ -1130,12 +1152,15 @@ update_issue_with_flags() {
                     --depends-on) depends_on="$2"; has_updates=true ;;
                     --parent-of) parent_of="$2"; has_updates=true ;;
                     --relates-to) relates_to="$2"; has_updates=true ;;
+                    --issue-type) issue_type="$2"; has_updates=true ;;
+                    --labels) labels="$2"; has_updates=true ;;
+                    --external-ref|--external-refs) external_ref="$2"; has_updates=true ;;
                 esac
                 shift
                 ;;
             *)
                 echo -e "${RED}Error: Unknown flag '$1'${NC}" >&2
-                echo "Valid flags: --status, --priority, --assignee, --role, --title, --description, --blocks, --depends-on, --parent-of, --relates-to" >&2
+                echo "Valid flags: --status, --priority, --assignee, --role, --title, --description, --issue-type, --labels, --external-ref, --external-refs, --blocks, --depends-on, --parent-of, --relates-to" >&2
                 return 1
                 ;;
         esac
@@ -1144,7 +1169,7 @@ update_issue_with_flags() {
 
     if [[ "$has_updates" == "false" ]]; then
         echo -e "${RED}Error: No update flags provided${NC}" >&2
-        echo "Use --status, --priority, --assignee, --role, --title, --description, --blocks, --depends-on, --parent-of, or --relates-to" >&2
+        echo "Use --status, --priority, --assignee, --role, --title, --description, --issue-type, --labels, --external-ref, --external-refs, --blocks, --depends-on, --parent-of, or --relates-to" >&2
         return 1
     fi
 
@@ -1177,6 +1202,12 @@ update_issue_with_flags() {
                echo "Valid priorities: low, medium, high, critical" >&2
                return 1 ;;
         esac
+    fi
+
+    if [[ -n "$issue_type" && ! " ${ISSUE_TYPES[*]} " =~ " ${issue_type} " ]]; then
+        echo -e "${RED}Error: Invalid issue type '$issue_type'${NC}" >&2
+        echo "Valid issue types: ${ISSUE_TYPES[*]}" >&2
+        return 1
     fi
 
     # Update using legacy function for each field
@@ -1254,6 +1285,17 @@ update_issue_with_flags() {
         update_issue "$id" "description" "$description"
         changes="${changes}description=updated "
     fi
+    local _f _v
+    for _f in issue_type labels external_ref; do
+        _v="${!_f}"
+        [[ -z "$_v" ]] && continue
+        if [[ "$(_current_val "$_f")" == "$_v" ]]; then
+            echo -e "${YELLOW}Issue #$id already has $_f '$_v'${NC}" >&2
+        else
+            update_issue "$id" "$_f" "$_v"
+            changes="${changes}$_f=$_v "
+        fi
+    done
     if [[ -n "$blocks" ]]; then
         update_issue "$id" "blocks" "$blocks"
         changes="${changes}blocks=$blocks "

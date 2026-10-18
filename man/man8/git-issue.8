@@ -26,8 +26,7 @@ priority	enum	medium	create, update
 issue_type	enum	task	create, update
 assignee	string	(empty)	update
 lease_ttl	integer (seconds)	(empty)	update
-external_ref	string	(empty)	update
-external_refs	comma-separated strings	(empty)	update
+external_ref	comma-separated strings	(empty)	update
 labels	comma-separated strings	(empty)	update
 author	string	git user.name	create
 created	ISO 8601 timestamp	now	create
@@ -54,14 +53,12 @@ marks template issues for hierarchies.
 .B gate
 marks async coordination points.
 .PP
-.B external_refs
-is the source of truth for external references.
 .B external_ref
-is a convenience alias for the common single-reference case.
-Display prefers
-.B external_refs
-if set, otherwise falls back to
-.BR external_ref .
+holds one external reference or a comma-separated list of them;
+.B \-\-external\-ref
+and
+.B \-\-external\-refs
+both set it.
 Values use the format
 .BR system-id :
 .RS
