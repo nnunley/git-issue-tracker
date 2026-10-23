@@ -16,7 +16,10 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-# Prevent recursive invocation (git push inside hook re-triggers hook)
+# Prevent recursive invocation (git push inside hook re-triggers hook). The
+# hook's own pushes below also pass --no-verify: under a hook manager this
+# script runs as pre-push.legacy behind a shim, and the nested push would reach
+# the shim before this guard, which prek and pre-commit refuse.
 if [[ -n "$GIT_ISSUE_PUSHING_NOTES" ]]; then
     exit 0
 fi
@@ -61,7 +64,7 @@ while read -r ref _; do
     REFSPECS+=("$ref:$ref")
 done <<< "$CHANGED"
 
-if OUT=$(git push --porcelain --atomic "$REMOTE" "${REFSPECS[@]}" 2>&1); then
+if OUT=$(git push --no-verify --porcelain --atomic "$REMOTE" "${REFSPECS[@]}" 2>&1); then
     # Record what the remote now has, so the next push compares against it
     # (not for a push to a bare URL, which has no tracking namespace)
     if git check-ref-format "${TRACK}x"; then
@@ -90,7 +93,7 @@ fi
 
 # Optional: push commit notes too if they exist
 if git rev-parse -q --verify refs/notes/commits >/dev/null 2>&1; then
-    git push "$REMOTE" refs/notes/commits 2>/dev/null || true
+    git push --no-verify "$REMOTE" refs/notes/commits 2>/dev/null || true
 fi
 
 exit 0

@@ -348,6 +348,22 @@ test_push_naming_issue_ref() {
         "$rc" "$named" "$other"
 }
 
+# Under a hook manager (prek, pre-commit) the hook runs as pre-push.legacy
+# behind a shim, and the shim refuses the hook's own nested push: the issue
+# note must still reach the remote
+test_push_under_hook_manager_shim() {
+    setup_pair t7h
+    cd "$A"
+    local hooks id rc
+    hooks=$(git rev-parse --git-path hooks)
+    mv "$hooks/pre-push" "$hooks/pre-push.legacy"
+    printf '#!/bin/sh\n[ -n "$GIT_ISSUE_PUSHING_NOTES" ] && { echo "shim: nested push refused" >&2; exit 1; }\nexec "$(dirname "$0")/pre-push.legacy" "$@"\n' > "$hooks/pre-push"
+    chmod +x "$hooks/pre-push"
+    id=$(new_issue "Behind a shim")
+    commit_and_push; rc=$?
+    check push_under_hook_manager_shim test "$rc" = 0 -a "$(remote_sha "$id")" = "$(ref_sha "$id")"
+}
+
 test_post_merge_runs_sync() {
     setup_pair t7e
     local id
